@@ -4,11 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       lookback_days:
-        description: "Optional comma-separated lookback windows. Blank uses script default."
-        required: false
-        default: ""
-      bbox:
-        description: "Optional bbox xmin,ymin,xmax,ymax. Blank uses script default."
+        description: "Optional comma-separated lookback windows. Blank uses script default from R script. Bbox is fixed/validated in the script."
         required: false
         default: ""
   schedule:
@@ -51,9 +47,6 @@ jobs:
         run: |
           if [ -n "${{ inputs.lookback_days }}" ]; then
             echo "BRIM_GW_PREVIEW_LOOKBACK_DAYS=${{ inputs.lookback_days }}" >> "$GITHUB_ENV"
-          fi
-          if [ -n "${{ inputs.bbox }}" ]; then
-            echo "BRIM_GW_PREVIEW_BBOX=${{ inputs.bbox }}" >> "$GITHUB_ENV"
           fi
 
       - name: Show script dependency guard
