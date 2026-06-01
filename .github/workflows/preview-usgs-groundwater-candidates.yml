@@ -1,0 +1,63 @@
+name: Preview USGS groundwater candidate discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Comma-separated lookback windows to preview. Leave blank for script default."
+        required: false
+        default: ""
+      bbox:
+        description: "Discovery bbox xmin,ymin,xmax,ymax. Default is broad CA + border-context envelope."
+        required: false
+        default: "-124.6,32.3,-113.8,42.2"
+  schedule:
+    # Weekly Monday morning Pacific-ish during standard time / early UTC day.
+    # Preview only: this workflow uploads QA artifacts and does not commit changes.
+    - cron: "0 14 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  preview-candidates:
+    runs-on: ubuntu-latest
+
+    env:
+      BRIM_GW_PREVIEW_LOOKBACK_DAYS: ${{ inputs.lookback_days || '' }}
+      BRIM_GW_PREVIEW_BBOX: ${{ inputs.bbox || '-124.6,32.3,-113.8,42.2' }}
+      BRIM_GW_PREVIEW_PARAMETER_CODE: "72019"
+      CLI_NO_PROGRESS: "true"
+      R_CLI_NUM_COLORS: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Install R packages
+        shell: Rscript {0}
+        run: |
+          install.packages(
+            c("dataRetrieval", "dplyr", "readr", "jsonlite", "tibble", "curl"),
+            repos = "https://cloud.r-project.org"
+          )
+
+      - name: Run candidate discovery preview
+        shell: Rscript {0}
+        run: |
+          source("scripts/preview_usgs_groundwater_candidate_discovery.R")
+
+      - name: Upload preview QA artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: usgs-groundwater-candidate-discovery-preview
+          path: qa/usgs_groundwater_candidate_discovery_preview/**
+          if-no-files-found: error
+          retention-days: 30
