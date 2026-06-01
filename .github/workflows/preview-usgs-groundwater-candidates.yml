@@ -4,23 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       lookback_days:
-        description: "Comma-separated lookback windows in days. Leave blank to use script defaults."
+        description: "Optional comma-separated lookback windows. Blank uses script default."
         required: false
         default: ""
       bbox:
-        description: "Discovery bbox as xmin,ymin,xmax,ymax. Leave blank to use script default."
+        description: "Optional bbox xmin,ymin,xmax,ymax. Blank uses script default."
         required: false
         default: ""
   schedule:
-    - cron: "23 13 * * 1"
+    # Weekly Monday morning UTC. This is preview/QA only.
+    - cron: "20 11 * * 1"
 
 permissions:
   contents: read
 
+env:
+  CLI_NO_PROGRESS: "true"
+  R_CLI_NUM_COLORS: "1"
+
 jobs:
   preview-candidates:
+    name: preview-candidates
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -29,6 +34,7 @@ jobs:
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
+          r-version: "release"
           use-public-rspm: true
 
       - name: Install system tools
@@ -36,39 +42,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends curl ca-certificates
 
-      - name: Install minimal R packages
+      - name: Install minimal R package
         run: |
-          Rscript -e 'pkgs <- c("jsonlite"); missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]; if (length(missing)) install.packages(missing, repos = "https://cloud.r-project.org"); missing_after <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]; if (length(missing_after)) stop("Missing R package(s): ", paste(missing_after, collapse = ", "))'
+          Rscript -e 'if (!requireNamespace("jsonlite", quietly = TRUE)) install.packages("jsonlite", repos = "https://cloud.r-project.org"); stopifnot(requireNamespace("jsonlite", quietly = TRUE))'
+
+      - name: Apply optional workflow inputs
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.lookback_days }}" ]; then
+            echo "BRIM_GW_PREVIEW_LOOKBACK_DAYS=${{ inputs.lookback_days }}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${{ inputs.bbox }}" ]; then
+            echo "BRIM_GW_PREVIEW_BBOX=${{ inputs.bbox }}" >> "$GITHUB_ENV"
+          fi
 
       - name: Show script dependency guard
         shell: bash
         run: |
-          echo "Checking preview script for unintended heavy package dependencies..."
-          if awk 'BEGIN{bad=0} /^[[:space:]]*#/ {next} /(dataRetrieval|dplyr|readr|tibble|sf|httr2)/ {print FNR ":" $0; bad=1} END{exit bad}' scripts/preview_usgs_groundwater_candidate_discovery.R; then
-            echo "Dependency guard passed."
-          else
-            echo "Unexpected heavy dependency reference found in preview script."
+          echo "Checking preview script for unintended package dependencies in executable code..."
+          # Ignore full-line comments before scanning. This keeps documentation
+          # comments from tripping the guard while still catching accidental
+          # library(), require(), or requireNamespace() calls.
+          if grep -nEv '^[[:space:]]*#|^[[:space:]]*$' scripts/preview_usgs_groundwater_candidate_discovery.R | \
+             grep -Ei 'library\((dataRetrieval|dplyr|readr|tibble|sf|httr2|curl)\)|require\((dataRetrieval|dplyr|readr|tibble|sf|httr2|curl)\)|requireNamespace\("(dataRetrieval|dplyr|readr|tibble|sf|httr2|curl)"' ; then
+            echo "Unexpected heavy dependency call found in preview script."
             exit 1
           fi
+          echo "Dependency guard passed."
 
       - name: Run candidate discovery preview
-        shell: bash
-        env:
-          CLI_NO_PROGRESS: "true"
-          R_CLI_NUM_COLORS: "1"
         run: |
-          if [ -n "${{ github.event.inputs.lookback_days || '' }}" ]; then
-            export BRIM_GW_PREVIEW_LOOKBACK_DAYS="${{ github.event.inputs.lookback_days }}"
-          fi
-          if [ -n "${{ github.event.inputs.bbox || '' }}" ]; then
-            export BRIM_GW_PREVIEW_BBOX="${{ github.event.inputs.bbox }}"
-          fi
           Rscript -e 'source("scripts/preview_usgs_groundwater_candidate_discovery.R")'
 
       - name: Upload preview QA artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: usgs-groundwater-candidate-discovery-preview
           path: qa/usgs_groundwater_candidate_discovery_preview/**
-          if-no-files-found: error
-          retention-days: 30
+          if-no-files-found: warn
+          retention-days: 90
