@@ -15,6 +15,13 @@
 ##     - jsonlite
 ##     - system curl binary when available, with utils::download.file fallback
 ##
+##   IMPORTANT:
+##     System curl is called through system2() with an argument vector and
+##     --url, not through a pasted shell command. Do not manually shell-quote
+##     the URL; system2() handles argument passing. This avoids the common
+##     GitHub Actions failure mode where query-string ampersands are parsed by
+##     the shell and the request silently becomes the unfiltered endpoint.
+##
 ## OUTPUT:
 ##   qa/usgs_groundwater_candidate_discovery_preview/<timestamp>/
 ##
@@ -54,20 +61,69 @@ pt_now_iso <- function() {
   format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
 }
 
-pt_parse_int_vec <- function(x, default) {
+pt_parse_int_vec <- function(x, default, min_value = 1L, max_value = 3660L) {
   x <- trimws(as.character(x))
   if (length(x) == 0 || is.na(x) || x == "") return(default)
+
   vals <- suppressWarnings(as.integer(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
-  vals <- vals[!is.na(vals) & vals > 0]
-  if (length(vals) == 0) default else unique(vals)
+  vals <- vals[!is.na(vals)]
+
+  if (length(vals) == 0) {
+    warning("Lookback override did not contain any valid integers; using defaults: ", paste(default, collapse = ","))
+    return(default)
+  }
+
+  bad <- vals < min_value | vals > max_value
+  if (any(bad)) {
+    stop(
+      "Invalid BRIM_GW_PREVIEW_LOOKBACK_DAYS value(s): ",
+      paste(vals[bad], collapse = ","),
+      ". Allowed range is ", min_value, " to ", max_value, " days."
+    )
+  }
+
+  sort(unique(vals))
+}
+
+pt_validate_bbox <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+
+  if (length(x) != 4 || any(is.na(x))) {
+    stop("Bbox must contain exactly four numeric values: xmin,ymin,xmax,ymax")
+  }
+
+  names(x) <- c("xmin", "ymin", "xmax", "ymax")
+
+  if (!(x[["xmin"]] < x[["xmax"]] && x[["ymin"]] < x[["ymax"]])) {
+    stop("Invalid bbox order; expected xmin < xmax and ymin < ymax.")
+  }
+
+  if (x[["xmin"]] < -180 || x[["xmax"]] > 180 || x[["ymin"]] < -90 || x[["ymax"]] > 90) {
+    stop("Bbox values are outside valid longitude/latitude ranges.")
+  }
+
+  ## BRIM-specific guardrail. This workflow is intentionally a California +
+  ## nearby-border-context preview, not a general USGS scraper. The generous
+  ## allowed envelope leaves room for the current Upper Amargosa / western
+  ## context while preventing accidental CONUS/global requests.
+  allowed <- c(xmin = -126.5, ymin = 31.0, xmax = -112.0, ymax = 43.5)
+  if (x[["xmin"]] < allowed[["xmin"]] || x[["xmax"]] > allowed[["xmax"]] ||
+      x[["ymin"]] < allowed[["ymin"]] || x[["ymax"]] > allowed[["ymax"]]) {
+    stop(
+      "Bbox is outside the allowed BRIM western preview envelope. ",
+      "Provided: ", paste(x, collapse = ","),
+      "; allowed envelope: ", paste(allowed, collapse = ",")
+    )
+  }
+
+  unname(x)
 }
 
 pt_parse_num_vec <- function(x, default) {
   x <- trimws(as.character(x))
-  if (length(x) == 0 || is.na(x) || x == "") return(default)
+  if (length(x) == 0 || is.na(x) || x == "") return(pt_validate_bbox(default))
   vals <- suppressWarnings(as.numeric(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
-  vals <- vals[!is.na(vals)]
-  if (length(vals) != length(default)) default else vals
+  pt_validate_bbox(vals)
 }
 
 pt_norm_site_no <- function(x) {
@@ -108,6 +164,28 @@ pt_build_url <- function(base_url, params) {
   paste0(base_url, "?", paste(query, collapse = "&"))
 }
 
+pt_validate_request_url <- function(url, lookback_day_count) {
+  needed <- c(
+    "collections/field-measurements/items",
+    "parameter_code=72019",
+    "bbox=",
+    "time=",
+    "limit=50000"
+  )
+
+  missing <- needed[!vapply(needed, grepl, logical(1), x = url, fixed = TRUE)]
+  if (length(missing) > 0) {
+    stop(
+      "Refusing to issue malformed USGS preview request for lookback ",
+      lookback_day_count, " day(s). Missing URL component(s): ",
+      paste(missing, collapse = ", "),
+      "\nURL: ", url
+    )
+  }
+
+  invisible(TRUE)
+}
+
 pt_have_system_curl <- function() {
   nzchar(Sys.which("curl"))
 }
@@ -137,12 +215,13 @@ pt_download_json_file <- function(url, label = "USGS API request", max_attempts 
         "--silent",
         "--show-error",
         "--location",
+        "--globoff",
         "--retry", "3",
         "--retry-delay", "5",
         "--connect-timeout", "30",
         "--max-time", "300",
         "--output", tmp,
-        url
+        "--url", url
       )
 
       res <- system2("curl", args = args, stdout = TRUE, stderr = TRUE)
@@ -267,7 +346,7 @@ writeLines(
     paste0("lookback_days=", paste(lookback_days, collapse = ",")),
     paste0("parameter_code=", parameter_code),
     paste0("bbox=", paste(bbox, collapse = ",")),
-    paste0("script_dependency_mode=base R + jsonlite + system curl")
+    paste0("script_dependency_mode=base R + jsonlite + system2 curl --url")
   ),
   con = file.path(out_dir, "run_diagnostics.txt")
 )
@@ -294,6 +373,7 @@ message("BRIM groundwater candidate-discovery preview")
 message("Run time UTC: ", run_time_utc)
 message("Lookbacks: ", paste(lookback_days, collapse = ", "))
 message("Parameter code: ", parameter_code)
+message("Request mode: system2 curl --url with validated request parameters; server-side filters verified after download")
 message("Bbox: ", paste(bbox, collapse = ","))
 message("Current candidate sites: ", length(current_sites))
 message("Output directory: ", normalizePath(out_dir, winslash = "/", mustWork = FALSE))
@@ -334,6 +414,13 @@ pt_fetch_field_measurements <- function(lookback_day_count) {
     )
   )
 
+  pt_validate_request_url(url, lookback_day_count)
+
+  writeLines(
+    url,
+    con = file.path(out_dir, paste0("request_url_", lookback_day_count, "d.txt"))
+  )
+
   json_path <- pt_download_json_file(
     url,
     label = paste0("USGS field-measurements lookback ", lookback_day_count, "d")
@@ -370,6 +457,11 @@ pt_fetch_field_measurements <- function(lookback_day_count) {
     c("properties.time", "time")
   ))
 
+  parameter_code_returned <- as.character(pt_col(
+    features,
+    c("properties.parameter_code", "parameter_code")
+  ))
+
   value <- suppressWarnings(as.numeric(pt_col(
     features,
     c("properties.value", "value"),
@@ -379,6 +471,7 @@ pt_fetch_field_measurements <- function(lookback_day_count) {
   out <- data.frame(
     site_no = pt_norm_site_no(monitoring_location_id),
     monitoring_location_id = monitoring_location_id,
+    parameter_code = parameter_code_returned,
     measurement_time_utc = measurement_time_utc,
     value = value,
     unit_of_measure = as.character(pt_col(features, c("properties.unit_of_measure", "unit_of_measure"))),
@@ -389,6 +482,52 @@ pt_fetch_field_measurements <- function(lookback_day_count) {
   )
 
   out <- out[!is.na(out$site_no), , drop = FALSE]
+
+  ## Defensive validation/filtering. The USGS API should apply parameter and
+  ## time filters server-side. These checks keep a shell-quoting or request
+  ## regression from silently producing misleading preview QA.
+  out_time <- suppressWarnings(as.POSIXct(out$measurement_time_utc, tz = "UTC"))
+  query_start_time <- as.POSIXct(query_start, tz = "UTC")
+  query_end_time <- as.POSIXct(query_end + 1L, tz = "UTC")
+
+  if ("parameter_code" %in% names(out)) {
+    bad_param <- !is.na(out$parameter_code) & out$parameter_code != parameter_code
+    if (any(bad_param, na.rm = TRUE)) {
+      warning(
+        "USGS response included ", sum(bad_param, na.rm = TRUE),
+        " row(s) with parameter_code other than ", parameter_code,
+        "; dropping them from preview QA."
+      )
+    }
+    out <- out[is.na(out$parameter_code) | out$parameter_code == parameter_code, , drop = FALSE]
+    out_time <- suppressWarnings(as.POSIXct(out$measurement_time_utc, tz = "UTC"))
+  }
+
+  in_window <- !is.na(out_time) & out_time >= query_start_time & out_time < query_end_time
+  if (any(!in_window, na.rm = TRUE)) {
+    warning(
+      "USGS response included ", sum(!in_window, na.rm = TRUE),
+      " row(s) outside requested time window; dropping them from preview QA."
+    )
+  }
+  out <- out[in_window, , drop = FALSE]
+
+  if (NROW(features) <= 10 && nrow(out) <= 10) {
+    warning(
+      "USGS response returned only ", NROW(features),
+      " raw feature(s). For the default BRIM groundwater preview this is suspicious; ",
+      "check the request URL and query-string handling if counts look wrong."
+    )
+  }
+
+  if (NROW(features) >= 50000 || nrow(out) >= 50000) {
+    stop(
+      "USGS response hit or approached the 50,000-feature request limit. ",
+      "Split the preview query before trusting counts. Raw features: ",
+      NROW(features), "; filtered rows: ", nrow(out)
+    )
+  }
+
   out
 }
 
