@@ -1,150 +1,239 @@
-# ==== preview_usgs_groundwater_candidate_discovery.R ==========================
-##
-## PURPOSE:
-##   Preview the USGS groundwater recent-feed candidate universe for BRIM without
-##   modifying production inputs, GeoJSON, history summaries, or the final map.
-##
-## DESIGN:
-##   This script is intentionally lean for GitHub Actions. It does NOT use
-##   dataRetrieval, dplyr, readr, tibble, sf, httr2, or the R curl package.
-##   It uses only base R plus jsonlite, and fetches USGS Water Data API JSON via
-##   the system curl command when available.
-##
-## OUTPUTS:
-##   qa/usgs_groundwater_candidate_discovery_preview/<timestamp>/
-##     usgs_gw_candidate_discovery_preview_summary.csv
-##     usgs_gw_candidate_discovery_preview_summary.json
-##     usgs_gw_candidate_discovered_latest_<N>d.csv
-##     usgs_gw_candidate_additions_vs_current_<N>d.csv
-##     usgs_gw_candidate_current_missing_from_preview_<N>d.csv
-## ============================================================================
+# ==== preview_usgs_groundwater_candidate_discovery.R =========================
+#
+# Weekly/manual preview for BRIM groundwater candidate discovery.
+#
+# This script is preview/QA only. It does not overwrite production candidate,
+# history, GeoJSON, or map files.
+# ============================================================================
 
-# ---- 1. Minimal dependency check --------------------------------------------
+options(
+  cli.progress_show_after = Inf,
+  cli.progress_clear = FALSE,
+  cli.dynamic = FALSE
+)
+
+Sys.setenv(
+  CLI_NO_PROGRESS = "true",
+  R_CLI_NUM_COLORS = "1"
+)
 
 required_pkgs <- c("jsonlite")
 missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
-
 if (length(missing_pkgs) > 0) {
   stop(
-    "Missing required R packages: ", paste(missing_pkgs, collapse = ", "),
-    "\nInstall jsonlite before running locally, or let the GitHub Action install it."
+    "Missing required R package(s): ",
+    paste(missing_pkgs, collapse = ", "),
+    ". Install locally, or let the GitHub Action install them."
   )
 }
 
-# ---- 2. Configuration -------------------------------------------------------
-
-DEFAULT_LOOKBACK_DAYS <- c(800L, 1826L)
-DEFAULT_BBOX <- c(-124.6, 32.3, -113.8, 42.2)
-DEFAULT_PARAMETER_CODE <- "72019"
-DEFAULT_KNOWN_SITES <- c("362402116280901")
+# ---- Helpers ----------------------------------------------------------------
 
 pt_parse_int_vec <- function(x, default) {
   x <- trimws(as.character(x))
   if (length(x) == 0 || is.na(x) || x == "") return(default)
-  vals <- suppressWarnings(as.integer(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
-  vals <- vals[!is.na(vals) & vals > 0]
-  if (length(vals) == 0) default else unique(vals)
+
+  out <- suppressWarnings(as.integer(trimws(unlist(strsplit(x, ",", fixed = TRUE)))))
+  out <- out[!is.na(out) & out > 0]
+
+  if (length(out) == 0) default else unique(out)
 }
 
-pt_parse_num_vec <- function(x, default, n = 4L) {
+pt_parse_bbox <- function(x, default) {
   x <- trimws(as.character(x))
   if (length(x) == 0 || is.na(x) || x == "") return(default)
-  vals <- suppressWarnings(as.numeric(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
-  vals <- vals[!is.na(vals)]
-  if (length(vals) != n) default else vals
+
+  out <- suppressWarnings(as.numeric(trimws(unlist(strsplit(x, ",", fixed = TRUE)))))
+  if (length(out) != 4 || any(is.na(out))) {
+    warning("Invalid BRIM_GW_PREVIEW_BBOX; using default bbox.")
+    return(default)
+  }
+
+  out
 }
 
-pt_parse_chr_vec <- function(x, default) {
-  x <- trimws(as.character(x))
-  if (length(x) == 0 || is.na(x) || x == "") return(default)
-  vals <- trimws(strsplit(x, ",", fixed = TRUE)[[1]])
-  vals <- vals[!is.na(vals) & vals != ""]
-  if (length(vals) == 0) default else unique(vals)
-}
-
-lookback_days <- pt_parse_int_vec(
-  Sys.getenv("BRIM_GW_PREVIEW_LOOKBACK_DAYS", unset = ""),
-  default = DEFAULT_LOOKBACK_DAYS
-)
-
-bbox <- pt_parse_num_vec(
-  Sys.getenv("BRIM_GW_PREVIEW_BBOX", unset = ""),
-  default = DEFAULT_BBOX,
-  n = 4L
-)
-
-parameter_code <- Sys.getenv("BRIM_GW_PREVIEW_PARAMETER_CODE", unset = "")
-if (!nzchar(parameter_code)) parameter_code <- DEFAULT_PARAMETER_CODE
-
-known_sites <- pt_parse_chr_vec(
-  Sys.getenv("BRIM_GW_PREVIEW_KNOWN_SITES", unset = ""),
-  default = DEFAULT_KNOWN_SITES
-)
-
-run_time <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
-stamp <- format(Sys.time(), "%Y%m%d_%H%M%S", tz = "UTC")
-
-out_root <- file.path("qa", "usgs_groundwater_candidate_discovery_preview")
-out_dir <- file.path(out_root, stamp)
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-message("BRIM USGS groundwater candidate-discovery preview")
-message("Working directory: ", normalizePath(getwd(), winslash = "/", mustWork = FALSE))
-message("Output directory: ", normalizePath(out_dir, winslash = "/", mustWork = FALSE))
-message("Lookback days: ", paste(lookback_days, collapse = ", "))
-message("BBox: ", paste(bbox, collapse = ","))
-message("Parameter code: ", parameter_code)
-
-# ---- 3. Helpers -------------------------------------------------------------
-
-pt_norm_site_no <- function(x) {
+pt_site_no <- function(x) {
   x <- as.character(x)
   x <- trimws(x)
-  x <- gsub("^USGS-", "", x, ignore.case = TRUE)
+  x <- sub("^USGS-", "", x)
   x <- gsub("\\.0$", "", x)
   x <- gsub("[^0-9]", "", x)
   x[x == ""] <- NA_character_
   x
 }
 
+pt_csv_quote <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  needs_quote <- grepl("[,\"\n\r]", x)
+  x <- gsub('"', '""', x, fixed = TRUE)
+  x[needs_quote] <- paste0('"', x[needs_quote], '"')
+  x
+}
+
+pt_write_csv <- function(x, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+
+  if (!is.data.frame(x)) x <- as.data.frame(x, stringsAsFactors = FALSE)
+
+  con <- file(path, open = "w", encoding = "UTF-8")
+  on.exit(close(con), add = TRUE)
+
+  writeLines(paste(pt_csv_quote(names(x)), collapse = ","), con = con)
+
+  if (nrow(x) > 0) {
+    for (i in seq_len(nrow(x))) {
+      writeLines(paste(pt_csv_quote(x[i, , drop = TRUE]), collapse = ","), con = con)
+    }
+  }
+
+  invisible(path)
+}
+
 pt_urlencode <- function(x) {
   utils::URLencode(as.character(x), reserved = TRUE)
 }
 
-pt_fetch_text <- function(url) {
-  tmp <- tempfile(fileext = ".json")
-  on.exit(unlink(tmp), add = TRUE)
+pt_curl_json <- function(url) {
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
 
-  curl_bin <- Sys.which("curl")
+  cmd <- c(
+    "-fsSL",
+    "--retry", "3",
+    "--retry-delay", "5",
+    "--connect-timeout", "30",
+    "--max-time", "240",
+    "-o", tf,
+    url
+  )
 
-  if (nzchar(curl_bin)) {
-    args <- c(
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--location",
-      "--retry", "3",
-      "--retry-delay", "2",
-      "--max-time", "240",
-      "--output", tmp,
-      url
-    )
-
-    status <- system2(curl_bin, args = args)
-
-    if (identical(status, 0L) && file.exists(tmp) && file.info(tmp)$size > 0) {
-      return(paste(readLines(tmp, warn = FALSE, encoding = "UTF-8"), collapse = "\n"))
-    }
+  status <- system2("curl", args = cmd)
+  if (!identical(status, 0L)) {
+    stop("curl request failed with status ", status, ": ", url)
   }
 
-  ## Local fallback if system curl is unavailable.
-  utils::download.file(url, tmp, mode = "wb", quiet = TRUE)
-  paste(readLines(tmp, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  jsonlite::fromJSON(tf, simplifyVector = TRUE)
 }
 
-pt_build_field_measurement_url <- function(start_date, end_date) {
-  props <- paste(
-    c(
+pt_extract_field_measurements <- function(x) {
+  if (is.null(x$features)) {
+    return(data.frame())
+  }
+
+  features <- x$features
+
+  if (is.data.frame(features) && "properties" %in% names(features)) {
+    props <- features$properties
+  } else if (is.list(features) && length(features) > 0) {
+    props <- lapply(features, function(z) z$properties)
+    props <- jsonlite::rbind_pages(props)
+  } else {
+    return(data.frame())
+  }
+
+  if (is.null(props) || nrow(props) == 0) {
+    return(data.frame())
+  }
+
+  props <- as.data.frame(props, stringsAsFactors = FALSE)
+
+  needed <- c(
+    "monitoring_location_id",
+    "parameter_code",
+    "time",
+    "value",
+    "unit_of_measure",
+    "qualifier",
+    "approval_status",
+    "measuring_agency"
+  )
+
+  for (nm in needed) {
+    if (!nm %in% names(props)) props[[nm]] <- NA_character_
+  }
+
+  props[, needed, drop = FALSE]
+}
+
+pt_read_current_candidates <- function(path) {
+  if (!file.exists(path)) {
+    warning("Current candidate CSV not found: ", path)
+    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
+  }
+
+  x <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+
+  if (!"site_no" %in% names(x)) {
+    warning("Current candidate CSV lacks site_no column: ", path)
+    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
+  }
+
+  data.frame(
+    site_no = unique(stats::na.omit(pt_site_no(x$site_no))),
+    stringsAsFactors = FALSE
+  )
+}
+
+# ---- Configuration ----------------------------------------------------------
+
+DEFAULT_LOOKBACK_DAYS <- c(800L, 1826L)
+DEFAULT_BBOX <- c(-124.6, 32.3, -113.8, 42.2)
+DEFAULT_PARAMETER_CODE <- "72019"
+
+lookback_days <- pt_parse_int_vec(
+  Sys.getenv("BRIM_GW_PREVIEW_LOOKBACK_DAYS", unset = ""),
+  default = DEFAULT_LOOKBACK_DAYS
+)
+
+bbox <- pt_parse_bbox(
+  Sys.getenv("BRIM_GW_PREVIEW_BBOX", unset = ""),
+  default = DEFAULT_BBOX
+)
+
+parameter_code <- Sys.getenv("BRIM_GW_PREVIEW_PARAMETER_CODE", unset = DEFAULT_PARAMETER_CODE)
+parameter_code <- trimws(parameter_code)
+if (is.na(parameter_code) || parameter_code == "") parameter_code <- DEFAULT_PARAMETER_CODE
+
+run_time_utc <- format(as.POSIXct(Sys.time(), tz = "UTC"), "%Y-%m-%dT%H:%M:%SZ")
+out_stamp <- format(as.POSIXct(Sys.time(), tz = "UTC"), "%Y%m%d_%H%M%S")
+
+out_root <- file.path("qa", "usgs_groundwater_candidate_discovery_preview")
+out_dir <- file.path(out_root, out_stamp)
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+candidate_path <- file.path("data", "input", "usgs_groundwater_latest_index_ca.csv")
+current_candidates <- pt_read_current_candidates(candidate_path)
+current_sites <- current_candidates$site_no
+
+known_sites <- c("362402116280901")
+
+message("BRIM groundwater candidate-discovery preview")
+message("Run time UTC: ", run_time_utc)
+message("Lookbacks: ", paste(lookback_days, collapse = ", "))
+message("Parameter code: ", parameter_code)
+message("Bbox: ", paste(bbox, collapse = ","))
+message("Current candidate sites: ", length(current_sites))
+message("Output directory: ", normalizePath(out_dir, winslash = "/", mustWork = FALSE))
+
+# ---- Preview loop -----------------------------------------------------------
+
+summary_rows <- list()
+
+for (lb in lookback_days) {
+
+  query_start_date <- as.character(Sys.Date() - lb)
+  query_end_date <- as.character(Sys.Date() + 1)
+  time_window <- paste0(query_start_date, "/", query_end_date)
+
+  base_url <- "https://api.waterdata.usgs.gov/ogcapi/v0/collections/field-measurements/items"
+
+  query <- paste0(
+    "f=json",
+    "&lang=en-US",
+    "&skipGeometry=TRUE",
+    "&bbox=", pt_urlencode(paste(bbox, collapse = ",")),
+    "&properties=", pt_urlencode(paste(c(
       "monitoring_location_id",
       "parameter_code",
       "time",
@@ -153,218 +242,134 @@ pt_build_field_measurement_url <- function(start_date, end_date) {
       "qualifier",
       "approval_status",
       "measuring_agency"
-    ),
-    collapse = ","
-  )
-
-  query <- paste0(
-    "f=json",
-    "&lang=en-US",
-    "&skipGeometry=TRUE",
-    "&bbox=", pt_urlencode(paste(bbox, collapse = ",")),
-    "&properties=", pt_urlencode(props),
+    ), collapse = ",")),
     "&parameter_code=", pt_urlencode(parameter_code),
-    "&time=", pt_urlencode(paste0(start_date, "/", end_date)),
+    "&time=", pt_urlencode(time_window),
     "&limit=50000"
   )
 
-  paste0(
-    "https://api.waterdata.usgs.gov/ogcapi/v0/collections/field-measurements/items?",
-    query
-  )
-}
+  url <- paste0(base_url, "?", query)
 
-pt_features_to_df <- function(features) {
-  if (length(features) == 0) return(data.frame())
-
-  rows <- lapply(features, function(f) {
-    p <- f$properties
-    if (is.null(p)) p <- list()
-    as.data.frame(p, stringsAsFactors = FALSE, optional = TRUE)
-  })
-
-  all_names <- unique(unlist(lapply(rows, names), use.names = FALSE))
-
-  rows <- lapply(rows, function(x) {
-    missing <- setdiff(all_names, names(x))
-    for (nm in missing) x[[nm]] <- NA
-    x[all_names]
-  })
-
-  out <- do.call(rbind, rows)
-  rownames(out) <- NULL
-  out
-}
-
-pt_fetch_field_measurements <- function(start_date, end_date) {
-  url <- pt_build_field_measurement_url(start_date, end_date)
-  message("Requesting:\n", url)
-
-  txt <- pt_fetch_text(url)
-  parsed <- jsonlite::fromJSON(txt, simplifyVector = FALSE)
-
-  features <- parsed$features
-  if (is.null(features)) features <- list()
-
-  out <- pt_features_to_df(features)
-
-  ## The preview windows tested so far are below the 50k limit. If this warning
-  ## appears, we should add OGC pagination before using the result for decisions.
-  if (nrow(out) >= 50000) {
-    warning(
-      "USGS preview query returned >= 50,000 rows, which may indicate truncation. ",
-      "Add pagination before relying on this lookback window."
-    )
-  }
-
-  out
-}
-
-pt_read_current_candidates <- function() {
-  path <- file.path("data", "input", "usgs_groundwater_latest_index_ca.csv")
-
-  if (!file.exists(path)) {
-    warning("Current production candidate CSV not found: ", path)
-    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
-  }
-
-  x <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-
-  if (!"site_no" %in% names(x)) {
-    warning("Current candidate CSV has no site_no column: ", path)
-    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
-  }
-
-  data.frame(
-    site_no = unique(na.omit(pt_norm_site_no(x$site_no))),
-    stringsAsFactors = FALSE
-  )
-}
-
-pt_latest_by_site <- function(fm) {
-  if (nrow(fm) == 0) {
-    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
-  }
-
-  if (!"monitoring_location_id" %in% names(fm)) {
-    stop("USGS response did not include monitoring_location_id.")
-  }
-
-  fm$site_no <- pt_norm_site_no(fm$monitoring_location_id)
-
-  if ("time" %in% names(fm)) {
-    fm$time_utc <- suppressWarnings(as.POSIXct(fm$time, tz = "UTC"))
-  } else {
-    fm$time_utc <- as.POSIXct(NA, tz = "UTC")
-  }
-
-  fm <- fm[!is.na(fm$site_no), , drop = FALSE]
-
-  if (nrow(fm) == 0) {
-    return(data.frame(site_no = character(), stringsAsFactors = FALSE))
-  }
-
-  ord <- order(fm$site_no, fm$time_utc, decreasing = FALSE, na.last = TRUE)
-  fm <- fm[ord, , drop = FALSE]
-
-  keep_idx <- !duplicated(fm$site_no, fromLast = TRUE)
-  latest <- fm[keep_idx, , drop = FALSE]
-
-  latest <- latest[order(latest$site_no), , drop = FALSE]
-  rownames(latest) <- NULL
-  latest
-}
-
-pt_count_latest_age <- function(latest, threshold_days, end_date) {
-  if (!"time_utc" %in% names(latest) || nrow(latest) == 0) return(0L)
-  end_time <- as.POSIXct(paste0(end_date, " 23:59:59"), tz = "UTC")
-  age_days <- as.numeric(difftime(end_time, latest$time_utc, units = "days"))
-  sum(!is.na(age_days) & age_days <= threshold_days)
-}
-
-# ---- 4. Main preview loop ---------------------------------------------------
-
-current_candidates <- pt_read_current_candidates()
-current_sites <- unique(current_candidates$site_no)
-
-summary_rows <- list()
-end_date <- as.character(Sys.Date())
-
-for (lb in lookback_days) {
   message("\n--- Preview lookback: ", lb, " days ---")
+  message("Query window: ", time_window)
+  message("Requesting: ", url)
 
-  start_date <- as.character(Sys.Date() - lb)
-  message("Query window: ", start_date, " / ", end_date)
+  json <- pt_curl_json(url)
+  fm <- pt_extract_field_measurements(json)
 
-  fm <- pt_fetch_field_measurements(start_date, end_date)
-  latest <- pt_latest_by_site(fm)
+  if (nrow(fm) == 0) {
+    discovered_latest <- data.frame(
+      site_no = character(),
+      monitoring_location_id = character(),
+      latest_time = character(),
+      latest_value = numeric(),
+      unit_of_measure = character(),
+      qualifier = character(),
+      approval_status = character(),
+      measuring_agency = character(),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    fm$site_no <- pt_site_no(fm$monitoring_location_id)
+    fm$value_num <- suppressWarnings(as.numeric(fm$value))
+    fm$time_chr <- as.character(fm$time)
 
-  discovered_sites <- unique(latest$site_no)
-  discovered_sites <- discovered_sites[!is.na(discovered_sites) & discovered_sites != ""]
+    fm <- fm[!is.na(fm$site_no) & fm$site_no != "", , drop = FALSE]
+    fm <- fm[order(fm$site_no, fm$time_chr, decreasing = c(FALSE, TRUE)), , drop = FALSE]
+    fm_latest <- fm[!duplicated(fm$site_no), , drop = FALSE]
 
-  additions <- setdiff(discovered_sites, current_sites)
-  missing_from_preview <- setdiff(current_sites, discovered_sites)
+    discovered_latest <- data.frame(
+      site_no = fm_latest$site_no,
+      monitoring_location_id = fm_latest$monitoring_location_id,
+      latest_time = fm_latest$time_chr,
+      latest_value = fm_latest$value_num,
+      unit_of_measure = as.character(fm_latest$unit_of_measure),
+      qualifier = as.character(fm_latest$qualifier),
+      approval_status = as.character(fm_latest$approval_status),
+      measuring_agency = as.character(fm_latest$measuring_agency),
+      stringsAsFactors = FALSE
+    )
 
-  known_found <- intersect(pt_norm_site_no(known_sites), discovered_sites)
-  known_missing <- setdiff(pt_norm_site_no(known_sites), discovered_sites)
+    discovered_latest <- discovered_latest[order(discovered_latest$site_no), , drop = FALSE]
+  }
 
-  latest_out <- latest
-  additions_out <- latest[latest$site_no %in% additions, , drop = FALSE]
-  missing_out <- data.frame(site_no = missing_from_preview, stringsAsFactors = FALSE)
+  discovered_sites <- discovered_latest$site_no
 
-  utils::write.csv(
-    latest_out,
-    file.path(out_dir, paste0("usgs_gw_candidate_discovered_latest_", lb, "d.csv")),
-    row.names = FALSE,
-    na = ""
-  )
+  additions <- discovered_latest[!discovered_latest$site_no %in% current_sites, , drop = FALSE]
+  current_missing <- current_candidates[!current_candidates$site_no %in% discovered_sites, , drop = FALSE]
 
-  utils::write.csv(
-    additions_out,
-    file.path(out_dir, paste0("usgs_gw_candidate_additions_vs_current_", lb, "d.csv")),
-    row.names = FALSE,
-    na = ""
-  )
+  latest_dates <- as.Date(substr(discovered_latest$latest_time, 1, 10))
+  latest_age_days <- as.integer(Sys.Date() - latest_dates)
 
-  utils::write.csv(
-    missing_out,
-    file.path(out_dir, paste0("usgs_gw_candidate_current_missing_from_preview_", lb, "d.csv")),
-    row.names = FALSE,
-    na = ""
-  )
+  discovered_latest$latest_date <- as.character(latest_dates)
+  discovered_latest$latest_age_days <- latest_age_days
+
+  additions <- discovered_latest[discovered_latest$site_no %in% additions$site_no, , drop = FALSE]
+
+  known_found <- known_sites[known_sites %in% discovered_sites]
+  known_missing <- known_sites[!known_sites %in% discovered_sites]
+
+  notes <- c()
+  if (nrow(fm) >= 50000) {
+    notes <- c(notes, "Raw field-measurement row count reached 50000; inspect for possible API limit/truncation.")
+  }
+  if (length(notes) == 0) notes <- "Preview only; production candidate/history files were not modified."
 
   summary_rows[[as.character(lb)]] <- data.frame(
-    run_time_utc = run_time,
+    run_time_utc = run_time_utc,
     lookback_days = lb,
     parameter_code = parameter_code,
     bbox = paste(bbox, collapse = ","),
-    query_start_date = start_date,
-    query_end_date = end_date,
+    query_start_date = query_start_date,
+    query_end_date = query_end_date,
     raw_field_measurements_rows = nrow(fm),
     discovered_sites = length(discovered_sites),
     current_candidate_sites = length(current_sites),
-    additions_vs_current = length(additions),
-    current_missing_from_preview = length(missing_from_preview),
-    latest_30d_count = pt_count_latest_age(latest, 30, end_date),
-    latest_90d_count = pt_count_latest_age(latest, 90, end_date),
-    latest_1y_count = pt_count_latest_age(latest, 365, end_date),
-    latest_2y_count = pt_count_latest_age(latest, 730, end_date),
-    latest_3y_count = pt_count_latest_age(latest, 1095, end_date),
+    additions_vs_current = nrow(additions),
+    current_missing_from_preview = nrow(current_missing),
+    latest_30d_count = sum(latest_age_days <= 30, na.rm = TRUE),
+    latest_90d_count = sum(latest_age_days <= 90, na.rm = TRUE),
+    latest_1y_count = sum(latest_age_days <= 365, na.rm = TRUE),
+    latest_2y_count = sum(latest_age_days <= 730, na.rm = TRUE),
+    latest_3y_count = sum(latest_age_days <= 1095, na.rm = TRUE),
     known_sites_found = paste(known_found, collapse = ";"),
     known_sites_missing = paste(known_missing, collapse = ";"),
-    notes = "Preview only; production candidate CSV, history summary, GeoJSON, and BRIM HTML are not modified.",
+    notes = paste(notes, collapse = " "),
     stringsAsFactors = FALSE
   )
+
+  prefix <- paste0("usgs_gw_candidate_")
+  suffix <- paste0("_", lb, "d.csv")
+
+  pt_write_csv(
+    discovered_latest,
+    file.path(out_dir, paste0(prefix, "discovered_latest", suffix))
+  )
+
+  pt_write_csv(
+    additions,
+    file.path(out_dir, paste0(prefix, "additions_vs_current", suffix))
+  )
+
+  pt_write_csv(
+    current_missing,
+    file.path(out_dir, paste0(prefix, "current_missing_from_preview", suffix))
+  )
+
+  message("Raw field-measurement rows: ", nrow(fm))
+  message("Discovered sites: ", length(discovered_sites))
+  message("Additions vs current: ", nrow(additions))
+  message("Current missing from preview: ", nrow(current_missing))
 }
 
 summary_tbl <- do.call(rbind, summary_rows)
-rownames(summary_tbl) <- NULL
+row.names(summary_tbl) <- NULL
 
 summary_csv <- file.path(out_dir, "usgs_gw_candidate_discovery_preview_summary.csv")
 summary_json <- file.path(out_dir, "usgs_gw_candidate_discovery_preview_summary.json")
 
-utils::write.csv(summary_tbl, summary_csv, row.names = FALSE, na = "")
-jsonlite::write_json(summary_tbl, summary_json, pretty = TRUE, dataframe = "rows", na = "null")
+pt_write_csv(summary_tbl, summary_csv)
+jsonlite::write_json(summary_tbl, summary_json, pretty = TRUE, auto_unbox = TRUE, na = "null")
 
 message("\nUSGS groundwater candidate discovery preview complete.")
 message("Saved preview QA to: ", normalizePath(out_dir, winslash = "/", mustWork = FALSE))
