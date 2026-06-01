@@ -28,11 +28,15 @@
 ##
 ## OUTPUTS:
 ##   qa/usgs_groundwater_candidate_discovery_preview/<timestamp>/
+##     - README_first.txt
 ##     - usgs_gw_candidate_discovery_preview_summary.csv
-##     - usgs_gw_candidate_discovery_preview_summary.json
-##     - usgs_gw_candidate_discovered_latest_<lookback>d.csv
-##     - usgs_gw_candidate_additions_vs_current_<lookback>d.csv
-##     - usgs_gw_candidate_current_missing_from_preview_<lookback>d.csv
+##     - usgs_gw_candidate_additions_vs_current_by_lookback.csv
+##     - usgs_gw_candidate_current_missing_by_lookback.csv
+##
+##   The output is intentionally small and review-friendly. Earlier versions
+##   wrote one file per lookback and per category, which was too many files for
+##   a weekly QA artifact. This version writes one summary plus two combined
+##   detail tables.
 ##
 ## ENVIRONMENT VARIABLES:
 ##   BRIM_GW_PREVIEW_LOOKBACK_DAYS  Comma-separated lookbacks; default below.
@@ -154,6 +158,22 @@ pt_empty_discovered <- function() {
   )
 }
 
+
+pt_nice_int <- function(x) {
+  formatC(as.integer(x), format = "d", big.mark = ",")
+}
+
+pt_make_summary_sentence <- function(row) {
+  paste0(
+    row$lookback_days,
+    " days: discovered ", pt_nice_int(row$discovered_sites),
+    " site(s); +", pt_nice_int(row$additions_vs_current),
+    " vs current; ", pt_nice_int(row$current_missing_from_preview),
+    " current candidate(s) missing; ", pt_nice_int(row$latest_90d_count),
+    " site(s) measured within 90 days."
+  )
+}
+
 # ---- Configuration ----------------------------------------------------------
 
 ## Single source of truth for the default preview lookback windows.
@@ -229,6 +249,8 @@ message("Current production candidate sites: ", length(current_sites))
 message("Output directory: ", normalizePath(out_dir, winslash = "/", mustWork = FALSE))
 
 summary_rows <- list()
+addition_rows <- list()
+missing_rows <- list()
 
 # ---- Discovery loop ---------------------------------------------------------
 
@@ -337,20 +359,14 @@ for (lb in lookback_days) {
 
   summary_rows[[as.character(lb)]] <- summary_row
 
-  readr::write_csv(
-    discovered_latest,
-    file.path(out_dir, paste0("usgs_gw_candidate_discovered_latest_", lb, "d.csv"))
-  )
+  ## Keep weekly artifacts review-friendly: collect details into one combined
+  ## additions table and one combined missing-current table rather than writing
+  ## one CSV per lookback.
+  addition_rows[[as.character(lb)]] <- additions |>
+    mutate(lookback_days = lb, .before = 1)
 
-  readr::write_csv(
-    additions,
-    file.path(out_dir, paste0("usgs_gw_candidate_additions_vs_current_", lb, "d.csv"))
-  )
-
-  readr::write_csv(
-    missing_from_preview,
-    file.path(out_dir, paste0("usgs_gw_candidate_current_missing_from_preview_", lb, "d.csv"))
-  )
+  missing_rows[[as.character(lb)]] <- missing_from_preview |>
+    mutate(lookback_days = lb, .before = 1)
 
   message("Raw field-measurement rows: ", nrow(fm))
   message("Discovered sites: ", length(discovered_sites))
@@ -373,23 +389,83 @@ for (lb in lookback_days) {
 }
 
 summary_tbl <- bind_rows(summary_rows)
+summary_tbl$summary_statement <- vapply(
+  seq_len(nrow(summary_tbl)),
+  function(i) pt_make_summary_sentence(summary_tbl[i, , drop = FALSE]),
+  character(1)
+)
+
+additions_tbl <- bind_rows(addition_rows)
+if (nrow(additions_tbl) == 0) {
+  additions_tbl <- tibble(
+    lookback_days = integer(),
+    site_no = character(),
+    monitoring_location_id = character(),
+    latest_time_utc = as.POSIXct(character(), tz = "UTC"),
+    latest_date = as.Date(character()),
+    latest_age_days = numeric(),
+    latest_value_ft_bgs = numeric(),
+    measurement_rows = integer()
+  )
+}
+
+missing_tbl <- bind_rows(missing_rows)
+if (nrow(missing_tbl) == 0) {
+  missing_tbl <- tibble(
+    lookback_days = integer(),
+    site_no = character(),
+    station_nm = character(),
+    current_latest_wl_date = character(),
+    current_latest_age_days = character(),
+    current_candidate_source = character()
+  )
+}
 
 readr::write_csv(
   summary_tbl,
   file.path(out_dir, "usgs_gw_candidate_discovery_preview_summary.csv")
 )
 
-jsonlite::write_json(
-  list(
-    run_time_utc = run_time_utc,
-    output_dir = normalizePath(out_dir, winslash = "/", mustWork = FALSE),
-    summary = summary_tbl
-  ),
-  path = file.path(out_dir, "usgs_gw_candidate_discovery_preview_summary.json"),
-  pretty = TRUE,
-  auto_unbox = TRUE,
-  na = "null"
+readr::write_csv(
+  additions_tbl,
+  file.path(out_dir, "usgs_gw_candidate_additions_vs_current_by_lookback.csv")
 )
+
+readr::write_csv(
+  missing_tbl,
+  file.path(out_dir, "usgs_gw_candidate_current_missing_by_lookback.csv")
+)
+
+quick_read <- c(
+  "BRIM USGS groundwater candidate-discovery preview",
+  "",
+  paste0("Run time UTC: ", run_time_utc),
+  paste0("Current production candidate sites: ", pt_nice_int(length(current_sites))),
+  paste0("Parameter code: ", parameter_code),
+  paste0("BRIM groundwater discovery bbox: ", paste(bbox, collapse = ",")),
+  "",
+  "Quick read:",
+  paste0("- ", summary_tbl$summary_statement),
+  "",
+  "How to use this artifact:",
+  "- Start with usgs_gw_candidate_discovery_preview_summary.csv.",
+  "- Review additions in usgs_gw_candidate_additions_vs_current_by_lookback.csv.",
+  "- Review current production candidates missing from the preview in usgs_gw_candidate_current_missing_by_lookback.csv; this should usually be zero.",
+  "- This preview does not modify production candidate, history, GeoJSON, or BRIM HTML files.",
+  "",
+  "Recommendation cue:",
+  if (all(summary_tbl$current_missing_from_preview == 0) && any(summary_tbl$additions_vs_current > 0)) {
+    paste0(
+      "Current production candidates are all still found. Consider a local groundwater refresh when additions_vs_current is large enough to matter for the next BRIM release."
+    )
+  } else if (any(summary_tbl$current_missing_from_preview > 0)) {
+    "Some current production candidates were not found in the preview window. Review the missing-current CSV before changing production settings."
+  } else {
+    "No major candidate-universe changes were detected."
+  }
+)
+
+writeLines(quick_read, file.path(out_dir, "README_first.txt"))
 
 ## Fail safely if the preview produced an obviously unusable output. This keeps
 ## a weekly artifact from looking successful when the underlying API query did
