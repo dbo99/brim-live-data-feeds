@@ -8,30 +8,19 @@ on:
         required: false
         default: ""
       bbox:
-        description: "Discovery bbox xmin,ymin,xmax,ymax. Leave blank to use script default."
+        description: "Discovery bbox as xmin,ymin,xmax,ymax. Leave blank to use script default."
         required: false
         default: ""
   schedule:
-    - cron: "27 11 * * 1"
+    - cron: "23 13 * * 1"
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    shell: bash
 
 jobs:
   preview-candidates:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    env:
-      BRIM_GW_PREVIEW_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days }}
-      BRIM_GW_PREVIEW_BBOX: ${{ github.event.inputs.bbox }}
-      BRIM_GW_PREVIEW_PARAMETER_CODE: "72019"
-      CLI_NO_PROGRESS: "true"
-      R_CLI_NUM_COLORS: "1"
 
     steps:
       - name: Check out repository
@@ -42,29 +31,38 @@ jobs:
         with:
           use-public-rspm: true
 
-      - name: Install system curl
+      - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            curl \
-            ca-certificates
+          sudo apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Install minimal R packages
         run: |
-          Rscript -e 'if (!requireNamespace("jsonlite", quietly = TRUE)) install.packages("jsonlite", repos = "https://cloud.r-project.org")'
-          Rscript -e 'stopifnot(requireNamespace("jsonlite", quietly = TRUE))'
+          Rscript -e 'pkgs <- c("jsonlite"); missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]; if (length(missing)) install.packages(missing, repos = "https://cloud.r-project.org"); missing_after <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]; if (length(missing_after)) stop("Missing R package(s): ", paste(missing_after, collapse = ", "))'
 
       - name: Show script dependency guard
+        shell: bash
         run: |
           echo "Checking preview script for unintended heavy package dependencies..."
-          if grep -En "dataRetrieval|dplyr|readr|tibble|sf|httr2|library\(|require\(" scripts/preview_usgs_groundwater_candidate_discovery.R; then
-            echo "Unexpected dependency reference found in preview script."
+          if awk 'BEGIN{bad=0} /^[[:space:]]*#/ {next} /(dataRetrieval|dplyr|readr|tibble|sf|httr2)/ {print FNR ":" $0; bad=1} END{exit bad}' scripts/preview_usgs_groundwater_candidate_discovery.R; then
+            echo "Dependency guard passed."
+          else
+            echo "Unexpected heavy dependency reference found in preview script."
             exit 1
           fi
-          echo "Dependency guard passed."
 
       - name: Run candidate discovery preview
+        shell: bash
+        env:
+          CLI_NO_PROGRESS: "true"
+          R_CLI_NUM_COLORS: "1"
         run: |
+          if [ -n "${{ github.event.inputs.lookback_days || '' }}" ]; then
+            export BRIM_GW_PREVIEW_LOOKBACK_DAYS="${{ github.event.inputs.lookback_days }}"
+          fi
+          if [ -n "${{ github.event.inputs.bbox || '' }}" ]; then
+            export BRIM_GW_PREVIEW_BBOX="${{ github.event.inputs.bbox }}"
+          fi
           Rscript -e 'source("scripts/preview_usgs_groundwater_candidate_discovery.R")'
 
       - name: Upload preview QA artifact
