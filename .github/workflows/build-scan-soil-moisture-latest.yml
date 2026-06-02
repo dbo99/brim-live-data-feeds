@@ -1,0 +1,77 @@
+name: Build SCAN soil moisture latest feed
+
+on:
+  schedule:
+    # Daily at 14:30 UTC = 6:30 AM PST / 7:30 AM PDT.
+    # The feed script looks back several days and reports observation age, so
+    # exact provider update timing does not need to be perfect.
+    - cron: "30 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-scan-soil-moisture-latest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install R packages
+        shell: Rscript {0}
+        run: |
+          # Keep this package list intentionally narrow.  The feed script uses
+          # soilDB for SCAN retrieval plus tidyverse/json helpers for reshaping
+          # and writing GeoJSON.  The curl package is installed explicitly
+          # because soilDB's web retrieval stack depends on reliable HTTP/curl
+          # support, but the feed script does not attach library(curl).
+          pkgs <- c(
+            "soilDB",
+            "curl",
+            "dplyr",
+            "readr",
+            "lubridate",
+            "jsonlite",
+            "tibble",
+            "purrr",
+            "stringr",
+            "tidyr"
+          )
+
+          message("Configured R repositories:")
+          print(getOption("repos"))
+
+          missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+          if (length(missing) > 0) {
+            install.packages(missing, dependencies = TRUE)
+          }
+
+          still_missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+          if (length(still_missing) > 0) {
+            stop("Package installation failed for: ", paste(still_missing, collapse = ", "))
+          }
+
+      - name: Build SCAN soil moisture latest feed
+        shell: bash
+        run: |
+          Rscript scripts/build_scan_soil_moisture_latest.R
+
+      - name: Commit updated feed files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/scan_soil_moisture_latest.geojson docs/data/scan_soil_moisture_latest_summary.json
+          if git diff --cached --quiet; then
+            echo "No SCAN feed changes to commit."
+          else
+            git commit -m "Update SCAN soil moisture latest feed"
+            git push
+          fi
