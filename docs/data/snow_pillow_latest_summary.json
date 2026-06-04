@@ -1,27 +1,27 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-06-03 04:26 PM PDT",
-  "build_date_local": "2026-06-03",
+  "build_time_local": "2026-06-04 02:39 AM PDT",
+  "build_date_local": "2026-06-04",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
   "fetch_start_date": "2025-10-01",
-  "fetch_end_date": "2026-06-03",
+  "fetch_end_date": "2026-06-04",
   "station_rows": 304,
   "latest_geojson_rows": 304,
-  "current_wy_trace_rows": 65745,
-  "snotel_wteq_rows_returned": 40175,
-  "snotel_snwd_rows_returned": 42866,
+  "current_wy_trace_rows": 65907,
+  "snotel_wteq_rows_returned": 40337,
+  "snotel_snwd_rows_returned": 43035,
   "cdec_swe_rows_returned": 27276,
   "invalid_negative_snotel_swe_rows_excluded": 0,
   "invalid_negative_cdec_swe_rows_excluded": 1706,
   "invalid_negative_swe_rows_excluded": 1706,
   "rows_with_latest_swe": 287,
   "rows_without_latest_swe": 17,
-  "rows_reported_zero": 178,
-  "rows_reported_positive": 86,
+  "rows_reported_zero": 170,
+  "rows_reported_positive": 93,
   "rows_missing_recent_value": 17,
   "rows_outside_snow_season_no_recent_report": 0,
-  "rows_stale_last_value": 23,
+  "rows_stale_last_value": 24,
   "rows_with_1day_delta": 287,
   "rows_with_3day_delta": 287,
   "rows_with_7day_delta": 287,
@@ -32,15 +32,15 @@
     },
     {
       "latest_swe_report_status": "reported_positive",
-      "n": 86
+      "n": 93
     },
     {
       "latest_swe_report_status": "reported_zero",
-      "n": 178
+      "n": 170
     },
     {
       "latest_swe_report_status": "stale_last_value",
-      "n": 23
+      "n": 24
     }
   ],
   "provider_status_counts": [
@@ -52,7 +52,7 @@
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "reported_positive",
-      "n": 72
+      "n": 71
     },
     {
       "live_provider_key": "cdec_snow_sensor",
@@ -62,7 +62,7 @@
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "stale_last_value",
-      "n": 23
+      "n": 24
     },
     {
       "live_provider_key": "nrcs_snotel",
@@ -72,12 +72,12 @@
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_positive",
-      "n": 14
+      "n": 22
     },
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_zero",
-      "n": 150
+      "n": 142
     }
   ],
   "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "Negative provider SWE values are treated as invalid/missing and excluded from latest/trace products.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."]
