@@ -1,5 +1,10 @@
 # ==== build_scan_soil_moisture_latest.R =====================================
 #
+# RF060:
+#   - Add retry/backoff and compact fetch diagnostics for GitHub Actions.
+#   - Keep the existing no-empty-publish protection, but make all-empty fetch
+#     failures much easier to diagnose from the Actions log.
+#
 # PURPOSE:
 #   Fetch current-water-year USDA NRCS SCAN soil-moisture observations and
 #   write small static feed files for the BRIM Ops Live SCAN layer.
@@ -61,7 +66,8 @@ if (length(missing_pkgs) > 0) {
 ## Suppress package progress UI; this feed prints its own compact progress.
 options(
   cli.progress_show_after = Inf,
-  cli.progress_handlers = "none"
+  cli.progress_handlers = "none",
+  timeout = max(120, getOption("timeout", 60))
 )
 
 suppressPackageStartupMessages({
@@ -147,6 +153,33 @@ request_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
   unset = "0.15"
 )))
 if (is.na(request_pause_sec) || request_pause_sec < 0) request_pause_sec <- 0.15
+
+## RF060:
+##   GitHub Actions can occasionally receive transient NRCS/SCAN API failures
+##   even when local runs work.  Retry each station/year request a small number
+##   of times and print compact diagnostics so an all-empty fetch is actionable
+##   instead of just saying zero rows were returned.
+scan_fetch_retries <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_FETCH_RETRIES",
+  unset = "3"
+)))
+if (is.na(scan_fetch_retries) || scan_fetch_retries < 1) scan_fetch_retries <- 3L
+
+scan_fetch_retry_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "SCAN_FETCH_RETRY_PAUSE_SEC",
+  unset = "4"
+)))
+if (is.na(scan_fetch_retry_pause_sec) || scan_fetch_retry_pause_sec < 0) {
+  scan_fetch_retry_pause_sec <- 4
+}
+
+scan_fetch_diag_rows_to_print <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_FETCH_DIAG_ROWS_TO_PRINT",
+  unset = "12"
+)))
+if (is.na(scan_fetch_diag_rows_to_print) || scan_fetch_diag_rows_to_print < 1) {
+  scan_fetch_diag_rows_to_print <- 12L
+}
 
 ## Keep UTC fields for machine-readable QA, but create Los Angeles display
 ## fields for BRIM user-facing popups, hovers, and summaries.
@@ -582,33 +615,152 @@ if (percentiles_available) {
 
 # ---- 6. Fetch current-water-year soil-moisture data -------------------------
 
+scan_fetch_log <- tibble::tibble(
+  site_code = integer(),
+  year = integer(),
+  attempt = integer(),
+  status = character(),
+  rows = integer(),
+  message = character()
+)
+
+pt_scan_log_fetch <- function(site_code, year, attempt, status, rows = 0L, message = NA_character_) {
+  scan_fetch_log <<- dplyr::bind_rows(
+    scan_fetch_log,
+    tibble::tibble(
+      site_code = as.integer(site_code),
+      year = as.integer(year),
+      attempt = as.integer(attempt),
+      status = as.character(status),
+      rows = as.integer(rows),
+      message = as.character(message)
+    )
+  )
+  invisible(NULL)
+}
+
+pt_print_scan_fetch_diagnostics <- function(stage = "fetch") {
+  message("\nSCAN SMS fetch diagnostics (", stage, "):")
+  if (nrow(scan_fetch_log) == 0) {
+    message("  No fetch attempts were logged.")
+    return(invisible(NULL))
+  }
+
+  summary_tbl <- scan_fetch_log |>
+    dplyr::count(.data$status, name = "attempts") |>
+    dplyr::arrange(.data$status)
+
+  print(summary_tbl, n = Inf)
+
+  site_summary <- scan_fetch_log |>
+    dplyr::group_by(.data$site_code, .data$year) |>
+    dplyr::summarise(
+      final_status = dplyr::last(.data$status),
+      max_rows = max(.data$rows, na.rm = TRUE),
+      attempts = dplyr::n(),
+      last_message = dplyr::last(.data$message),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(.data$site_code, .data$year)
+
+  failed <- site_summary |>
+    dplyr::filter(.data$max_rows == 0 | .data$final_status != "success")
+
+  if (nrow(failed) > 0) {
+    message("First failed/empty station-year fetches:")
+    print(utils::head(failed, scan_fetch_diag_rows_to_print), n = scan_fetch_diag_rows_to_print)
+  }
+
+  invisible(NULL)
+}
+
 fetch_one_scan_year <- function(site_code, year) {
   message("Fetching SCAN SMS site ", site_code, ", year ", year, "...")
 
-  out <- tryCatch(
-    {
-      x <- soilDB::fetchSCAN(
-        site.code = site_code,
+  last_msg <- NA_character_
+
+  for (attempt in seq_len(scan_fetch_retries)) {
+    warn_msgs <- character()
+    err_msg <- NULL
+
+    out <- tryCatch(
+      withCallingHandlers(
+        {
+          x <- soilDB::fetchSCAN(
+            site.code = site_code,
+            year = year,
+            report = "SMS",
+            timeseries = "Daily",
+            tz = "UTC"
+          )
+
+          if (!is.list(x) || !"SMS" %in% names(x) || is.null(x$SMS) || nrow(x$SMS) == 0) {
+            tibble::tibble()
+          } else {
+            tibble::as_tibble(x$SMS)
+          }
+        },
+        warning = function(w) {
+          warn_msgs <<- c(warn_msgs, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        }
+      ),
+      error = function(e) {
+        err_msg <<- conditionMessage(e)
+        tibble::tibble()
+      }
+    )
+
+    msg <- paste(unique(c(err_msg, warn_msgs)), collapse = " | ")
+    if (!nzchar(msg)) msg <- NA_character_
+    last_msg <- msg
+
+    if (nrow(out) > 0) {
+      pt_scan_log_fetch(
+        site_code = site_code,
         year = year,
-        report = "SMS",
-        timeseries = "Daily",
-        tz = "UTC"
+        attempt = attempt,
+        status = "success",
+        rows = nrow(out),
+        message = msg
       )
 
-      if (!is.list(x) || !"SMS" %in% names(x) || is.null(x$SMS) || nrow(x$SMS) == 0) {
-        return(tibble())
+      if (attempt > 1) {
+        message("  recovered on attempt ", attempt, " with ", nrow(out), " SMS rows.")
       }
 
-      tibble::as_tibble(x$SMS)
-    },
-    error = function(e) {
-      warning("SCAN SMS fetch failed for site ", site_code, ", year ", year, ": ", conditionMessage(e))
-      tibble()
+      if (request_pause_sec > 0) Sys.sleep(request_pause_sec)
+      return(out)
     }
+
+    status <- if (!is.null(err_msg)) "error" else "empty"
+    pt_scan_log_fetch(
+      site_code = site_code,
+      year = year,
+      attempt = attempt,
+      status = status,
+      rows = 0L,
+      message = msg
+    )
+
+    if (attempt < scan_fetch_retries) {
+      message(
+        "  no SMS rows on attempt ", attempt, "/", scan_fetch_retries,
+        if (!is.na(msg)) paste0(" (", msg, ")") else "",
+        "; retrying after ", scan_fetch_retry_pause_sec, " sec..."
+      )
+      if (scan_fetch_retry_pause_sec > 0) Sys.sleep(scan_fetch_retry_pause_sec)
+    }
+  }
+
+  warning(
+    "SCAN SMS fetch returned no rows for site ", site_code, ", year ", year,
+    " after ", scan_fetch_retries, " attempt(s)",
+    if (!is.na(last_msg)) paste0(": ", last_msg) else ""
   )
 
   if (request_pause_sec > 0) Sys.sleep(request_pause_sec)
-  out
+  tibble::tibble()
 }
 
 fetch_grid <- tidyr::expand_grid(
@@ -623,8 +775,16 @@ sms_raw <- purrr::pmap_dfr(
   }
 )
 
+pt_print_scan_fetch_diagnostics("after station-year fetches")
+
 if (nrow(sms_raw) == 0) {
-  stop("No SCAN SMS rows were returned. Not publishing a replacement feed.")
+  stop(
+    "No SCAN SMS rows were returned after ",
+    scan_fetch_retries,
+    " attempt(s) per station/year. Not publishing a replacement feed. ",
+    "Review the SCAN SMS fetch diagnostics above; this is often an upstream ",
+    "NRCS/soilDB/GitHub Actions connectivity issue rather than a BRIM display issue."
+  )
 }
 
 sms_clean <- sms_raw |>
@@ -653,7 +813,12 @@ sms_clean <- sms_raw |>
   )
 
 if (nrow(sms_clean) == 0) {
-  stop("No current-water-year SCAN SMS rows were returned. Not publishing a replacement feed.")
+  pt_print_scan_fetch_diagnostics("after current-WY filtering")
+  stop(
+    "SCAN SMS rows were fetched, but none survived current-water-year filtering. ",
+    "Not publishing a replacement feed. Check Site/Date/value/depth columns and ",
+    "the current WY date window."
+  )
 }
 
 ## Normalize duplicate same-depth sensors into one daily value per station/depth.
