@@ -34,12 +34,15 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends             libcurl4-openssl-dev             libssl-dev             libxml2-dev
+          sudo apt-get install -y --no-install-recommends \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libxml2-dev
 
       - name: Install R package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: scan-soil-moisture-latest-v2
+          cache-version: scan-soil-moisture-latest-v3
           packages: |
             any::soilDB
             any::curl
@@ -54,6 +57,11 @@ jobs:
 
       - name: Build SCAN soil moisture latest feed
         shell: Rscript {0}
+        env:
+          SCAN_FETCH_RETRIES: "3"
+          SCAN_FETCH_RETRY_PAUSE_SEC: "4"
+          SCAN_SMS_REQUEST_PAUSE_SEC: "0.35"
+          SCAN_FETCH_DIAG_ROWS_TO_PRINT: "20"
         run: |
           source("scripts/build_scan_soil_moisture_latest.R")
 
@@ -62,7 +70,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add             docs/data/scan_soil_moisture_latest.geojson             docs/data/scan_soil_moisture_latest_summary.json             docs/data/scan_soil_moisture_current_wy_trace.csv             docs/data/scan_soil_moisture_current_wy_trace_summary.json             docs/data/scan_depth_style.csv
+          git add \
+            docs/data/scan_soil_moisture_latest.geojson \
+            docs/data/scan_soil_moisture_latest_summary.json \
+            docs/data/scan_soil_moisture_current_wy_trace.csv \
+            docs/data/scan_soil_moisture_current_wy_trace_summary.json \
+            docs/data/scan_depth_style.csv
           if git diff --cached --quiet; then
             echo "No SCAN feed changes to commit."
           else
