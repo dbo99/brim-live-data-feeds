@@ -39,7 +39,7 @@ jobs:
       - name: Install R package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: scan-soil-moisture-latest-v3
+          cache-version: scan-soil-moisture-latest-v4
           packages: |
             any::soilDB
             any::httr
@@ -55,6 +55,14 @@ jobs:
 
       - name: Build SCAN soil moisture latest feed
         shell: Rscript {0}
+        env:
+          SCAN_NWCC_PREFLIGHT_RETRIES: "3"
+          SCAN_NWCC_PREFLIGHT_PAUSE_SEC: "10"
+          SCAN_NWCC_PREFLIGHT_TIMEOUT_SEC: "20"
+          SCAN_FETCH_RETRIES: "3"
+          SCAN_FETCH_RETRY_PAUSE_SEC: "6"
+          SCAN_FETCH_TIMEOUT_SEC: "60"
+          SCAN_SMS_REQUEST_PAUSE_SEC: "0.35"
         run: |
           source("scripts/build_scan_soil_moisture_latest.R")
 
