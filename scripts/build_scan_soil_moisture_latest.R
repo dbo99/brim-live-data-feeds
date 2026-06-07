@@ -1,5 +1,10 @@
 # ==== build_scan_soil_moisture_latest.R =====================================
 #
+# RF064:
+#   - Add NRCS endpoint preflight, longer fetch timeout, and per-site/year
+#     retry diagnostics so GitHub Actions fail fast when wcc.sc.egov.usda.gov
+#     is unreachable, while preserving the previous good feed files.
+#
 # PURPOSE:
 #   Fetch current-water-year USDA NRCS SCAN soil-moisture observations and
 #   write small static feed files for the BRIM Ops Live SCAN layer.
@@ -154,6 +159,57 @@ request_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
   unset = "0.15"
 )))
 if (is.na(request_pause_sec) || request_pause_sec < 0) request_pause_sec <- 0.15
+
+## RF064:
+##   GitHub-hosted runners occasionally cannot connect to the NRCS/NWCC SCAN
+##   endpoint within the short curl timeout used by lower-level request helpers.
+##   Keep the feed protective: do not publish empty replacement files, but fail
+##   early and clearly when the endpoint itself is unreachable.
+fetch_retries <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_FETCH_RETRIES",
+  unset = "3"
+)))
+if (is.na(fetch_retries) || fetch_retries < 1) fetch_retries <- 3L
+
+fetch_retry_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "SCAN_FETCH_RETRY_PAUSE_SEC",
+  unset = "4"
+)))
+if (is.na(fetch_retry_pause_sec) || fetch_retry_pause_sec < 0) fetch_retry_pause_sec <- 4
+
+fetch_timeout_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "SCAN_FETCH_TIMEOUT_SEC",
+  unset = "60"
+)))
+if (is.na(fetch_timeout_sec) || fetch_timeout_sec < 5) fetch_timeout_sec <- 60
+
+nrcs_preflight_url <- Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_URL",
+  unset = "https://wcc.sc.egov.usda.gov/"
+)
+
+nrcs_preflight_retries <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_RETRIES",
+  unset = "3"
+)))
+if (is.na(nrcs_preflight_retries) || nrcs_preflight_retries < 1) nrcs_preflight_retries <- 3L
+
+nrcs_preflight_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_PAUSE_SEC",
+  unset = "10"
+)))
+if (is.na(nrcs_preflight_pause_sec) || nrcs_preflight_pause_sec < 0) nrcs_preflight_pause_sec <- 10
+
+nrcs_preflight_timeout_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_TIMEOUT_SEC",
+  unset = "20"
+)))
+if (is.na(nrcs_preflight_timeout_sec) || nrcs_preflight_timeout_sec < 5) nrcs_preflight_timeout_sec <- 20
+
+## Apply a longer httr timeout globally. soilDB::fetchSCAN() uses httr/curl
+## under the hood, and this prevents slow-but-working NRCS responses from
+## failing at the default ~10-second connection timeout.
+httr::set_config(httr::timeout(fetch_timeout_sec))
 
 ## Keep UTC fields for machine-readable QA, but create Los Angeles display
 ## fields for BRIM user-facing popups, hovers, and summaries.
@@ -589,34 +645,136 @@ if (percentiles_available) {
 
 # ---- 6. Fetch current-water-year soil-moisture data -------------------------
 
+pt_check_nrcs_endpoint <- function() {
+  last_error <- NA_character_
+
+  for (attempt in seq_len(nrcs_preflight_retries)) {
+    message(
+      "Checking NRCS/NWCC endpoint connectivity (attempt ", attempt, "/",
+      nrcs_preflight_retries, "): ", nrcs_preflight_url
+    )
+
+    resp <- tryCatch(
+      httr::GET(
+        nrcs_preflight_url,
+        httr::timeout(nrcs_preflight_timeout_sec),
+        httr::user_agent("BRIM-SCAN-live-feed/1.0")
+      ),
+      error = function(e) e
+    )
+
+    if (inherits(resp, "response")) {
+      message("NRCS/NWCC endpoint reachable; HTTP status ", httr::status_code(resp), ".")
+      return(invisible(TRUE))
+    }
+
+    last_error <- conditionMessage(resp)
+    message("  NRCS/NWCC endpoint check failed: ", last_error)
+
+    if (attempt < nrcs_preflight_retries && nrcs_preflight_pause_sec > 0) {
+      message("  Retrying endpoint check after ", nrcs_preflight_pause_sec, " sec...")
+      Sys.sleep(nrcs_preflight_pause_sec)
+    }
+  }
+
+  stop(
+    "NRCS/NWCC SCAN endpoint is unreachable from this runner after ",
+    nrcs_preflight_retries, " preflight attempt(s). ",
+    "Not publishing replacement SCAN feed files; the previous hosted feed is preserved. ",
+    "Last endpoint error: ", last_error
+  )
+}
+
+scan_fetch_diag_rows <- list()
+
+pt_record_fetch_diag <- function(site_code, year, attempts, rows, status, message_txt) {
+  scan_fetch_diag_rows[[length(scan_fetch_diag_rows) + 1L]] <<- tibble::tibble(
+    site_code = as.integer(site_code),
+    year = as.integer(year),
+    attempts = as.integer(attempts),
+    rows = as.integer(rows),
+    status = as.character(status),
+    message = as.character(message_txt)
+  )
+  invisible(NULL)
+}
+
 fetch_one_scan_year <- function(site_code, year) {
-  message("Fetching SCAN SMS site ", site_code, ", year ", year, "...")
 
-  out <- tryCatch(
-    {
-      x <- soilDB::fetchSCAN(
-        site.code = site_code,
-        year = year,
-        report = "SMS",
-        timeseries = "Daily",
-        tz = "UTC"
-      )
+  last_message <- ""
 
-      if (!is.list(x) || !"SMS" %in% names(x) || is.null(x$SMS) || nrow(x$SMS) == 0) {
-        return(tibble())
+  for (attempt in seq_len(fetch_retries)) {
+    message("Fetching SCAN SMS site ", site_code, ", year ", year, " (attempt ", attempt, "/", fetch_retries, ")...")
+
+    warning_messages <- character()
+
+    out <- tryCatch(
+      withCallingHandlers(
+        {
+          x <- soilDB::fetchSCAN(
+            site.code = site_code,
+            year = year,
+            report = "SMS",
+            timeseries = "Daily",
+            tz = "UTC"
+          )
+
+          if (!is.list(x) || !"SMS" %in% names(x) || is.null(x$SMS) || nrow(x$SMS) == 0) {
+            tibble::tibble()
+          } else {
+            tibble::as_tibble(x$SMS)
+          }
+        },
+        warning = function(w) {
+          warning_messages <<- c(warning_messages, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        }
+      ),
+      error = function(e) {
+        last_message <<- conditionMessage(e)
+        tibble()
+      }
+    )
+
+    if (nrow(out) > 0) {
+      if (length(warning_messages) > 0) {
+        last_message <- paste(unique(warning_messages), collapse = " | ")
+      } else {
+        last_message <- "ok"
       }
 
-      tibble::as_tibble(x$SMS)
-    },
-    error = function(e) {
-      warning("SCAN SMS fetch failed for site ", site_code, ", year ", year, ": ", conditionMessage(e))
-      tibble()
+      pt_record_fetch_diag(site_code, year, attempt, nrow(out), "ok", last_message)
+      if (request_pause_sec > 0) Sys.sleep(request_pause_sec)
+      return(out)
     }
+
+    if (length(warning_messages) > 0) {
+      last_message <- paste(unique(warning_messages), collapse = " | ")
+    }
+    if (!nzchar(last_message)) {
+      last_message <- "empty SMS table returned"
+    }
+
+    if (attempt < fetch_retries) {
+      message(
+        "  no SMS rows on attempt ", attempt, "/", fetch_retries,
+        " (", last_message, "); retrying after ", fetch_retry_pause_sec, " sec..."
+      )
+      if (fetch_retry_pause_sec > 0) Sys.sleep(fetch_retry_pause_sec)
+    }
+  }
+
+  message(
+    "  no SMS rows after ", fetch_retries, " attempt(s) for site ",
+    site_code, ", year ", year, ": ", last_message
   )
 
+  pt_record_fetch_diag(site_code, year, fetch_retries, 0L, "empty_or_failed", last_message)
   if (request_pause_sec > 0) Sys.sleep(request_pause_sec)
-  out
+  tibble()
 }
+
+pt_check_nrcs_endpoint()
 
 fetch_grid <- tidyr::expand_grid(
   site_code = station_index$site_code,
@@ -630,8 +788,34 @@ sms_raw <- purrr::pmap_dfr(
   }
 )
 
+scan_fetch_diag <- dplyr::bind_rows(scan_fetch_diag_rows)
+
+if (nrow(scan_fetch_diag) > 0) {
+  message("\nSCAN fetch diagnostics summary:")
+  print(
+    scan_fetch_diag |>
+      dplyr::count(.data$status, name = "requests") |>
+      dplyr::arrange(dplyr::desc(.data$requests)),
+    n = Inf
+  )
+
+  failed_diag <- scan_fetch_diag |>
+    dplyr::filter(.data$status != "ok") |>
+    dplyr::select("site_code", "year", "attempts", "rows", "message") |>
+    dplyr::slice_head(n = 12)
+
+  if (nrow(failed_diag) > 0) {
+    message("\nFirst SCAN fetch failures/empty responses:")
+    print(failed_diag, n = Inf, width = Inf)
+  }
+}
+
 if (nrow(sms_raw) == 0) {
-  stop("No SCAN SMS rows were returned. Not publishing a replacement feed.")
+  stop(
+    "No SCAN SMS rows were returned across all station/year requests. ",
+    "Not publishing replacement feed files; the previous hosted feed is preserved. ",
+    "If the preflight succeeded, review the fetch diagnostics above for NRCS/soilDB response details."
+  )
 }
 
 sms_clean <- sms_raw |>
