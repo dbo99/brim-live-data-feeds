@@ -622,9 +622,10 @@ if (percentiles_available) {
       p70 = suppressWarnings(as.numeric(p70)),
       p90 = suppressWarnings(as.numeric(p90)),
       n_years = suppressWarnings(as.integer(n_years)),
-      climatology_ok = if ("climatology_ok" %in% names(percentiles_raw)) as.logical(climatology_ok) else NA
+      climatology_ok = if ("climatology_ok" %in% names(percentiles_raw)) as.logical(climatology_ok) else NA,
+      min_years_for_context = if ("min_years_for_context" %in% names(percentiles_raw)) suppressWarnings(as.integer(min_years_for_context)) else 7L
     ) |>
-    select(site_code, depth_in, water_day, p10, p30, p50, p70, p90, n_years, climatology_ok)
+    select(site_code, depth_in, water_day, p10, p30, p50, p70, p90, n_years, climatology_ok, min_years_for_context)
 
 } else {
   message("Optional SCAN percentile context not found; latest feed will run without historical context: ", percentiles_csv)
@@ -639,7 +640,8 @@ if (percentiles_available) {
     p70 = numeric(),
     p90 = numeric(),
     n_years = integer(),
-    climatology_ok = logical()
+    climatology_ok = logical(),
+    min_years_for_context = integer()
   )
 }
 
@@ -884,11 +886,18 @@ depth_latest <- sms_daily |>
 depth_latest <- depth_latest |>
   left_join(percentiles, by = c("site_code", "depth_in", "water_day")) |>
   mutate(
-    context_label = pt_context_label(sms_pct, p10, p30, p70, p90),
-    median_sms_pct = p50,
-    vs_median_pctpts = ifelse(is.na(sms_pct) | is.na(p50), NA_real_, sms_pct - p50),
+    context_climatology_ok = dplyr::coalesce(as.logical(climatology_ok), FALSE) &
+      !is.na(n_years) &
+      n_years >= dplyr::coalesce(min_years_for_context, 7L),
+    context_label = ifelse(
+      context_climatology_ok,
+      pt_context_label(sms_pct, p10, p30, p70, p90),
+      "No context"
+    ),
+    median_sms_pct = ifelse(context_climatology_ok, p50, NA_real_),
+    vs_median_pctpts = ifelse(context_climatology_ok & !is.na(sms_pct) & !is.na(p50), sms_pct - p50, NA_real_),
     context_n_years = n_years,
-    context_climatology_ok = climatology_ok
+    context_min_years = min_years_for_context
   )
 
 stations_with_sms <- dplyr::n_distinct(depth_latest$site_code)
@@ -937,9 +946,9 @@ station_depth_summary <- depth_latest |>
     depth_values_json = jsonlite::toJSON(
       purrr::pmap(
         list(depth_in, depth_label, depth_order, depth_color_hex, sms_pct, obs_date, obs_age_days, sensor_id, sensor_count,
-             context_label, median_sms_pct, vs_median_pctpts, context_n_years),
+             context_label, median_sms_pct, vs_median_pctpts, context_n_years, context_min_years),
         function(depth_in, depth_label, depth_order, depth_color_hex, sms_pct, obs_date, obs_age_days, sensor_id, sensor_count,
-                 context_label, median_sms_pct, vs_median_pctpts, context_n_years) {
+                 context_label, median_sms_pct, vs_median_pctpts, context_n_years, context_min_years) {
           list(
             depth_in = depth_in,
             depth_label = depth_label,
@@ -953,7 +962,8 @@ station_depth_summary <- depth_latest |>
             context_label = context_label,
             median_sms_pct = ifelse(is.na(median_sms_pct), NA, round(median_sms_pct, 2)),
             vs_median_pctpts = ifelse(is.na(vs_median_pctpts), NA, round(vs_median_pctpts, 2)),
-            context_n_years = context_n_years
+            context_n_years = context_n_years,
+            context_min_years = context_min_years
           )
         }
       ),
@@ -1003,6 +1013,7 @@ display_latest <- depth_latest |>
     display_median_sms_pct = round(median_sms_pct, 2),
     display_vs_median_pctpts = round(vs_median_pctpts, 2),
     display_context_n_years = context_n_years,
+    display_context_min_years = context_min_years,
     display_context_climatology_ok = context_climatology_ok
   )
 
