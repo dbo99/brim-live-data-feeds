@@ -1,73 +1,83 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-06-07 04:02 PM PDT",
-  "build_date_local": "2026-06-07",
+  "build_time_local": "2026-06-08 03:13 AM PDT",
+  "build_date_local": "2026-06-08",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
   "fetch_start_date": "2025-10-01",
-  "fetch_end_date": "2026-06-07",
+  "fetch_end_date": "2026-06-08",
   "station_rows": 304,
   "latest_geojson_rows": 304,
-  "current_wy_trace_rows": 25829,
-  "snotel_wteq_rows_returned": 0,
-  "snotel_snwd_rows_returned": 0,
-  "cdec_swe_rows_returned": 27604,
+  "current_wy_trace_rows": 62290,
+  "snotel_wteq_rows_returned": 40989,
+  "snotel_snwd_rows_returned": 43732,
+  "cdec_swe_rows_returned": 22983,
   "invalid_negative_snotel_swe_rows_excluded": 0,
-  "invalid_negative_cdec_swe_rows_excluded": 1775,
-  "invalid_negative_swe_rows_excluded": 1775,
-  "rows_with_latest_swe": 123,
-  "rows_without_latest_swe": 181,
-  "rows_reported_zero": 29,
-  "rows_reported_positive": 68,
-  "rows_missing_recent_value": 181,
+  "invalid_negative_cdec_swe_rows_excluded": 1682,
+  "invalid_negative_swe_rows_excluded": 1682,
+  "rows_with_latest_swe": 266,
+  "rows_without_latest_swe": 38,
+  "rows_reported_zero": 166,
+  "rows_reported_positive": 77,
+  "rows_missing_recent_value": 38,
   "rows_outside_snow_season_no_recent_report": 0,
-  "rows_stale_last_value": 26,
-  "rows_with_1day_delta": 123,
-  "rows_with_3day_delta": 123,
-  "rows_with_7day_delta": 123,
+  "rows_stale_last_value": 23,
+  "rows_with_1day_delta": 266,
+  "rows_with_3day_delta": 266,
+  "rows_with_7day_delta": 266,
   "status_counts": [
     {
       "latest_swe_report_status": "missing_recent_value",
-      "n": 181
+      "n": 38
     },
     {
       "latest_swe_report_status": "reported_positive",
-      "n": 68
+      "n": 77
     },
     {
       "latest_swe_report_status": "reported_zero",
-      "n": 29
+      "n": 166
     },
     {
       "latest_swe_report_status": "stale_last_value",
-      "n": 26
+      "n": 23
     }
   ],
   "provider_status_counts": [
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "missing_recent_value",
-      "n": 6
+      "n": 27
     },
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "reported_positive",
-      "n": 68
+      "n": 53
     },
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "reported_zero",
-      "n": 29
+      "n": 26
     },
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "stale_last_value",
-      "n": 26
+      "n": 23
     },
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "missing_recent_value",
-      "n": 175
+      "n": 11
+    },
+    {
+      "live_provider_key": "nrcs_snotel",
+      "latest_swe_report_status": "reported_positive",
+      "n": 24
+    },
+    {
+      "live_provider_key": "nrcs_snotel",
+      "latest_swe_report_status": "reported_zero",
+      "n": 140
     }
   ],
   "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "Negative provider SWE values are treated as invalid/missing and excluded from latest/trace products.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."]
