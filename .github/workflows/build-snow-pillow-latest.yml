@@ -43,7 +43,7 @@ jobs:
       - name: Install R package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: snow-pillow-latest-v3
+          cache-version: snow-pillow-latest-v4
           packages: |
             any::dplyr
             any::readr
@@ -51,6 +51,7 @@ jobs:
             any::stringr
             any::lubridate
             any::jsonlite
+            any::curl
             any::tibble
             any::purrr
             any::sharpshootR
