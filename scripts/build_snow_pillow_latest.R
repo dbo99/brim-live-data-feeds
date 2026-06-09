@@ -1,4 +1,13 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE018
+##   - Harden provider fetches with curl-based retries, AWDB chunk fallback,
+##     CDEC direct-JSON fallback, and pre-write QA guardrails so partial
+##     provider outages fail before publishing degraded feed files.
+##
+## SWE008a
+##   - Trim unused top-level dependency tidyr from script; keep CDEC querying
+##     through sharpshootR because the GitHub Action runtime is acceptable.
+##
 ## SWE008
 ##   - Add 7-day SWE delta for future recent-change map mode.
 ##   - Ensure both 3-day and 7-day deltas are carried into the latest GeoJSON.
@@ -56,13 +65,13 @@ if (!dir.exists("data/input") || !dir.exists("docs")) {
 
 required_pkgs <- c(
   "dplyr",
-  "tidyr",
   "purrr",
   "readr",
   "tibble",
   "stringr",
   "lubridate",
   "jsonlite",
+  "curl",
   "sharpshootR"
 )
 
@@ -77,13 +86,13 @@ if (length(missing_pkgs) > 0) {
 
 suppressPackageStartupMessages({
   library(dplyr)
-  library(tidyr)
   library(purrr)
   library(readr)
   library(tibble)
   library(stringr)
   library(lubridate)
   library(jsonlite)
+  library(curl)
   library(sharpshootR)
 })
 
@@ -240,6 +249,85 @@ first_existing_col <- function(x, choices) {
   if (length(hit) == 0) NA_character_ else hit[[1]]
 }
 
+# ---- 4.1 Robust provider fetch helpers -------------------------------------
+
+PT_FETCH_ATTEMPTS <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_FETCH_ATTEMPTS",
+  unset = "3"
+)))
+if (is.na(PT_FETCH_ATTEMPTS) || PT_FETCH_ATTEMPTS < 1) PT_FETCH_ATTEMPTS <- 3L
+
+PT_FETCH_TIMEOUT_SEC <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_FETCH_TIMEOUT_SEC",
+  unset = "90"
+)))
+if (is.na(PT_FETCH_TIMEOUT_SEC) || PT_FETCH_TIMEOUT_SEC < 10) PT_FETCH_TIMEOUT_SEC <- 90L
+
+pt_fetch_text <- function(url, label, attempts = PT_FETCH_ATTEMPTS, timeout_sec = PT_FETCH_TIMEOUT_SEC) {
+
+  label <- pt_chr(label)
+  if (is.na(label)) label <- "provider request"
+
+  for (attempt in seq_len(attempts)) {
+
+    handle <- curl::new_handle()
+    curl::handle_setopt(
+      handle,
+      useragent = "BRIM-snow-pillow-latest/1.0 (+https://github.com/dbo99/brim-live-data-feeds)",
+      followlocation = TRUE,
+      timeout = timeout_sec,
+      connecttimeout = min(30L, timeout_sec)
+    )
+
+    resp <- tryCatch(
+      curl::curl_fetch_memory(url, handle = handle),
+      error = function(e) e
+    )
+
+    if (!inherits(resp, "error")) {
+      status <- as.integer(resp$status_code)
+      txt <- rawToChar(resp$content)
+
+      if (!is.na(status) && status >= 200L && status < 300L && nzchar(txt)) {
+        return(txt)
+      }
+
+      msg <- paste0(
+        label, " returned HTTP ", status,
+        " on attempt ", attempt, "/", attempts,
+        if (nzchar(txt)) paste0("; first response chars: ", substr(gsub("\\s+", " ", txt), 1, 160)) else ""
+      )
+      message(msg)
+    } else {
+      message(
+        label, " failed on attempt ", attempt, "/", attempts,
+        "; error: ", conditionMessage(resp)
+      )
+    }
+
+    if (attempt < attempts) Sys.sleep(pmin(10, attempt * 2))
+  }
+
+  NULL
+}
+
+pt_json_from_url <- function(url, label) {
+
+  txt <- pt_fetch_text(url, label = label)
+
+  if (is.null(txt) || !nzchar(txt)) {
+    return(NULL)
+  }
+
+  tryCatch(
+    jsonlite::fromJSON(txt, flatten = TRUE),
+    error = function(e) {
+      message(label, " returned text that could not be parsed as JSON; error: ", conditionMessage(e))
+      NULL
+    }
+  )
+}
+
 # ==== 5. AWDB / SNOTEL fetch helpers ========================================
 
 parse_awdb_data_response <- function(resp, element_code) {
@@ -326,7 +414,7 @@ fetch_awdb_element <- function(station_triplets,
 
   message("AWDB ", element_code, " chunks: ", length(chunks), " (", length(station_triplets), " stations)")
 
-  out <- purrr::map(chunks, function(trips) {
+  fetch_one_awdb_chunk <- function(trips, chunk_label) {
 
     Sys.sleep(pause_sec)
 
@@ -340,19 +428,83 @@ fetch_awdb_element <- function(station_triplets,
       "&periodRef=END"
     )
 
-    resp <- try(jsonlite::fromJSON(awdb_url, flatten = TRUE), silent = TRUE)
+    resp <- pt_json_from_url(
+      awdb_url,
+      label = paste0("AWDB ", element_code, " ", chunk_label, " (", length(trips), " station(s))")
+    )
 
-    if (inherits(resp, "try-error") || is.null(resp) || !is.data.frame(resp) || nrow(resp) == 0) {
+    if (is.null(resp) || !is.data.frame(resp) || nrow(resp) == 0) {
       return(empty_out)
     }
 
     parse_awdb_data_response(resp, element_code = element_code)
+  }
+
+  out <- purrr::imap(chunks, function(trips, idx) {
+
+    chunk_rows <- fetch_one_awdb_chunk(trips, paste0("chunk ", idx, "/", length(chunks)))
+
+    ## If a multi-station chunk fails or parses empty, retry station-by-station.
+    ## This is slower but much safer for GitHub Actions and avoids publishing a
+    ## zero-SNOTEL feed because one large chunk request failed.
+    if (nrow(chunk_rows) == 0 && length(trips) > 1) {
+      message(
+        "AWDB ", element_code, " chunk ", idx, " returned 0 rows; ",
+        "retrying ", length(trips), " station(s) individually."
+      )
+
+      indiv <- purrr::map(trips, function(trip) {
+        fetch_one_awdb_chunk(trip, paste0("station ", trip))
+      })
+
+      return(dplyr::bind_rows(indiv))
+    }
+
+    chunk_rows
   })
 
   dplyr::bind_rows(out)
 }
 
+
 # ==== 6. CDEC fetch helper ===================================================
+
+pt_parse_cdec_json_response <- function(resp, id) {
+
+  empty_out <- pt_empty_cdec()
+
+  if (is.null(resp) || !is.data.frame(resp) || nrow(resp) == 0) {
+    return(empty_out)
+  }
+
+  raw <- tibble::as_tibble(resp)
+  names(raw) <- make.names(tolower(names(raw)))
+
+  station_col <- first_existing_col(raw, c("stationid", "station.id", "station_id", "id", "station"))
+  date_col    <- first_existing_col(raw, c("date", "datetime", "obsdate", "obs.date", "eventdate", "event.date"))
+  value_col   <- first_existing_col(raw, c("value", "sensorvalue", "sensor.value", "obsvalue", "obs.value"))
+
+  if (is.na(date_col) || is.na(value_col)) {
+    message(
+      "CDEC direct JSON for ", id,
+      " could not be standardized. Columns: ", paste(names(raw), collapse = ", ")
+    )
+    return(empty_out)
+  }
+
+  provider_station_id <- if (!is.na(station_col)) {
+    pt_chr(raw[[station_col]])
+  } else {
+    rep(id, nrow(raw))
+  }
+
+  tibble::tibble(
+    provider_station_id = provider_station_id,
+    obs_date = pt_date(raw[[date_col]]),
+    value = pt_num(raw[[value_col]])
+  ) |>
+    dplyr::filter(!is.na(.data$provider_station_id), !is.na(.data$obs_date))
+}
 
 fetch_cdec_swe <- function(cdec_ids,
                            begin_date,
@@ -374,19 +526,62 @@ fetch_cdec_swe <- function(cdec_ids,
 
     Sys.sleep(pause_sec)
 
-    raw <- try(
-      sharpshootR::CDECquery(
-        id = id,
-        sensor = CDEC_SWE_SENSOR,
-        interval = CDEC_DAILY_INTERVAL,
-        start = as.character(begin_date),
-        end = as.character(end_date)
-      ),
-      silent = TRUE
-    )
+    raw <- NULL
 
-    if (inherits(raw, "try-error") || is.null(raw) || !is.data.frame(raw) || nrow(raw) == 0) {
-      return(empty_out)
+    for (attempt in seq_len(PT_FETCH_ATTEMPTS)) {
+
+      raw_try <- withCallingHandlers(
+        tryCatch(
+          sharpshootR::CDECquery(
+            id = id,
+            sensor = CDEC_SWE_SENSOR,
+            interval = CDEC_DAILY_INTERVAL,
+            start = as.character(begin_date),
+            end = as.character(end_date)
+          ),
+          error = function(e) {
+            message(
+              "CDEC sharpshootR fetch failed for ", id,
+              " attempt ", attempt, "/", PT_FETCH_ATTEMPTS,
+              "; error: ", conditionMessage(e)
+            )
+            NULL
+          }
+        ),
+        warning = function(w) {
+          message(
+            "CDEC sharpshootR warning for ", id,
+            " attempt ", attempt, "/", PT_FETCH_ATTEMPTS,
+            "; warning: ", conditionMessage(w)
+          )
+          invokeRestart("muffleWarning")
+        }
+      )
+
+      if (is.data.frame(raw_try) && nrow(raw_try) > 0) {
+        raw <- raw_try
+        break
+      }
+
+      if (attempt < PT_FETCH_ATTEMPTS) Sys.sleep(pmin(8, attempt * 2))
+    }
+
+    if (is.null(raw) || !is.data.frame(raw) || nrow(raw) == 0) {
+
+      ## Direct JSON fallback uses the same public CDEC endpoint that users can
+      ## open in a browser.  It avoids losing a station solely because the
+      ## sharpshootR wrapper or connection layer failed in GitHub Actions.
+      cdec_url <- paste0(
+        "https://cdec.water.ca.gov/dynamicapp/req/JSONDataServlet?",
+        "Stations=", utils::URLencode(id, reserved = TRUE),
+        "&SensorNums=", CDEC_SWE_SENSOR,
+        "&dur_code=", CDEC_DAILY_INTERVAL,
+        "&Start=", utils::URLencode(as.character(begin_date), reserved = TRUE),
+        "&End=", utils::URLencode(as.character(end_date), reserved = TRUE)
+      )
+
+      resp <- pt_json_from_url(cdec_url, label = paste0("CDEC direct JSON ", id))
+      return(pt_parse_cdec_json_response(resp, id = id))
     }
 
     raw <- tibble::as_tibble(raw)
@@ -415,6 +610,7 @@ fetch_cdec_swe <- function(cdec_ids,
 
   dplyr::bind_rows(pieces)
 }
+
 
 # ==== 7. Observation summarizers ============================================
 
@@ -947,6 +1143,101 @@ trace_summary_obj <- list(
   stations_with_trace_rows = dplyr::n_distinct(wy_trace$station_uid),
   providers = sort(unique(wy_trace$live_provider_key))
 )
+
+# ==== 14.5. Pre-write QA guardrails =========================================
+
+## The live map should not publish a mostly-empty feed when a provider/API or
+## GitHub runner fetch fails.  These checks intentionally run after all fetches
+## and summaries are built, but before any browser-facing files are written.
+DISABLE_QA_GUARDRAILS <- tolower(Sys.getenv(
+  "SNOW_PILLOW_DISABLE_QA_GUARDRAILS",
+  unset = "false"
+)) %in% c("true", "t", "1", "yes", "y")
+
+expected_fetch_days <- max(1L, as.integer(FETCH_END_DATE - FETCH_START_DATE + 1L))
+
+qa_min_snotel_wteq_rows <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_WTEQ_ROWS",
+  unset = as.character(max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20)))
+)))
+qa_min_snotel_snwd_rows <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_SNWD_ROWS",
+  unset = as.character(max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20)))
+)))
+qa_min_cdec_swe_rows <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_QA_MIN_CDEC_SWE_ROWS",
+  unset = as.character(max(10L, floor(nrow(cdec_stations) * expected_fetch_days * 0.20)))
+)))
+qa_min_trace_rows <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_QA_MIN_CURRENT_WY_TRACE_ROWS",
+  unset = as.character(max(10L, floor(nrow(stations) * expected_fetch_days * 0.20)))
+)))
+qa_min_latest_swe_rows <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
+  unset = as.character(if (in_low_snow_reporting_season) 10L else max(25L, floor(nrow(stations) * 0.40)))
+)))
+
+qa_problems <- character()
+
+if (nrow(snotel_stations) > 0 && nrow(snotel_wteq) < qa_min_snotel_wteq_rows) {
+  qa_problems <- c(
+    qa_problems,
+    paste0("SNOTEL WTEQ rows too low: ", nrow(snotel_wteq), " < ", qa_min_snotel_wteq_rows)
+  )
+}
+
+if (nrow(snotel_stations) > 0 && nrow(snotel_snwd) < qa_min_snotel_snwd_rows) {
+  qa_problems <- c(
+    qa_problems,
+    paste0("SNOTEL SNWD rows too low: ", nrow(snotel_snwd), " < ", qa_min_snotel_snwd_rows)
+  )
+}
+
+if (nrow(cdec_stations) > 0 && nrow(cdec_swe) < qa_min_cdec_swe_rows) {
+  qa_problems <- c(
+    qa_problems,
+    paste0("CDEC SWE rows too low: ", nrow(cdec_swe), " < ", qa_min_cdec_swe_rows)
+  )
+}
+
+if (nrow(wy_trace) < qa_min_trace_rows) {
+  qa_problems <- c(
+    qa_problems,
+    paste0("Current-WY trace rows too low: ", nrow(wy_trace), " < ", qa_min_trace_rows)
+  )
+}
+
+latest_swe_rows <- sum(!is.na(latest$latest_swe_in))
+if (latest_swe_rows < qa_min_latest_swe_rows) {
+  qa_problems <- c(
+    qa_problems,
+    paste0("Rows with latest SWE too low: ", latest_swe_rows, " < ", qa_min_latest_swe_rows)
+  )
+}
+
+if (length(qa_problems) > 0) {
+
+  qa_msg <- paste0(
+    "Snow pillow latest-feed QA guardrail failed; refusing to write/publish degraded feed files.\n",
+    "Problems:\n  - ", paste(qa_problems, collapse = "\n  - "), "\n\n",
+    "Observed fetch summary:\n",
+    "  SNOTEL WTEQ rows: ", nrow(snotel_wteq), "\n",
+    "  SNOTEL SNWD rows: ", nrow(snotel_snwd), "\n",
+    "  CDEC SWE rows: ", nrow(cdec_swe), "\n",
+    "  Current-WY trace rows: ", nrow(wy_trace), "\n",
+    "  Rows with latest SWE: ", latest_swe_rows, "\n",
+    "  Stations: ", nrow(stations), "\n",
+    "  Expected fetch days: ", expected_fetch_days, "\n\n",
+    "If this is an intentional emergency override, set ",
+    "SNOW_PILLOW_DISABLE_QA_GUARDRAILS=true for a one-off run."
+  )
+
+  if (DISABLE_QA_GUARDRAILS) {
+    warning(qa_msg, call. = FALSE)
+  } else {
+    stop(qa_msg, call. = FALSE)
+  }
+}
 
 # ==== 15. Write outputs ======================================================
 
