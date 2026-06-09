@@ -1,4 +1,16 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE020b
+##   - Prefer CDEC SNO ADJ / sensor #82 for CDEC SWE latest/current-WY feed.
+##   - Allow SNOW WC / sensor #3 only as a limited raw tail after the
+##     latest valid #82 value, default 21 days; do not use #3 to fill older
+##     gaps in the adjusted record.
+##   - Carry selected source fields into latest GeoJSON and current-WY trace so
+##     popup text and delta math are explainable.
+## SWE019
+##   - Add live/latest implausibly-high SWE filtering to match historical
+##     context QC and keep bad CDEC sensor spikes out of current-WY traces.
+##   - Add stronger seasonal QA guardrails and publish the active QA thresholds
+##     in the summary JSON for easier future checks.
 ## SWE018a
 ##   - Use direct CDEC JSONDataServlet fetch first and keep sharpshootR as a
 ##     quiet one-attempt fallback. This avoids repeated sharpshootR HTTP/URL
@@ -38,7 +50,8 @@
 ##       data/input/snow_pillow_station_index.csv
 ##   - Fetch current-water-year daily SWE values for:
 ##       * USDA NRCS / SNOTEL via AWDB REST element WTEQ
-##       * CA DWR / CDEC snow sensors via sharpshootR::CDECquery(sensor = 3)
+##       * CA DWR / CDEC snow sensors via SNO ADJ / sensor #82, with SNOW WC /
+##        sensor #3 used only as a limited recent raw-tail fallback
 ##   - Write small browser-facing files under:
 ##       docs/data/
 ##
@@ -148,10 +161,24 @@ if (is.na(STALE_DAYS) || STALE_DAYS < 1) STALE_DAYS <- 7L
 VERY_STALE_DAYS <- suppressWarnings(as.integer(Sys.getenv("SNOW_PILLOW_VERY_STALE_DAYS", unset = "21")))
 if (is.na(VERY_STALE_DAYS) || VERY_STALE_DAYS < STALE_DAYS) VERY_STALE_DAYS <- max(21L, STALE_DAYS)
 
-## CDEC sensor 3 is snow water content / SWE in inches in the existing BRIM
-## prototype workflow.
-CDEC_SWE_SENSOR <- 3L
+## Implausibly high daily SWE values are treated as invalid in the live/latest
+## feed, matching the historical-context QC philosophy.  This prevents one bad
+## daily sensor spike from blowing out popup Plot B and hover mini-plot scales.
+MAX_VALID_SWE_IN <- suppressWarnings(as.numeric(Sys.getenv("SNOW_PILLOW_MAX_VALID_SWE_IN", unset = "250")))
+if (is.na(MAX_VALID_SWE_IN) || MAX_VALID_SWE_IN <= 0) MAX_VALID_SWE_IN <- 250
+
+## CDEC source rule for live/latest display.
+## Prefer SNO ADJ / sensor #82 wherever valid.  Use raw SNOW WC / sensor #3
+## only after the latest valid #82 date, and only for a short recent tail.  This
+## captures brand-new storm data without using #3 to fill old #82 gaps.
+CDEC_RAW_SWE_SENSOR <- 3L
+CDEC_REVISED_SWE_SENSOR <- 82L
 CDEC_DAILY_INTERVAL <- "D"
+CDEC_RAW_TAIL_DAYS <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_CDEC_RAW_TAIL_DAYS",
+  unset = "21"
+)))
+if (is.na(CDEC_RAW_TAIL_DAYS) || CDEC_RAW_TAIL_DAYS < 0) CDEC_RAW_TAIL_DAYS <- 21L
 
 # ==== 4. Small helpers =======================================================
 
@@ -167,18 +194,25 @@ pt_num <- function(x) {
 }
 
 pt_swe_num <- function(x) {
-  ## SWE should not be negative.  Some provider feeds can emit negative daily
-  ## values during melt-out, maintenance, or sensor/QC edge cases.  Keep those
-  ## values out of the browser-facing latest/trace products rather than letting
-  ## them create ambiguous "unknown" status classes.
+  ## SWE should not be negative or implausibly high.  Some provider feeds can
+  ## emit negative, sentinel, or extreme daily values during melt-out,
+  ## maintenance, or sensor/QC edge cases.  Keep those values out of the
+  ## browser-facing latest/trace products rather than letting them create
+  ## ambiguous statuses or unusable plot scales.
   v <- pt_num(x)
   v[!is.na(v) & v < 0] <- NA_real_
+  v[!is.na(v) & v > MAX_VALID_SWE_IN] <- NA_real_
   v
 }
 
 pt_negative_swe_count <- function(x) {
   v <- pt_num(x)
   sum(!is.na(v) & v < 0, na.rm = TRUE)
+}
+
+pt_high_swe_count <- function(x) {
+  v <- pt_num(x)
+  sum(!is.na(v) & v > MAX_VALID_SWE_IN, na.rm = TRUE)
 }
 
 pt_date <- function(x) {
@@ -245,7 +279,8 @@ pt_empty_cdec <- function() {
   tibble::tibble(
     provider_station_id = character(),
     obs_date = as.Date(character()),
-    value = numeric()
+    value = numeric(),
+    sensor_num = integer()
   )
 }
 
@@ -474,7 +509,7 @@ fetch_awdb_element <- function(station_triplets,
 
 # ==== 6. CDEC fetch helper ===================================================
 
-pt_parse_cdec_json_response <- function(resp, id) {
+pt_parse_cdec_json_response <- function(resp, id, sensor_num) {
 
   empty_out <- pt_empty_cdec()
 
@@ -506,18 +541,24 @@ pt_parse_cdec_json_response <- function(resp, id) {
   tibble::tibble(
     provider_station_id = provider_station_id,
     obs_date = pt_date(raw[[date_col]]),
-    value = pt_num(raw[[value_col]])
+    value = pt_num(raw[[value_col]]),
+    sensor_num = as.integer(sensor_num)
   ) |>
     dplyr::filter(!is.na(.data$provider_station_id), !is.na(.data$obs_date))
 }
 
 fetch_cdec_swe <- function(cdec_ids,
+                           sensor_num,
+                           sensor_label,
                            begin_date,
                            end_date,
                            pause_sec = REQUEST_PAUSE_SEC) {
 
   cdec_ids <- pt_chr(cdec_ids)
   cdec_ids <- unique(cdec_ids[!is.na(cdec_ids)])
+  sensor_num <- as.integer(sensor_num)
+  sensor_label <- pt_chr(sensor_label)
+  if (is.na(sensor_label)) sensor_label <- paste0("sensor ", sensor_num)
 
   empty_out <- pt_empty_cdec()
 
@@ -525,51 +566,46 @@ fetch_cdec_swe <- function(cdec_ids,
     return(empty_out)
   }
 
-  message("CDEC SWE stations to query: ", length(cdec_ids))
+  message("CDEC SWE stations to query: ", length(cdec_ids), " (", sensor_label, " / sensor ", sensor_num, ")")
 
   pieces <- purrr::map(cdec_ids, function(id) {
 
     Sys.sleep(pause_sec)
 
-    ## SWE018a: Prefer the public CDEC JSON endpoint directly.  It is the same
-    ## endpoint sharpshootR ultimately queries, but using it directly avoids the
-    ## repeated noisy "invalid URL" / peer-reset behavior seen in GitHub
-    ## Actions when the wrapper connection fails even though the URL works in a
-    ## browser.  Keep a small sharpshootR fallback for compatibility.
     cdec_url <- paste0(
       "https://cdec.water.ca.gov/dynamicapp/req/JSONDataServlet?",
       "Stations=", utils::URLencode(id, reserved = TRUE),
-      "&SensorNums=", CDEC_SWE_SENSOR,
+      "&SensorNums=", sensor_num,
       "&dur_code=", CDEC_DAILY_INTERVAL,
       "&Start=", utils::URLencode(as.character(begin_date), reserved = TRUE),
       "&End=", utils::URLencode(as.character(end_date), reserved = TRUE)
     )
 
-    resp <- pt_json_from_url(cdec_url, label = paste0("CDEC direct JSON ", id))
-    direct_rows <- pt_parse_cdec_json_response(resp, id = id)
+    resp <- pt_json_from_url(cdec_url, label = paste0("CDEC direct JSON ", id, " sensor ", sensor_num))
+    direct_rows <- pt_parse_cdec_json_response(resp, id = id, sensor_num = sensor_num)
 
     if (is.data.frame(direct_rows) && nrow(direct_rows) > 0) {
       return(direct_rows)
     }
 
-    message("CDEC direct JSON returned no rows for ", id, "; trying sharpshootR fallback once.")
+    message("CDEC direct JSON returned no rows for ", id, " sensor ", sensor_num, "; trying sharpshootR fallback once.")
 
     raw <- withCallingHandlers(
       tryCatch(
         sharpshootR::CDECquery(
           id = id,
-          sensor = CDEC_SWE_SENSOR,
+          sensor = sensor_num,
           interval = CDEC_DAILY_INTERVAL,
           start = as.character(begin_date),
           end = as.character(end_date)
         ),
         error = function(e) {
-          message("CDEC sharpshootR fallback failed for ", id, "; error: ", conditionMessage(e))
+          message("CDEC sharpshootR fallback failed for ", id, " sensor ", sensor_num, "; error: ", conditionMessage(e))
           NULL
         }
       ),
       warning = function(w) {
-        message("CDEC sharpshootR fallback warning for ", id, "; warning: ", conditionMessage(w))
+        message("CDEC sharpshootR fallback warning for ", id, " sensor ", sensor_num, "; warning: ", conditionMessage(w))
         invokeRestart("muffleWarning")
       }
     )
@@ -597,12 +633,90 @@ fetch_cdec_swe <- function(cdec_ids,
     tibble::tibble(
       provider_station_id = provider_station_id,
       obs_date = pt_date(raw[[date_col]]),
-      value = pt_num(raw[[value_col]])
+      value = pt_num(raw[[value_col]]),
+      sensor_num = sensor_num
     ) |>
       dplyr::filter(!is.na(.data$provider_station_id), !is.na(.data$obs_date))
   })
 
   dplyr::bind_rows(pieces)
+}
+
+select_cdec_swe_source <- function(cdec_sensor3_obs,
+                                   cdec_sensor82_obs,
+                                   raw_tail_days = CDEC_RAW_TAIL_DAYS) {
+
+  empty <- cdec_sensor3_obs |>
+    dplyr::slice(0)
+
+  if ((!is.data.frame(cdec_sensor3_obs) || nrow(cdec_sensor3_obs) == 0) &&
+      (!is.data.frame(cdec_sensor82_obs) || nrow(cdec_sensor82_obs) == 0)) {
+    return(empty)
+  }
+
+  sensor82_valid <- cdec_sensor82_obs |>
+    dplyr::filter(!is.na(.data$swe_in)) |>
+    dplyr::mutate(
+      source_element = "CDEC_SENSOR_82_SNO_ADJ",
+      swe_source_class = "cdec_sno_adj_82",
+      swe_source_label = "CDEC SNO ADJ (#82)",
+      swe_source_note = "CDEC revised/adjusted SWE source."
+    )
+
+  sensor3_valid <- cdec_sensor3_obs |>
+    dplyr::filter(!is.na(.data$swe_in)) |>
+    dplyr::mutate(
+      source_element = "CDEC_SENSOR_3_SNOW_WC",
+      swe_source_class = "cdec_snow_wc_3",
+      swe_source_label = "CDEC SNOW WC (#3)",
+      swe_source_note = "CDEC raw snow-water-content source."
+    )
+
+  latest82 <- sensor82_valid |>
+    dplyr::group_by(.data$station_uid) |>
+    dplyr::summarise(
+      latest_82_date = max(.data$obs_date, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  ## Use #3 only as a short recent tail after the latest valid #82 value.  Do not
+  ## use #3 to fill older holes in #82.  If a station has no valid #82 at all in
+  ## the fetch window, keep #3 as an explicit fallback so active stations are not
+  ## silently dropped.
+  raw_tail <- sensor3_valid |>
+    dplyr::left_join(latest82, by = "station_uid") |>
+    dplyr::filter(
+      (is.na(.data$latest_82_date)) |
+        (.data$obs_date > .data$latest_82_date &
+           .data$obs_date <= .data$latest_82_date + raw_tail_days)
+    ) |>
+    dplyr::mutate(
+      source_element = dplyr::if_else(
+        is.na(.data$latest_82_date),
+        "CDEC_SENSOR_3_FALLBACK_NO_82",
+        "CDEC_SENSOR_3_RECENT_RAW_TAIL"
+      ),
+      swe_source_class = dplyr::if_else(
+        is.na(.data$latest_82_date),
+        "cdec_snow_wc_3_fallback_no_82",
+        "cdec_snow_wc_3_recent_tail"
+      ),
+      swe_source_label = dplyr::if_else(
+        is.na(.data$latest_82_date),
+        "CDEC SNOW WC (#3 fallback; no #82)",
+        paste0("CDEC SNOW WC (#3 limited raw tail <=", raw_tail_days, "d)")
+      ),
+      swe_source_note = dplyr::if_else(
+        is.na(.data$latest_82_date),
+        "No valid #82 adjusted SWE found in fetch window; using raw #3 fallback.",
+        paste0("Limited raw #3 tail after latest valid #82, capped at ", raw_tail_days, " days.")
+      )
+    ) |>
+    dplyr::select(-"latest_82_date")
+
+  dplyr::bind_rows(sensor82_valid, raw_tail) |>
+    dplyr::arrange(.data$station_uid, .data$obs_date, .data$source_element) |>
+    dplyr::distinct(.data$station_uid, .data$obs_date, .keep_all = TRUE)
 }
 
 # ==== 7. Observation summarizers ============================================
@@ -623,18 +737,41 @@ latest_and_delta <- function(obs,
     swe_delta_7day_in = numeric(),
     n_current_wy_swe_obs = integer(),
     n_current_wy_swe_zero_obs = integer(),
-    n_current_wy_swe_positive_obs = integer()
+    n_current_wy_swe_positive_obs = integer(),
+    latest_swe_source_element = character(),
+    latest_swe_source_class = character(),
+    latest_swe_source_label = character(),
+    latest_swe_source_note = character(),
+    swe_delta_1day_source_class = character(),
+    swe_delta_2day_source_class = character(),
+    swe_delta_3day_source_class = character(),
+    swe_delta_7day_source_class = character()
   )
 
   if (!is.data.frame(obs) || nrow(obs) == 0) {
     return(empty_out)
   }
 
+  source_element_col <- if ("source_element" %in% names(obs)) "source_element" else NA_character_
+  source_class_col <- if ("swe_source_class" %in% names(obs)) "swe_source_class" else NA_character_
+  source_label_col <- if ("swe_source_label" %in% names(obs)) "swe_source_label" else NA_character_
+  source_note_col <- if ("swe_source_note" %in% names(obs)) "swe_source_note" else NA_character_
+
   obs2 <- obs |>
+    dplyr::mutate(
+      .pt_source_element = if (!is.na(source_element_col)) as.character(.data[[source_element_col]]) else NA_character_,
+      .pt_source_class = if (!is.na(source_class_col)) as.character(.data[[source_class_col]]) else NA_character_,
+      .pt_source_label = if (!is.na(source_label_col)) as.character(.data[[source_label_col]]) else NA_character_,
+      .pt_source_note = if (!is.na(source_note_col)) as.character(.data[[source_note_col]]) else NA_character_
+    ) |>
     dplyr::transmute(
       station_uid = as.character(.data[[id_col]]),
       obs_date = as.Date(.data[[date_col]]),
-      swe_in = pt_num(.data[[value_col]])
+      swe_in = pt_num(.data[[value_col]]),
+      source_element = .data$.pt_source_element,
+      swe_source_class = .data$.pt_source_class,
+      swe_source_label = .data$.pt_source_label,
+      swe_source_note = .data$.pt_source_note
     ) |>
     dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date), !is.na(.data$swe_in))
 
@@ -658,12 +795,16 @@ latest_and_delta <- function(obs,
     dplyr::ungroup() |>
     dplyr::rename(
       latest_swe_date = obs_date,
-      latest_swe_in = swe_in
+      latest_swe_in = swe_in,
+      latest_swe_source_element = source_element,
+      latest_swe_source_class = swe_source_class,
+      latest_swe_source_label = swe_source_label,
+      latest_swe_source_note = swe_source_note
     )
 
   delta_ref <- function(days_back) {
     latest |>
-      dplyr::select("station_uid", "latest_swe_date", "latest_swe_in") |>
+      dplyr::select("station_uid", "latest_swe_date", "latest_swe_in", "latest_swe_source_class") |>
       dplyr::left_join(obs2, by = "station_uid", relationship = "many-to-many") |>
       dplyr::filter(.data$obs_date <= .data$latest_swe_date - days_back) |>
       dplyr::arrange(.data$station_uid, dplyr::desc(.data$obs_date)) |>
@@ -673,21 +814,27 @@ latest_and_delta <- function(obs,
       dplyr::transmute(
         station_uid = .data$station_uid,
         ref_value = .data$swe_in,
-        delta = .data$latest_swe_in - .data$swe_in
+        delta = .data$latest_swe_in - .data$swe_in,
+        delta_source_class = dplyr::case_when(
+          is.na(.data$latest_swe_source_class) & is.na(.data$swe_source_class) ~ NA_character_,
+          is.na(.data$latest_swe_source_class) | is.na(.data$swe_source_class) ~ "mixed_or_unknown",
+          .data$latest_swe_source_class == .data$swe_source_class ~ .data$latest_swe_source_class,
+          TRUE ~ paste0(.data$swe_source_class, " -> ", .data$latest_swe_source_class)
+        )
       )
   }
 
   d1 <- delta_ref(1L) |>
-    dplyr::transmute(station_uid = .data$station_uid, swe_delta_1day_in = .data$delta)
+    dplyr::transmute(station_uid = .data$station_uid, swe_delta_1day_in = .data$delta, swe_delta_1day_source_class = .data$delta_source_class)
 
   d2 <- delta_ref(2L) |>
-    dplyr::transmute(station_uid = .data$station_uid, swe_delta_2day_in = .data$delta)
+    dplyr::transmute(station_uid = .data$station_uid, swe_delta_2day_in = .data$delta, swe_delta_2day_source_class = .data$delta_source_class)
 
   d3 <- delta_ref(3L) |>
-    dplyr::transmute(station_uid = .data$station_uid, swe_delta_3day_in = .data$delta)
+    dplyr::transmute(station_uid = .data$station_uid, swe_delta_3day_in = .data$delta, swe_delta_3day_source_class = .data$delta_source_class)
 
   d7 <- delta_ref(7L) |>
-    dplyr::transmute(station_uid = .data$station_uid, swe_delta_7day_in = .data$delta)
+    dplyr::transmute(station_uid = .data$station_uid, swe_delta_7day_in = .data$delta, swe_delta_7day_source_class = .data$delta_source_class)
 
   latest |>
     dplyr::left_join(d1, by = "station_uid") |>
@@ -710,7 +857,15 @@ latest_and_delta <- function(obs,
       "swe_delta_7day_in",
       "n_current_wy_swe_obs",
       "n_current_wy_swe_zero_obs",
-      "n_current_wy_swe_positive_obs"
+      "n_current_wy_swe_positive_obs",
+      "latest_swe_source_element",
+      "latest_swe_source_class",
+      "latest_swe_source_label",
+      "latest_swe_source_note",
+      "swe_delta_1day_source_class",
+      "swe_delta_2day_source_class",
+      "swe_delta_3day_source_class",
+      "swe_delta_7day_source_class"
     )
 }
 
@@ -852,13 +1007,28 @@ snotel_snwd <- fetch_awdb_element(
   end_date = FETCH_END_DATE
 )
 
-cdec_swe <- fetch_cdec_swe(
+cdec_swe_3 <- fetch_cdec_swe(
   cdec_ids = cdec_stations$cdec_id,
+  sensor_num = CDEC_RAW_SWE_SENSOR,
+  sensor_label = "SNOW WC / raw SWE",
   begin_date = FETCH_START_DATE,
   end_date = FETCH_END_DATE
 )
 
-message("Rows returned: SNOTEL WTEQ = ", nrow(snotel_wteq), "; SNOTEL SNWD = ", nrow(snotel_snwd), "; CDEC SWE = ", nrow(cdec_swe))
+cdec_swe_82 <- fetch_cdec_swe(
+  cdec_ids = cdec_stations$cdec_id,
+  sensor_num = CDEC_REVISED_SWE_SENSOR,
+  sensor_label = "SNO ADJ / revised SWE",
+  begin_date = FETCH_START_DATE,
+  end_date = FETCH_END_DATE
+)
+
+message(
+  "Rows returned: SNOTEL WTEQ = ", nrow(snotel_wteq),
+  "; SNOTEL SNWD = ", nrow(snotel_snwd),
+  "; CDEC #3 SWE = ", nrow(cdec_swe_3),
+  "; CDEC #82 SWE = ", nrow(cdec_swe_82)
+)
 
 # ==== 11. Standardize observations ==========================================
 
@@ -900,7 +1070,10 @@ snotel_swe_obs <- snotel_wteq |>
     obs_date = as.Date(.data$obs_date),
     raw_swe_in = pt_num(.data$value),
     swe_in = pt_swe_num(.data$value),
-    source_element = "WTEQ"
+    source_element = "WTEQ",
+    swe_source_class = "nrcs_wteq",
+    swe_source_label = "NRCS WTEQ",
+    swe_source_note = "NRCS/SNOTEL daily SWE source."
   ) |>
   dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
 
@@ -913,23 +1086,74 @@ snotel_depth_obs <- snotel_snwd |>
   ) |>
   dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
 
-cdec_swe_obs <- cdec_swe |>
-  dplyr::left_join(cdec_key, by = c("provider_station_id" = "cdec_id")) |>
-  dplyr::transmute(
-    station_uid = .data$station_uid,
-    provider = .data$station_provider,
-    provider_station_id = dplyr::coalesce(.data$station_provider_station_id, .data$provider_station_id),
-    station_name = .data$station_name_index,
-    obs_date = as.Date(.data$obs_date),
-    raw_swe_in = pt_num(.data$value),
-    swe_in = pt_swe_num(.data$value),
-    source_element = "CDEC_SENSOR_3"
-  ) |>
-  dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
+standardize_cdec_obs <- function(x, source_element, source_class, source_label, source_note) {
+  x |>
+    dplyr::left_join(cdec_key, by = c("provider_station_id" = "cdec_id")) |>
+    dplyr::transmute(
+      station_uid = .data$station_uid,
+      provider = .data$station_provider,
+      provider_station_id = dplyr::coalesce(.data$station_provider_station_id, .data$provider_station_id),
+      station_name = .data$station_name_index,
+      obs_date = as.Date(.data$obs_date),
+      raw_swe_in = pt_num(.data$value),
+      swe_in = pt_swe_num(.data$value),
+      source_element = source_element,
+      swe_source_class = source_class,
+      swe_source_label = source_label,
+      swe_source_note = source_note
+    ) |>
+    dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
+}
+
+cdec_swe_3_obs <- standardize_cdec_obs(
+  cdec_swe_3,
+  source_element = "CDEC_SENSOR_3_SNOW_WC",
+  source_class = "cdec_snow_wc_3",
+  source_label = "CDEC SNOW WC (#3)",
+  source_note = "CDEC raw snow-water-content source."
+)
+
+cdec_swe_82_obs <- standardize_cdec_obs(
+  cdec_swe_82,
+  source_element = "CDEC_SENSOR_82_SNO_ADJ",
+  source_class = "cdec_sno_adj_82",
+  source_label = "CDEC SNO ADJ (#82)",
+  source_note = "CDEC revised/adjusted SWE source."
+)
+
+cdec_swe_obs <- select_cdec_swe_source(
+  cdec_sensor3_obs = cdec_swe_3_obs,
+  cdec_sensor82_obs = cdec_swe_82_obs,
+  raw_tail_days = CDEC_RAW_TAIL_DAYS
+)
+
+cdec_selected_source_counts <- cdec_swe_obs |>
+  dplyr::arrange(.data$station_uid, dplyr::desc(.data$obs_date)) |>
+  dplyr::group_by(.data$station_uid) |>
+  dplyr::slice(1) |>
+  dplyr::ungroup() |>
+  dplyr::count(.data$swe_source_class, .data$swe_source_label, name = "stations") |>
+  dplyr::arrange(.data$swe_source_class, .data$swe_source_label)
+
+cdec_trace_source_counts <- cdec_swe_obs |>
+  dplyr::count(.data$swe_source_class, .data$swe_source_label, name = "rows") |>
+  dplyr::arrange(.data$swe_source_class, .data$swe_source_label)
+
+message("CDEC selected current-WY rows after #82-preferred source selection: ", nrow(cdec_swe_obs))
+message("CDEC latest-source station counts:")
+print(cdec_selected_source_counts, n = Inf)
 
 invalid_negative_snotel_swe_rows <- pt_negative_swe_count(snotel_swe_obs$raw_swe_in)
+invalid_negative_cdec_swe3_rows <- pt_negative_swe_count(cdec_swe_3_obs$raw_swe_in)
+invalid_negative_cdec_swe82_rows <- pt_negative_swe_count(cdec_swe_82_obs$raw_swe_in)
 invalid_negative_cdec_swe_rows <- pt_negative_swe_count(cdec_swe_obs$raw_swe_in)
 invalid_negative_swe_rows <- invalid_negative_snotel_swe_rows + invalid_negative_cdec_swe_rows
+
+invalid_high_snotel_swe_rows <- pt_high_swe_count(snotel_swe_obs$raw_swe_in)
+invalid_high_cdec_swe3_rows <- pt_high_swe_count(cdec_swe_3_obs$raw_swe_in)
+invalid_high_cdec_swe82_rows <- pt_high_swe_count(cdec_swe_82_obs$raw_swe_in)
+invalid_high_cdec_swe_rows <- pt_high_swe_count(cdec_swe_obs$raw_swe_in)
+invalid_high_swe_rows <- invalid_high_snotel_swe_rows + invalid_high_cdec_swe_rows
 
 swe_obs <- dplyr::bind_rows(
   snotel_swe_obs,
@@ -1026,10 +1250,18 @@ latest <- stations |>
     latest_swe_staleness_class,
     latest_swe_report_status,
     latest_swe_display,
+    latest_swe_source_element,
+    latest_swe_source_class,
+    latest_swe_source_label,
+    latest_swe_source_note,
     swe_delta_1day_in,
     swe_delta_2day_in,
     swe_delta_3day_in,
     swe_delta_7day_in,
+    swe_delta_1day_source_class,
+    swe_delta_2day_source_class,
+    swe_delta_3day_source_class,
+    swe_delta_7day_source_class,
     latest_snow_depth_in,
     latest_snow_depth_date_local,
     latest_snow_depth_display,
@@ -1073,7 +1305,10 @@ wy_trace <- swe_obs |>
     water_day,
     obs_date_local,
     swe_in,
-    source_element
+    source_element,
+    swe_source_class,
+    swe_source_label,
+    swe_source_note
   ) |>
   dplyr::arrange(.data$station_uid, .data$obs_date_local)
 
@@ -1100,10 +1335,19 @@ summary_obj <- list(
   current_wy_trace_rows = nrow(wy_trace),
   snotel_wteq_rows_returned = nrow(snotel_wteq),
   snotel_snwd_rows_returned = nrow(snotel_snwd),
-  cdec_swe_rows_returned = nrow(cdec_swe),
+  cdec_swe_rows_returned = nrow(cdec_swe_obs),
+  cdec_sensor3_rows_returned = nrow(cdec_swe_3),
+  cdec_sensor82_rows_returned = nrow(cdec_swe_82),
+  cdec_raw_tail_days = CDEC_RAW_TAIL_DAYS,
+  cdec_selected_latest_source_counts = cdec_selected_source_counts,
+  cdec_trace_source_counts = cdec_trace_source_counts,
+  max_valid_swe_in = MAX_VALID_SWE_IN,
   invalid_negative_snotel_swe_rows_excluded = invalid_negative_snotel_swe_rows,
   invalid_negative_cdec_swe_rows_excluded = invalid_negative_cdec_swe_rows,
   invalid_negative_swe_rows_excluded = invalid_negative_swe_rows,
+  invalid_high_snotel_swe_rows_excluded = invalid_high_snotel_swe_rows,
+  invalid_high_cdec_swe_rows_excluded = invalid_high_cdec_swe_rows,
+  invalid_high_swe_rows_excluded = invalid_high_swe_rows,
   rows_with_latest_swe = sum(!is.na(latest$latest_swe_in)),
   rows_without_latest_swe = sum(is.na(latest$latest_swe_in)),
   rows_reported_zero = sum(latest$latest_swe_report_status == "reported_zero", na.rm = TRUE),
@@ -1119,7 +1363,8 @@ summary_obj <- list(
   data_notes = c(
     "Missing SWE is not interpreted as zero.",
     "Zero SWE is shown only when the provider returned a numeric 0.",
-    "Negative provider SWE values are treated as invalid/missing and excluded from latest/trace products.",
+    paste0("For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to ", CDEC_RAW_TAIL_DAYS, " days or acts as fallback if no #82 is available."),
+    paste0("Negative provider SWE values and values above ", MAX_VALID_SWE_IN, " in are treated as invalid/missing and excluded from latest/trace products."),
     "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."
   )
 )
@@ -1134,7 +1379,9 @@ trace_summary_obj <- list(
   fetch_end_date = as.character(FETCH_END_DATE),
   current_wy_trace_rows = nrow(wy_trace),
   stations_with_trace_rows = dplyr::n_distinct(wy_trace$station_uid),
-  providers = sort(unique(wy_trace$live_provider_key))
+  providers = sort(unique(wy_trace$live_provider_key)),
+  cdec_raw_tail_days = CDEC_RAW_TAIL_DAYS,
+  cdec_trace_source_counts = cdec_trace_source_counts
 )
 
 # ==== 14.5. Pre-write QA guardrails =========================================
@@ -1167,7 +1414,7 @@ qa_min_trace_rows <- suppressWarnings(as.integer(Sys.getenv(
 )))
 qa_min_latest_swe_rows <- suppressWarnings(as.integer(Sys.getenv(
   "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
-  unset = as.character(if (in_low_snow_reporting_season) 10L else max(25L, floor(nrow(stations) * 0.40)))
+  unset = as.character(if (in_low_snow_reporting_season) 10L else max(200L, floor(nrow(stations) * 0.75)))
 )))
 
 qa_problems <- character()
@@ -1186,10 +1433,10 @@ if (nrow(snotel_stations) > 0 && nrow(snotel_snwd) < qa_min_snotel_snwd_rows) {
   )
 }
 
-if (nrow(cdec_stations) > 0 && nrow(cdec_swe) < qa_min_cdec_swe_rows) {
+if (nrow(cdec_stations) > 0 && nrow(cdec_swe_obs) < qa_min_cdec_swe_rows) {
   qa_problems <- c(
     qa_problems,
-    paste0("CDEC SWE rows too low: ", nrow(cdec_swe), " < ", qa_min_cdec_swe_rows)
+    paste0("CDEC selected SWE rows too low: ", nrow(cdec_swe_obs), " < ", qa_min_cdec_swe_rows)
   )
 }
 
@@ -1208,6 +1455,23 @@ if (latest_swe_rows < qa_min_latest_swe_rows) {
   )
 }
 
+summary_obj$qa_guardrails <- list(
+  disabled = DISABLE_QA_GUARDRAILS,
+  expected_fetch_days = expected_fetch_days,
+  min_snotel_wteq_rows = qa_min_snotel_wteq_rows,
+  min_snotel_snwd_rows = qa_min_snotel_snwd_rows,
+  min_cdec_swe_rows = qa_min_cdec_swe_rows,
+  min_current_wy_trace_rows = qa_min_trace_rows,
+  min_latest_swe_rows = qa_min_latest_swe_rows,
+  observed_snotel_wteq_rows = nrow(snotel_wteq),
+  observed_snotel_snwd_rows = nrow(snotel_snwd),
+  observed_cdec_swe_rows = nrow(cdec_swe_obs),
+  observed_cdec_sensor3_rows = nrow(cdec_swe_3),
+  observed_cdec_sensor82_rows = nrow(cdec_swe_82),
+  observed_current_wy_trace_rows = nrow(wy_trace),
+  observed_latest_swe_rows = latest_swe_rows
+)
+
 if (length(qa_problems) > 0) {
 
   qa_msg <- paste0(
@@ -1216,9 +1480,12 @@ if (length(qa_problems) > 0) {
     "Observed fetch summary:\n",
     "  SNOTEL WTEQ rows: ", nrow(snotel_wteq), "\n",
     "  SNOTEL SNWD rows: ", nrow(snotel_snwd), "\n",
-    "  CDEC SWE rows: ", nrow(cdec_swe), "\n",
+    "  CDEC selected SWE rows: ", nrow(cdec_swe_obs), "\n",
+    "  CDEC #3 rows: ", nrow(cdec_swe_3), "\n",
+    "  CDEC #82 rows: ", nrow(cdec_swe_82), "\n",
     "  Current-WY trace rows: ", nrow(wy_trace), "\n",
     "  Rows with latest SWE: ", latest_swe_rows, "\n",
+    "  Invalid high SWE rows excluded: ", invalid_high_swe_rows, " (threshold > ", MAX_VALID_SWE_IN, " in)\n",
     "  Stations: ", nrow(stations), "\n",
     "  Expected fetch days: ", expected_fetch_days, "\n\n",
     "If this is an intentional emergency override, set ",
@@ -1269,13 +1536,22 @@ message("  Rows without latest SWE:  ", sum(is.na(latest$latest_swe_in)))
 message("  Reported zero rows:       ", sum(latest$latest_swe_report_status == "reported_zero", na.rm = TRUE))
 message("  Reported positive rows:   ", sum(latest$latest_swe_report_status == "reported_positive", na.rm = TRUE))
 message("  Invalid negative obs rows excluded: ", invalid_negative_swe_rows)
+message("  Invalid high obs rows excluded (> ", MAX_VALID_SWE_IN, " in): ", invalid_high_swe_rows)
 message("  Rows with 1-day SWE delta: ", sum(!is.na(latest$swe_delta_1day_in)))
 message("  Rows with 3-day SWE delta: ", sum(!is.na(latest$swe_delta_3day_in)))
 message("  Rows with 7-day SWE delta: ", sum(!is.na(latest$swe_delta_7day_in)))
 message("    SNOTEL invalid negative obs:      ", invalid_negative_snotel_swe_rows)
-message("    CDEC invalid negative obs:        ", invalid_negative_cdec_swe_rows)
+message("    CDEC invalid negative selected obs: ", invalid_negative_cdec_swe_rows)
+message("    CDEC #3 invalid negative obs:     ", invalid_negative_cdec_swe3_rows)
+message("    CDEC #82 invalid negative obs:    ", invalid_negative_cdec_swe82_rows)
+message("    SNOTEL invalid high obs:          ", invalid_high_snotel_swe_rows)
+message("    CDEC invalid high selected obs:   ", invalid_high_cdec_swe_rows)
+message("    CDEC #3 invalid high obs:        ", invalid_high_cdec_swe3_rows)
+message("    CDEC #82 invalid high obs:       ", invalid_high_cdec_swe82_rows)
 message("  Missing recent rows:      ", sum(latest$latest_swe_report_status == "missing_recent_value", na.rm = TRUE))
 message("  Stale last-value rows:    ", sum(latest$latest_swe_report_status == "stale_last_value", na.rm = TRUE))
+message("  QA min latest SWE rows:   ", qa_min_latest_swe_rows)
+message("  QA min trace rows:        ", qa_min_trace_rows)
 message("\nLatest SWE report-status counts:")
 print(status_counts, n = Inf)
 message("\nLatest SWE provider/status counts:")
