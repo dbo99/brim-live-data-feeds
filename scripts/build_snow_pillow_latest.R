@@ -1,4 +1,9 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE018a
+##   - Use direct CDEC JSONDataServlet fetch first and keep sharpshootR as a
+##     quiet one-attempt fallback. This avoids repeated sharpshootR HTTP/URL
+##     failures/spam on GitHub Actions when the public JSON endpoint itself
+##     is available.
 ## SWE018
 ##   - Harden provider fetches with curl-based retries, AWDB chunk fallback,
 ##     CDEC direct-JSON fallback, and pre-write QA guardrails so partial
@@ -526,62 +531,51 @@ fetch_cdec_swe <- function(cdec_ids,
 
     Sys.sleep(pause_sec)
 
-    raw <- NULL
+    ## SWE018a: Prefer the public CDEC JSON endpoint directly.  It is the same
+    ## endpoint sharpshootR ultimately queries, but using it directly avoids the
+    ## repeated noisy "invalid URL" / peer-reset behavior seen in GitHub
+    ## Actions when the wrapper connection fails even though the URL works in a
+    ## browser.  Keep a small sharpshootR fallback for compatibility.
+    cdec_url <- paste0(
+      "https://cdec.water.ca.gov/dynamicapp/req/JSONDataServlet?",
+      "Stations=", utils::URLencode(id, reserved = TRUE),
+      "&SensorNums=", CDEC_SWE_SENSOR,
+      "&dur_code=", CDEC_DAILY_INTERVAL,
+      "&Start=", utils::URLencode(as.character(begin_date), reserved = TRUE),
+      "&End=", utils::URLencode(as.character(end_date), reserved = TRUE)
+    )
 
-    for (attempt in seq_len(PT_FETCH_ATTEMPTS)) {
+    resp <- pt_json_from_url(cdec_url, label = paste0("CDEC direct JSON ", id))
+    direct_rows <- pt_parse_cdec_json_response(resp, id = id)
 
-      raw_try <- withCallingHandlers(
-        tryCatch(
-          sharpshootR::CDECquery(
-            id = id,
-            sensor = CDEC_SWE_SENSOR,
-            interval = CDEC_DAILY_INTERVAL,
-            start = as.character(begin_date),
-            end = as.character(end_date)
-          ),
-          error = function(e) {
-            message(
-              "CDEC sharpshootR fetch failed for ", id,
-              " attempt ", attempt, "/", PT_FETCH_ATTEMPTS,
-              "; error: ", conditionMessage(e)
-            )
-            NULL
-          }
-        ),
-        warning = function(w) {
-          message(
-            "CDEC sharpshootR warning for ", id,
-            " attempt ", attempt, "/", PT_FETCH_ATTEMPTS,
-            "; warning: ", conditionMessage(w)
-          )
-          invokeRestart("muffleWarning")
-        }
-      )
-
-      if (is.data.frame(raw_try) && nrow(raw_try) > 0) {
-        raw <- raw_try
-        break
-      }
-
-      if (attempt < PT_FETCH_ATTEMPTS) Sys.sleep(pmin(8, attempt * 2))
+    if (is.data.frame(direct_rows) && nrow(direct_rows) > 0) {
+      return(direct_rows)
     }
 
+    message("CDEC direct JSON returned no rows for ", id, "; trying sharpshootR fallback once.")
+
+    raw <- withCallingHandlers(
+      tryCatch(
+        sharpshootR::CDECquery(
+          id = id,
+          sensor = CDEC_SWE_SENSOR,
+          interval = CDEC_DAILY_INTERVAL,
+          start = as.character(begin_date),
+          end = as.character(end_date)
+        ),
+        error = function(e) {
+          message("CDEC sharpshootR fallback failed for ", id, "; error: ", conditionMessage(e))
+          NULL
+        }
+      ),
+      warning = function(w) {
+        message("CDEC sharpshootR fallback warning for ", id, "; warning: ", conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+
     if (is.null(raw) || !is.data.frame(raw) || nrow(raw) == 0) {
-
-      ## Direct JSON fallback uses the same public CDEC endpoint that users can
-      ## open in a browser.  It avoids losing a station solely because the
-      ## sharpshootR wrapper or connection layer failed in GitHub Actions.
-      cdec_url <- paste0(
-        "https://cdec.water.ca.gov/dynamicapp/req/JSONDataServlet?",
-        "Stations=", utils::URLencode(id, reserved = TRUE),
-        "&SensorNums=", CDEC_SWE_SENSOR,
-        "&dur_code=", CDEC_DAILY_INTERVAL,
-        "&Start=", utils::URLencode(as.character(begin_date), reserved = TRUE),
-        "&End=", utils::URLencode(as.character(end_date), reserved = TRUE)
-      )
-
-      resp <- pt_json_from_url(cdec_url, label = paste0("CDEC direct JSON ", id))
-      return(pt_parse_cdec_json_response(resp, id = id))
+      return(empty_out)
     }
 
     raw <- tibble::as_tibble(raw)
@@ -605,12 +599,11 @@ fetch_cdec_swe <- function(cdec_ids,
       obs_date = pt_date(raw[[date_col]]),
       value = pt_num(raw[[value_col]])
     ) |>
-      dplyr::filter(!is.na(provider_station_id), !is.na(obs_date))
+      dplyr::filter(!is.na(.data$provider_station_id), !is.na(.data$obs_date))
   })
 
   dplyr::bind_rows(pieces)
 }
-
 
 # ==== 7. Observation summarizers ============================================
 
