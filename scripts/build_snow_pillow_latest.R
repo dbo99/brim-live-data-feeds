@@ -1,4 +1,9 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE025:
+##   - Join station/day fixed and rolling median-normal denominators from
+##     data/input/snow_pillow_swe_normal_medians.csv into latest GeoJSON.
+##   - Compute compact percent-of-median fields for popup text only; map colors
+##     and Plot B ribbons remain tied to the POA percentile context products.
 ## SWE020b
 ##   - Prefer CDEC SNO ADJ / sensor #82 for CDEC SWE latest/current-WY feed.
 ##   - Allow SNOW WC / sensor #3 only as a limited raw tail after the
@@ -124,6 +129,7 @@ suppressPackageStartupMessages({
 # ==== 3. Paths and user-facing switches =====================================
 
 STATION_INDEX_CSV <- file.path("data", "input", "snow_pillow_station_index.csv")
+IN_NORMAL_MEDIANS_CSV <- file.path("data", "input", "snow_pillow_swe_normal_medians.csv")
 
 OUT_DIR <- file.path("docs", "data")
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -1311,10 +1317,76 @@ swe_obs <- dplyr::bind_rows(
   ) |>
   dplyr::arrange(.data$station_uid, .data$obs_date)
 
+
+load_snow_normal_medians <- function(path = IN_NORMAL_MEDIANS_CSV) {
+
+  empty <- tibble::tibble(
+    station_uid = character(),
+    water_day = integer(),
+    normal_min_years_for_popup = integer(),
+    normal_fixed_wy_start = integer(),
+    normal_fixed_wy_end = integer(),
+    normal_fixed_label = character(),
+    normal_fixed_full_years = integer(),
+    normal_fixed_n_years = integer(),
+    normal_fixed_support_ok = logical(),
+    normal_fixed_median_swe_in = numeric(),
+    normal_rolling_wy_start = integer(),
+    normal_rolling_wy_end = integer(),
+    normal_rolling_label = character(),
+    normal_rolling_full_years = integer(),
+    normal_rolling_n_years = integer(),
+    normal_rolling_support_ok = logical(),
+    normal_rolling_median_swe_in = numeric()
+  )
+
+  if (!file.exists(path)) {
+    message("SWE normal medians not found; popup % median row will be unavailable: ", path)
+    return(empty)
+  }
+
+  out <- tryCatch(
+    readr::read_csv(path, show_col_types = FALSE),
+    error = function(e) {
+      message("Could not read SWE normal medians; popup % median row will be unavailable: ", conditionMessage(e))
+      empty
+    }
+  )
+
+  needed <- c("station_uid", "water_day")
+  if (!all(needed %in% names(out))) {
+    message("SWE normal medians file is missing required columns; popup % median row will be unavailable.")
+    return(empty)
+  }
+
+  out |>
+    dplyr::transmute(
+      station_uid = pt_chr(.data$station_uid),
+      water_day = suppressWarnings(as.integer(.data$water_day)),
+      normal_min_years_for_popup = suppressWarnings(as.integer(.data$normal_min_years_for_popup)),
+      normal_fixed_wy_start = suppressWarnings(as.integer(.data$normal_fixed_wy_start)),
+      normal_fixed_wy_end = suppressWarnings(as.integer(.data$normal_fixed_wy_end)),
+      normal_fixed_label = pt_chr(.data$normal_fixed_label),
+      normal_fixed_full_years = suppressWarnings(as.integer(.data$normal_fixed_full_years)),
+      normal_fixed_n_years = suppressWarnings(as.integer(.data$normal_fixed_n_years)),
+      normal_fixed_support_ok = tolower(pt_chr(.data$normal_fixed_support_ok)) %in% c("true", "t", "1", "yes", "y"),
+      normal_fixed_median_swe_in = pt_num(.data$normal_fixed_median_swe_in),
+      normal_rolling_wy_start = suppressWarnings(as.integer(.data$normal_rolling_wy_start)),
+      normal_rolling_wy_end = suppressWarnings(as.integer(.data$normal_rolling_wy_end)),
+      normal_rolling_label = pt_chr(.data$normal_rolling_label),
+      normal_rolling_full_years = suppressWarnings(as.integer(.data$normal_rolling_full_years)),
+      normal_rolling_n_years = suppressWarnings(as.integer(.data$normal_rolling_n_years)),
+      normal_rolling_support_ok = tolower(pt_chr(.data$normal_rolling_support_ok)) %in% c("true", "t", "1", "yes", "y"),
+      normal_rolling_median_swe_in = pt_num(.data$normal_rolling_median_swe_in)
+    ) |>
+    dplyr::filter(!is.na(.data$station_uid), !is.na(.data$water_day))
+}
+
 # ==== 12. Build latest point feed ===========================================
 
 latest_swe <- latest_and_delta(swe_obs)
 latest_snwd <- latest_depth(snotel_depth_obs)
+normal_medians <- load_snow_normal_medians(IN_NORMAL_MEDIANS_CSV)
 
 in_low_snow_reporting_season <- as.integer(format(TODAY_LOCAL, "%m")) %in% c(7L, 8L, 9L)
 
@@ -1322,6 +1394,25 @@ latest <- stations |>
   dplyr::left_join(latest_swe, by = "station_uid") |>
   dplyr::left_join(latest_snwd, by = "station_uid") |>
   dplyr::mutate(
+    latest_swe_water_day = pt_water_day(.data$latest_swe_date_local)
+  ) |>
+  dplyr::left_join(
+    normal_medians,
+    by = c("station_uid", "latest_swe_water_day" = "water_day")
+  ) |>
+  dplyr::mutate(
+    normal_fixed_pct_median_swe = dplyr::if_else(
+      !is.na(.data$latest_swe_in) & !is.na(.data$latest_swe_age_days) & .data$latest_swe_age_days <= STALE_DAYS &
+        .data$normal_fixed_support_ok & !is.na(.data$normal_fixed_median_swe_in) & .data$normal_fixed_median_swe_in > 0,
+      100 * .data$latest_swe_in / .data$normal_fixed_median_swe_in,
+      NA_real_
+    ),
+    normal_rolling_pct_median_swe = dplyr::if_else(
+      !is.na(.data$latest_swe_in) & !is.na(.data$latest_swe_age_days) & .data$latest_swe_age_days <= STALE_DAYS &
+        .data$normal_rolling_support_ok & !is.na(.data$normal_rolling_median_swe_in) & .data$normal_rolling_median_swe_in > 0,
+      100 * .data$latest_swe_in / .data$normal_rolling_median_swe_in,
+      NA_real_
+    ),
     latest_swe_value_class = dplyr::case_when(
       is.na(.data$latest_swe_in) ~ "no_valid_current_wy_swe",
       .data$latest_swe_in < 0 ~ "invalid_negative_swe",
@@ -1389,6 +1480,7 @@ latest <- stations |>
     official_data_url,
     latest_swe_in,
     latest_swe_date_local,
+    latest_swe_water_day,
     latest_swe_age_days,
     latest_swe_value_class,
     latest_swe_staleness_class,
@@ -1414,6 +1506,19 @@ latest <- stations |>
     n_current_wy_swe_obs,
     n_current_wy_swe_zero_obs,
     n_current_wy_swe_positive_obs,
+    normal_fixed_pct_median_swe,
+    normal_fixed_median_swe_in,
+    normal_fixed_n_years,
+    normal_fixed_full_years,
+    normal_fixed_support_ok,
+    normal_fixed_label,
+    normal_rolling_pct_median_swe,
+    normal_rolling_median_swe_in,
+    normal_rolling_n_years,
+    normal_rolling_full_years,
+    normal_rolling_support_ok,
+    normal_rolling_label,
+    normal_min_years_for_popup,
     current_water_year,
     fetch_start_date,
     fetch_end_date,
@@ -1485,6 +1590,12 @@ summary_obj <- list(
   cdec_sensor3_rows_returned = nrow(cdec_swe_3),
   cdec_sensor82_rows_returned = nrow(cdec_swe_82),
   cdec_raw_tail_days = CDEC_RAW_TAIL_DAYS,
+  normal_medians_file_exists = file.exists(IN_NORMAL_MEDIANS_CSV),
+  normal_medians_rows_loaded = nrow(normal_medians),
+  normal_fixed_label = paste(stats::na.omit(unique(normal_medians$normal_fixed_label)), collapse = "; "),
+  normal_rolling_label = paste(stats::na.omit(unique(normal_medians$normal_rolling_label)), collapse = "; "),
+  latest_rows_with_fixed_pct_median = sum(!is.na(latest$normal_fixed_pct_median_swe)),
+  latest_rows_with_rolling_pct_median = sum(!is.na(latest$normal_rolling_pct_median_swe)),
   cdec_selected_latest_source_counts = cdec_selected_source_counts,
   cdec_trace_source_counts = cdec_trace_source_counts,
   max_valid_swe_in = MAX_VALID_SWE_IN,
@@ -1523,6 +1634,7 @@ summary_obj <- list(
     paste0("For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to ", CDEC_RAW_TAIL_DAYS, " days or acts as fallback if no #82 is available."),
     paste0("Negative provider SWE values and values above ", MAX_VALID_SWE_IN, " in are treated as invalid/missing and excluded from latest/trace products."),
     paste0("Recent-change deltas are suppressed when the latest SWE observation is older than ", STALE_DAYS, " days."),
+    "Popup % median values use station/day median SWE denominators from WY1991-WY2020 and the rolling 30 complete water years when support is sufficient and the denominator is greater than zero.",
     "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."
   )
 )
