@@ -41,6 +41,13 @@
 ##     from the latest/trace products.
 ##   - Retain SWE004a join-name and tidyselect deprecation fixes.
 ##
+## SWE022
+##   - Add AWDB/SNOTEL preflight to fail fast when AWDB connectivity is down.
+##   - Suppress 1-, 2-, 3-, and 7-day SWE deltas for stale latest values so
+##     recent-change map modes mean recent change relative to a current/recent
+##     observation, not change relative to old best-available tail data.
+##   - Add summary counts for stale-delta suppression and AWDB preflight status.
+##
 ## PURPOSE:
 ##   Build the first browser-facing BRIM Ops Live snow-pillow / SWE feed files.
 ##
@@ -152,6 +159,19 @@ if (is.na(REQUEST_PAUSE_SEC) || REQUEST_PAUSE_SEC < 0) REQUEST_PAUSE_SEC <- 0.08
 
 AWDB_CHUNK_SIZE <- suppressWarnings(as.integer(Sys.getenv("SNOW_PILLOW_AWDB_CHUNK_SIZE", unset = "40")))
 if (is.na(AWDB_CHUNK_SIZE) || AWDB_CHUNK_SIZE < 1) AWDB_CHUNK_SIZE <- 40L
+
+## Optional AWDB/SNOTEL preflight.  This avoids spending a long GitHub Action
+## retrying every SNOTEL station when AWDB is unreachable from the runner.
+AWDB_PREFLIGHT_ENABLED <- !tolower(Sys.getenv(
+  "SNOW_PILLOW_AWDB_PREFLIGHT",
+  unset = "true"
+)) %in% c("false", "f", "0", "no", "n")
+
+AWDB_PREFLIGHT_STATIONS <- suppressWarnings(as.integer(Sys.getenv(
+  "SNOW_PILLOW_AWDB_PREFLIGHT_STATIONS",
+  unset = "3"
+)))
+if (is.na(AWDB_PREFLIGHT_STATIONS) || AWDB_PREFLIGHT_STATIONS < 1) AWDB_PREFLIGHT_STATIONS <- 3L
 
 ## Daily snow observations that are older than this threshold remain visible but
 ## are flagged as stale. Missing is never converted to zero.
@@ -431,6 +451,102 @@ parse_awdb_data_response <- function(resp, element_code) {
   dplyr::bind_rows(pieces)
 }
 
+build_awdb_data_url <- function(station_triplets, element_code, begin_date, end_date) {
+
+  paste0(
+    "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?",
+    "stationTriplets=", utils::URLencode(paste(station_triplets, collapse = ","), reserved = TRUE),
+    "&elements=", utils::URLencode(element_code, reserved = TRUE),
+    "&duration=DAILY",
+    "&beginDate=", utils::URLencode(as.character(begin_date), reserved = TRUE),
+    "&endDate=", utils::URLencode(as.character(end_date), reserved = TRUE),
+    "&periodRef=END"
+  )
+}
+
+run_awdb_preflight <- function(station_triplets,
+                               begin_date,
+                               end_date,
+                               element_code = "WTEQ") {
+
+  station_triplets <- pt_chr(station_triplets)
+  station_triplets <- unique(station_triplets[!is.na(station_triplets)])
+
+  out <- list(
+    enabled = AWDB_PREFLIGHT_ENABLED,
+    passed = NA,
+    element_code = element_code,
+    station_triplets_tested = character(),
+    rows_returned = 0L,
+    message = NA_character_
+  )
+
+  if (!AWDB_PREFLIGHT_ENABLED) {
+    out$passed <- TRUE
+    out$message <- "AWDB preflight disabled by SNOW_PILLOW_AWDB_PREFLIGHT."
+    return(out)
+  }
+
+  if (length(station_triplets) == 0) {
+    out$passed <- FALSE
+    out$message <- "No SNOTEL station triplets available for AWDB preflight."
+    return(out)
+  }
+
+  test_trips <- head(station_triplets, AWDB_PREFLIGHT_STATIONS)
+  out$station_triplets_tested <- test_trips
+
+  message(
+    "AWDB preflight: testing ", length(test_trips), " ", element_code,
+    " station(s) before full SNOTEL fetch."
+  )
+
+  total_rows <- 0L
+
+  for (trip in test_trips) {
+
+    url <- build_awdb_data_url(
+      station_triplets = trip,
+      element_code = element_code,
+      begin_date = begin_date,
+      end_date = end_date
+    )
+
+    resp <- pt_json_from_url(
+      url,
+      label = paste0("AWDB preflight ", element_code, " ", trip)
+    )
+
+    rows <- if (!is.null(resp) && is.data.frame(resp) && nrow(resp) > 0) {
+      nrow(parse_awdb_data_response(resp, element_code = element_code))
+    } else {
+      0L
+    }
+
+    total_rows <- total_rows + rows
+
+    if (rows > 0) {
+      out$passed <- TRUE
+      out$rows_returned <- total_rows
+      out$message <- paste0(
+        "AWDB preflight passed: ", trip, " returned ", rows,
+        " parsed ", element_code, " row(s)."
+      )
+      message(out$message)
+      return(out)
+    }
+  }
+
+  out$passed <- FALSE
+  out$rows_returned <- total_rows
+  out$message <- paste0(
+    "AWDB preflight failed: no parsed ", element_code,
+    " rows returned for test triplets: ", paste(test_trips, collapse = ", "),
+    ". AWDB may be unreachable from this runner; stopping before full SNOTEL fetch."
+  )
+  out
+}
+
 fetch_awdb_element <- function(station_triplets,
                                element_code,
                                begin_date,
@@ -458,14 +574,11 @@ fetch_awdb_element <- function(station_triplets,
 
     Sys.sleep(pause_sec)
 
-    awdb_url <- paste0(
-      "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?",
-      "stationTriplets=", utils::URLencode(paste(trips, collapse = ","), reserved = TRUE),
-      "&elements=", utils::URLencode(element_code, reserved = TRUE),
-      "&duration=DAILY",
-      "&beginDate=", utils::URLencode(as.character(begin_date), reserved = TRUE),
-      "&endDate=", utils::URLencode(as.character(end_date), reserved = TRUE),
-      "&periodRef=END"
+    awdb_url <- build_awdb_data_url(
+      station_triplets = trips,
+      element_code = element_code,
+      begin_date = begin_date,
+      end_date = end_date
     )
 
     resp <- pt_json_from_url(
@@ -745,7 +858,9 @@ latest_and_delta <- function(obs,
     swe_delta_1day_source_class = character(),
     swe_delta_2day_source_class = character(),
     swe_delta_3day_source_class = character(),
-    swe_delta_7day_source_class = character()
+    swe_delta_7day_source_class = character(),
+    swe_delta_suppressed_stale_latest = logical(),
+    swe_delta_suppressed_reason = character()
   )
 
   if (!is.data.frame(obs) || nrow(obs) == 0) {
@@ -844,7 +959,23 @@ latest_and_delta <- function(obs,
     dplyr::left_join(stats, by = "station_uid") |>
     dplyr::mutate(
       latest_swe_age_days = as.integer(TODAY_LOCAL - .data$latest_swe_date),
-      latest_swe_date_local = as.character(.data$latest_swe_date)
+      latest_swe_date_local = as.character(.data$latest_swe_date),
+      swe_delta_suppressed_stale_latest = !is.na(.data$latest_swe_age_days) & .data$latest_swe_age_days > STALE_DAYS,
+      swe_delta_suppressed_reason = dplyr::case_when(
+        .data$swe_delta_suppressed_stale_latest ~ paste0(
+          "Latest SWE observation is older than ", STALE_DAYS,
+          " days; recent-change deltas suppressed."
+        ),
+        TRUE ~ NA_character_
+      ),
+      swe_delta_1day_in = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, NA_real_, .data$swe_delta_1day_in),
+      swe_delta_2day_in = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, NA_real_, .data$swe_delta_2day_in),
+      swe_delta_3day_in = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, NA_real_, .data$swe_delta_3day_in),
+      swe_delta_7day_in = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, NA_real_, .data$swe_delta_7day_in),
+      swe_delta_1day_source_class = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, "suppressed_stale_latest", .data$swe_delta_1day_source_class),
+      swe_delta_2day_source_class = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, "suppressed_stale_latest", .data$swe_delta_2day_source_class),
+      swe_delta_3day_source_class = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, "suppressed_stale_latest", .data$swe_delta_3day_source_class),
+      swe_delta_7day_source_class = dplyr::if_else(.data$swe_delta_suppressed_stale_latest, "suppressed_stale_latest", .data$swe_delta_7day_source_class)
     ) |>
     dplyr::select(
       "station_uid",
@@ -865,7 +996,9 @@ latest_and_delta <- function(obs,
       "swe_delta_1day_source_class",
       "swe_delta_2day_source_class",
       "swe_delta_3day_source_class",
-      "swe_delta_7day_source_class"
+      "swe_delta_7day_source_class",
+      "swe_delta_suppressed_stale_latest",
+      "swe_delta_suppressed_reason"
     )
 }
 
@@ -992,6 +1125,17 @@ cdec_stations <- stations |>
 
 message("NRCS/SNOTEL rows in station index: ", nrow(snotel_stations))
 message("CDEC rows in station index: ", nrow(cdec_stations))
+
+awdb_preflight <- run_awdb_preflight(
+  station_triplets = snotel_stations$nrcs_station_triplet,
+  begin_date = FETCH_START_DATE,
+  end_date = FETCH_END_DATE,
+  element_code = "WTEQ"
+)
+
+if (!isTRUE(awdb_preflight$passed)) {
+  stop(awdb_preflight$message)
+}
 
 snotel_wteq <- fetch_awdb_element(
   station_triplets = snotel_stations$nrcs_station_triplet,
@@ -1262,6 +1406,8 @@ latest <- stations |>
     swe_delta_2day_source_class,
     swe_delta_3day_source_class,
     swe_delta_7day_source_class,
+    swe_delta_suppressed_stale_latest,
+    swe_delta_suppressed_reason,
     latest_snow_depth_in,
     latest_snow_depth_date_local,
     latest_snow_depth_display,
@@ -1358,6 +1504,17 @@ summary_obj <- list(
   rows_with_1day_delta = sum(!is.na(latest$swe_delta_1day_in)),
   rows_with_3day_delta = sum(!is.na(latest$swe_delta_3day_in)),
   rows_with_7day_delta = sum(!is.na(latest$swe_delta_7day_in)),
+  rows_with_1day_delta_current_display = sum(!is.na(latest$swe_delta_1day_in)),
+  rows_with_3day_delta_current_display = sum(!is.na(latest$swe_delta_3day_in)),
+  rows_with_7day_delta_current_display = sum(!is.na(latest$swe_delta_7day_in)),
+  rows_suppressed_delta_stale_latest = sum(latest$swe_delta_suppressed_stale_latest, na.rm = TRUE),
+  delta_stale_suppression_days = STALE_DAYS,
+  awdb_preflight_enabled = isTRUE(awdb_preflight$enabled),
+  awdb_preflight_passed = isTRUE(awdb_preflight$passed),
+  awdb_preflight_element_code = awdb_preflight$element_code,
+  awdb_preflight_station_triplets_tested = awdb_preflight$station_triplets_tested,
+  awdb_preflight_rows_returned = awdb_preflight$rows_returned,
+  awdb_preflight_message = awdb_preflight$message,
   status_counts = status_counts,
   provider_status_counts = provider_counts,
   data_notes = c(
@@ -1365,6 +1522,7 @@ summary_obj <- list(
     "Zero SWE is shown only when the provider returned a numeric 0.",
     paste0("For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to ", CDEC_RAW_TAIL_DAYS, " days or acts as fallback if no #82 is available."),
     paste0("Negative provider SWE values and values above ", MAX_VALID_SWE_IN, " in are treated as invalid/missing and excluded from latest/trace products."),
+    paste0("Recent-change deltas are suppressed when the latest SWE observation is older than ", STALE_DAYS, " days."),
     "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."
   )
 )
@@ -1540,6 +1698,8 @@ message("  Invalid high obs rows excluded (> ", MAX_VALID_SWE_IN, " in): ", inva
 message("  Rows with 1-day SWE delta: ", sum(!is.na(latest$swe_delta_1day_in)))
 message("  Rows with 3-day SWE delta: ", sum(!is.na(latest$swe_delta_3day_in)))
 message("  Rows with 7-day SWE delta: ", sum(!is.na(latest$swe_delta_7day_in)))
+message("  Rows with stale-latest deltas suppressed: ", sum(latest$swe_delta_suppressed_stale_latest, na.rm = TRUE))
+message("  AWDB preflight: ", awdb_preflight$message)
 message("    SNOTEL invalid negative obs:      ", invalid_negative_snotel_swe_rows)
 message("    CDEC invalid negative selected obs: ", invalid_negative_cdec_swe_rows)
 message("    CDEC #3 invalid negative obs:     ", invalid_negative_cdec_swe3_rows)
