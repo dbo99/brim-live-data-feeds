@@ -1,6 +1,6 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-06-09 09:29 AM PDT",
+  "build_time_local": "2026-06-09 12:31 PM PDT",
   "build_date_local": "2026-06-09",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
@@ -12,9 +12,15 @@
   "snotel_wteq_rows_returned": 41157,
   "snotel_snwd_rows_returned": 43921,
   "cdec_swe_rows_returned": 29458,
-  "cdec_sensor3_rows_returned": 32508,
+  "cdec_sensor3_rows_returned": 32390,
   "cdec_sensor82_rows_returned": 32508,
   "cdec_raw_tail_days": 21,
+  "normal_medians_file_exists": true,
+  "normal_medians_rows_loaded": 107476,
+  "normal_fixed_label": "WY1991–WY2020",
+  "normal_rolling_label": "WY1996–WY2025",
+  "latest_rows_with_fixed_pct_median": 24,
+  "latest_rows_with_rolling_pct_median": 20,
   "cdec_selected_latest_source_counts": [
     {
       "swe_source_class": "cdec_sno_adj_82",
@@ -132,7 +138,7 @@
       "n": 148
     }
   ],
-  "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to 21 days or acts as fallback if no #82 is available.", "Negative provider SWE values and values above 250 in are treated as invalid/missing and excluded from latest/trace products.", "Recent-change deltas are suppressed when the latest SWE observation is older than 7 days.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."],
+  "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to 21 days or acts as fallback if no #82 is available.", "Negative provider SWE values and values above 250 in are treated as invalid/missing and excluded from latest/trace products.", "Recent-change deltas are suppressed when the latest SWE observation is older than 7 days.", "Popup % median values use station/day median SWE denominators from WY1991-WY2020 and the rolling 30 complete water years when support is sufficient and the denominator is greater than zero.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."],
   "qa_guardrails": {
     "disabled": false,
     "expected_fetch_days": 252,
@@ -144,7 +150,7 @@
     "observed_snotel_wteq_rows": 41157,
     "observed_snotel_snwd_rows": 43921,
     "observed_cdec_swe_rows": 29458,
-    "observed_cdec_sensor3_rows": 32508,
+    "observed_cdec_sensor3_rows": 32390,
     "observed_cdec_sensor82_rows": 32508,
     "observed_current_wy_trace_rows": 70615,
     "observed_latest_swe_rows": 287
