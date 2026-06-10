@@ -1,5 +1,10 @@
 # ==== build_scan_soil_moisture_latest.R =====================================
 #
+# RF070:
+#   - Harden GitHub/NWCC fetch reliability: require healthy HTTP preflight
+#     status codes, add a small known-station SMS canary fetch before the full
+#     station loop, and abort early when the first main requests are all empty.
+#
 # RF064:
 #   - Add NRCS endpoint preflight, longer fetch timeout, and per-site/year
 #     retry diagnostics so GitHub Actions fail fast when wcc.sc.egov.usda.gov
@@ -205,6 +210,54 @@ nrcs_preflight_timeout_sec <- suppressWarnings(as.numeric(Sys.getenv(
   unset = "20"
 )))
 if (is.na(nrcs_preflight_timeout_sec) || nrcs_preflight_timeout_sec < 5) nrcs_preflight_timeout_sec <- 20
+
+## RF070:
+##   A plain HTTP response is not enough to prove the NRCS/NWCC endpoint is
+##   healthy.  A proxy/service 504 response can still be returned while SCAN
+##   station fetches mostly return empty tables.  Treat only normal HTTP success
+##   statuses as a passed preflight, then verify with a tiny SMS canary fetch.
+nrcs_preflight_ok_status_min <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_OK_STATUS_MIN",
+  unset = "200"
+)))
+if (is.na(nrcs_preflight_ok_status_min) || nrcs_preflight_ok_status_min < 100) {
+  nrcs_preflight_ok_status_min <- 200L
+}
+
+nrcs_preflight_ok_status_max <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_NWCC_PREFLIGHT_OK_STATUS_MAX",
+  unset = "399"
+)))
+if (is.na(nrcs_preflight_ok_status_max) || nrcs_preflight_ok_status_max < nrcs_preflight_ok_status_min) {
+  nrcs_preflight_ok_status_max <- 399L
+}
+
+scan_canary_site_codes <- suppressWarnings(as.integer(trimws(strsplit(Sys.getenv(
+  "SCAN_CANARY_SITE_CODES",
+  unset = "2218,2149,2185,2146"
+), ",", fixed = TRUE)[[1]])))
+scan_canary_site_codes <- scan_canary_site_codes[!is.na(scan_canary_site_codes)]
+if (length(scan_canary_site_codes) == 0) scan_canary_site_codes <- c(2218L, 2149L, 2185L, 2146L)
+
+scan_canary_max_requests <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_CANARY_MAX_REQUESTS",
+  unset = "6"
+)))
+if (is.na(scan_canary_max_requests) || scan_canary_max_requests < 1) scan_canary_max_requests <- 6L
+
+scan_canary_min_successes <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_CANARY_MIN_SUCCESSES",
+  unset = "1"
+)))
+if (is.na(scan_canary_min_successes) || scan_canary_min_successes < 1) scan_canary_min_successes <- 1L
+
+scan_initial_empty_abort_requests <- suppressWarnings(as.integer(Sys.getenv(
+  "SCAN_INITIAL_EMPTY_ABORT_REQUESTS",
+  unset = "12"
+)))
+if (is.na(scan_initial_empty_abort_requests) || scan_initial_empty_abort_requests < 1) {
+  scan_initial_empty_abort_requests <- 12L
+}
 
 ## Apply a longer httr timeout globally. soilDB::fetchSCAN() uses httr/curl
 ## under the hood, and this prevents slow-but-working NRCS responses from
@@ -666,12 +719,21 @@ pt_check_nrcs_endpoint <- function() {
     )
 
     if (inherits(resp, "response")) {
-      message("NRCS/NWCC endpoint reachable; HTTP status ", httr::status_code(resp), ".")
-      return(invisible(TRUE))
-    }
+      status <- httr::status_code(resp)
+      if (!is.na(status) && status >= nrcs_preflight_ok_status_min && status <= nrcs_preflight_ok_status_max) {
+        message("NRCS/NWCC endpoint reachable; HTTP status ", status, ".")
+        return(invisible(TRUE))
+      }
 
-    last_error <- conditionMessage(resp)
-    message("  NRCS/NWCC endpoint check failed: ", last_error)
+      last_error <- paste0("HTTP status ", status, " from ", nrcs_preflight_url)
+      message(
+        "  NRCS/NWCC endpoint returned unhealthy HTTP status ", status,
+        "; expected ", nrcs_preflight_ok_status_min, "–", nrcs_preflight_ok_status_max, "."
+      )
+    } else {
+      last_error <- conditionMessage(resp)
+      message("  NRCS/NWCC endpoint check failed: ", last_error)
+    }
 
     if (attempt < nrcs_preflight_retries && nrcs_preflight_pause_sec > 0) {
       message("  Retrying endpoint check after ", nrcs_preflight_pause_sec, " sec...")
@@ -680,10 +742,10 @@ pt_check_nrcs_endpoint <- function() {
   }
 
   stop(
-    "NRCS/NWCC SCAN endpoint is unreachable from this runner after ",
+    "NRCS/NWCC SCAN endpoint is not healthy from this runner after ",
     nrcs_preflight_retries, " preflight attempt(s). ",
     "Not publishing replacement SCAN feed files; the previous hosted feed is preserved. ",
-    "Last endpoint error: ", last_error
+    "Last endpoint result: ", last_error
   )
 }
 
@@ -776,18 +838,120 @@ fetch_one_scan_year <- function(site_code, year) {
   tibble()
 }
 
+pt_scan_canary_pairs <- function() {
+  canary_sites <- intersect(scan_canary_site_codes, station_index$site_code)
+  if (length(canary_sites) == 0) {
+    canary_sites <- head(station_index$site_code, 3)
+  }
+
+  pairs <- tidyr::expand_grid(
+    site_code = canary_sites,
+    year = rev(fetch_years)
+  ) |>
+    dplyr::slice_head(n = scan_canary_max_requests)
+
+  pairs
+}
+
+pt_run_scan_canary <- function() {
+  canary_pairs <- pt_scan_canary_pairs()
+
+  if (nrow(canary_pairs) == 0) {
+    stop(
+      "SCAN canary fetch could not choose any station/year pairs. ",
+      "Not publishing replacement feed files; the previous hosted feed is preserved."
+    )
+  }
+
+  message(
+    "\nRunning SCAN SMS canary fetch: up to ", nrow(canary_pairs),
+    " station/year request(s); need ", scan_canary_min_successes,
+    " request(s) with SMS rows."
+  )
+
+  canary_rows <- vector("list", nrow(canary_pairs))
+  canary_successes <- 0L
+
+  for (i in seq_len(nrow(canary_pairs))) {
+    site_i <- canary_pairs$site_code[[i]]
+    year_i <- canary_pairs$year[[i]]
+    out_i <- fetch_one_scan_year(site_i, year_i)
+    canary_rows[[i]] <- out_i
+
+    if (nrow(out_i) > 0) {
+      canary_successes <- canary_successes + 1L
+      if (canary_successes >= scan_canary_min_successes) {
+        message("SCAN SMS canary passed: ", canary_successes, " successful request(s).")
+        return(list(
+          ok = TRUE,
+          pairs = canary_pairs[seq_len(i), , drop = FALSE],
+          rows = dplyr::bind_rows(canary_rows[seq_len(i)])
+        ))
+      }
+    }
+  }
+
+  stop(
+    "SCAN SMS canary failed: ", canary_successes, " of ", nrow(canary_pairs),
+    " canary request(s) returned SMS rows; minimum required is ", scan_canary_min_successes, ". ",
+    "This usually indicates a degraded NRCS/NWCC or soilDB session from the GitHub runner. ",
+    "Not publishing replacement SCAN feed files; the previous hosted feed is preserved."
+  )
+}
+
+pt_fetch_scan_grid_with_early_abort <- function(fetch_grid, canary_rows = tibble::tibble()) {
+  pieces <- list(canary_rows)
+  first_main_success_seen <- FALSE
+  initial_empty_count <- 0L
+
+  if (nrow(fetch_grid) == 0) {
+    return(dplyr::bind_rows(pieces))
+  }
+
+  for (i in seq_len(nrow(fetch_grid))) {
+    site_i <- fetch_grid$site_code[[i]]
+    year_i <- fetch_grid$year[[i]]
+    out_i <- fetch_one_scan_year(site_i, year_i)
+    pieces[[length(pieces) + 1L]] <- out_i
+
+    if (nrow(out_i) > 0) {
+      first_main_success_seen <- TRUE
+    } else if (!first_main_success_seen) {
+      initial_empty_count <- initial_empty_count + 1L
+
+      if (initial_empty_count >= scan_initial_empty_abort_requests) {
+        stop(
+          "SCAN fetch early-abort: the first ", initial_empty_count,
+          " main station/year request(s) after the canary returned no SMS rows. ",
+          "This is likely a degraded NRCS/NWCC or soilDB session from the GitHub runner. ",
+          "Not publishing replacement SCAN feed files; the previous hosted feed is preserved."
+        )
+      }
+    }
+  }
+
+  dplyr::bind_rows(pieces)
+}
+
 pt_check_nrcs_endpoint()
+canary <- pt_run_scan_canary()
 
 fetch_grid <- tidyr::expand_grid(
   site_code = station_index$site_code,
   year = fetch_years
-)
+) |>
+  dplyr::anti_join(
+    canary$pairs |>
+      dplyr::mutate(
+        site_code = as.integer(.data$site_code),
+        year = as.integer(.data$year)
+      ),
+    by = c("site_code", "year")
+  )
 
-sms_raw <- purrr::pmap_dfr(
-  fetch_grid,
-  function(site_code, year) {
-    fetch_one_scan_year(site_code, year)
-  }
+sms_raw <- pt_fetch_scan_grid_with_early_abort(
+  fetch_grid = fetch_grid,
+  canary_rows = canary$rows
 )
 
 scan_fetch_diag <- dplyr::bind_rows(scan_fetch_diag_rows)
