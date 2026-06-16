@@ -387,6 +387,49 @@ pt_fetch_field_measurements_chunk <- function(site_ids, start_date, end_date, la
   })
 }
 
+pt_normalize_field_measurements_raw <- function(x) {
+  ## GW_FEED_001:
+  ##   dataRetrieval commonly returns Water Data API time fields as POSIXct,
+  ##   while the direct OGC fallback returns JSON properties as character
+  ##   strings. Normalize chunk outputs before bind_rows() so a temporary
+  ##   dataRetrieval HTTP failure in one chunk cannot fail the whole feed with
+  ##   a vctrs datetime/character type conflict.
+  if (is.null(x) || nrow(x) == 0) {
+    return(tibble::tibble())
+  }
+
+  x <- tibble::as_tibble(x)
+
+  char_cols <- intersect(
+    c(
+      "monitoring_location_id",
+      "parameter_code",
+      "time",
+      "unit_of_measure",
+      "qualifier",
+      "approval_status",
+      "observing_procedure",
+      "vertical_datum",
+      "measuring_agency",
+      "field_visit_id",
+      "last_modified"
+    ),
+    names(x)
+  )
+
+  if (length(char_cols) > 0) {
+    x <- x |>
+      dplyr::mutate(dplyr::across(dplyr::all_of(char_cols), as.character))
+  }
+
+  if ("value" %in% names(x)) {
+    x <- x |>
+      dplyr::mutate(value = pt_num(.data$value))
+  }
+
+  x
+}
+
 pt_empty_gw_latest <- function() {
   tibble::tibble(
     site_no = character(),
@@ -425,7 +468,7 @@ pt_fetch_latest_groundwater <- function(site_ids, start_date, end_date) {
     if (i < length(chunks) && request_pause_sec > 0) Sys.sleep(request_pause_sec)
   }
 
-  raw <- dplyr::bind_rows(out)
+  raw <- dplyr::bind_rows(lapply(out, pt_normalize_field_measurements_raw))
   message("USGS groundwater field-measurements raw rows fetched: ", nrow(raw))
 
   if (nrow(raw) == 0) {
@@ -762,7 +805,7 @@ geojson <- list(
     history_summary_rows = history_summary_rows,
     scope = "CA",
     parameter_code = gw_parameter_code,
-    retrieval_backend = "dataRetrieval::read_waterdata_field_measurements",
+    retrieval_backend = "dataRetrieval::read_waterdata_field_measurements with direct OGC fallback",
     field_measurements_lookback_days = field_measurements_lookback_days,
     allow_index_fallback = allow_index_fallback
   ),
@@ -785,7 +828,7 @@ jsonlite::write_json(
 summary <- list(
   feed_build_time_utc = feed_build_time_utc,
   scope = "CA",
-  retrieval_backend = "dataRetrieval::read_waterdata_field_measurements",
+  retrieval_backend = "dataRetrieval::read_waterdata_field_measurements with direct OGC fallback",
   parameter_code = gw_parameter_code,
   station_index_rows = nrow(station_index),
   history_summary_csv_found = file.exists(history_summary_csv),
