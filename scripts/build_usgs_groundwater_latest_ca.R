@@ -591,7 +591,8 @@ station_index_raw <- pt_ensure_cols(
     "aqfr_cd", "aqfr_type_cd", "nat_aqfr_cd",
     "usgs_monitoring_location_url", "usgs_gw_levels_url",
     "latest_wl_status", "latest_wl_procedure", "latest_wl_qualifier",
-    "latest_wl_units", "latest_wl_source"
+    "latest_wl_units", "latest_wl_source",
+    "on_blm_ca", "dist_to_blm_mi", "dist_to_blm_ft"
   )
 )
 
@@ -619,6 +620,10 @@ station_index <- station_index_raw |>
     aqfr_cd = pt_chr(.data$aqfr_cd),
     aqfr_type_cd = pt_chr(.data$aqfr_type_cd),
     nat_aqfr_cd = pt_chr(.data$nat_aqfr_cd),
+
+    on_blm_ca = pt_bool(.data$on_blm_ca),
+    dist_to_blm_mi = pt_num(.data$dist_to_blm_mi),
+    dist_to_blm_ft = pt_num(.data$dist_to_blm_ft),
 
     usgs_monitoring_location_url = dplyr::coalesce(
       pt_chr(.data$usgs_monitoring_location_url),
@@ -851,6 +856,12 @@ summary <- list(
   hole_depth_count = sum(!is.na(latest_tbl$hole_depth_ft), na.rm = TRUE),
   screen_interval_count = sum(latest_tbl$has_screen_interval, na.rm = TRUE),
   aquifer_code_count = sum(latest_tbl$has_aquifer_code, na.rm = TRUE),
+  blm_distance_available_count = if ("dist_to_blm_mi" %in% names(latest_tbl)) sum(!is.na(latest_tbl$dist_to_blm_mi), na.rm = TRUE) else 0L,
+  on_blm_ca_count = if ("on_blm_ca" %in% names(latest_tbl)) sum(latest_tbl$on_blm_ca %in% TRUE, na.rm = TRUE) else 0L,
+  within_1mi_blm_count = if ("dist_to_blm_mi" %in% names(latest_tbl)) sum(!is.na(latest_tbl$dist_to_blm_mi) & latest_tbl$dist_to_blm_mi <= 1, na.rm = TRUE) else 0L,
+  within_5mi_blm_count = if ("dist_to_blm_mi" %in% names(latest_tbl)) sum(!is.na(latest_tbl$dist_to_blm_mi) & latest_tbl$dist_to_blm_mi <= 5, na.rm = TRUE) else 0L,
+  min_dist_to_blm_mi = if ("dist_to_blm_mi" %in% names(latest_tbl)) suppressWarnings(min(latest_tbl$dist_to_blm_mi, na.rm = TRUE)) else NA_real_,
+  max_dist_to_blm_mi = if ("dist_to_blm_mi" %in% names(latest_tbl)) suppressWarnings(max(latest_tbl$dist_to_blm_mi, na.rm = TRUE)) else NA_real_,
   min_latest_wl_ft_bgs = suppressWarnings(min(latest_tbl$latest_wl_ft_bgs, na.rm = TRUE)),
   max_latest_wl_ft_bgs = suppressWarnings(max(latest_tbl$latest_wl_ft_bgs, na.rm = TRUE)),
   mean_latest_wl_ft_bgs = suppressWarnings(mean(latest_tbl$latest_wl_ft_bgs, na.rm = TRUE)),
@@ -867,6 +878,8 @@ summary <- list(
   )
 )
 
+if (!is.finite(summary$min_dist_to_blm_mi)) summary$min_dist_to_blm_mi <- NA_real_
+if (!is.finite(summary$max_dist_to_blm_mi)) summary$max_dist_to_blm_mi <- NA_real_
 if (!is.finite(summary$min_latest_wl_ft_bgs)) summary$min_latest_wl_ft_bgs <- NA_real_
 if (!is.finite(summary$max_latest_wl_ft_bgs)) summary$max_latest_wl_ft_bgs <- NA_real_
 if (!is.finite(summary$mean_latest_wl_ft_bgs)) summary$mean_latest_wl_ft_bgs <- NA_real_
