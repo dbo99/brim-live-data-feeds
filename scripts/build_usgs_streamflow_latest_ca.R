@@ -173,6 +173,13 @@ pt_bool <- function(x) {
   tolower(trimws(as.character(x))) %in% c("true", "t", "1", "yes", "y")
 }
 
+pt_bool_nullable <- function(x) {
+  raw <- pt_chr(x)
+  out <- raw
+  out[!is.na(raw)] <- tolower(raw[!is.na(raw)]) %in% c("true", "t", "1", "yes", "y")
+  as.logical(out)
+}
+
 pt_ensure_cols <- function(df, cols) {
   for (nm in cols) {
     if (!nm %in% names(df)) df[[nm]] <- NA
@@ -767,7 +774,7 @@ station_index <- pt_ensure_cols(
   c(
     "site_no", "station_nm", "latitude", "longitude", "elev_ft", "site_type",
     "start_date", "end_date", "count_nu", "status", "param_list",
-    "measurements", "source"
+    "measurements", "source", "on_blm_ca", "dist_to_blm_mi", "dist_to_blm_ft"
   )
 )
 
@@ -785,7 +792,10 @@ station_index <- station_index |>
     status = pt_chr(.data$status),
     param_list = pt_chr(.data$param_list),
     measurements = pt_chr(.data$measurements),
-    source = dplyr::coalesce(pt_chr(.data$source), "USGS streamgage")
+    source = dplyr::coalesce(pt_chr(.data$source), "USGS streamgage"),
+    on_blm_ca = pt_bool_nullable(.data$on_blm_ca),
+    dist_to_blm_mi = pt_num(.data$dist_to_blm_mi),
+    dist_to_blm_ft = pt_num(.data$dist_to_blm_ft)
   ) |>
   dplyr::filter(!is.na(.data$site_no), !is.na(.data$latitude), !is.na(.data$longitude)) |>
   dplyr::arrange(.data$site_no) |>
@@ -1014,6 +1024,10 @@ summary <- list(
   cnrfc_obs_available_count = sum(latest_tbl$has_cnrfc_obs_page, na.rm = TRUE),
   cnrfc_deterministic_available_count = sum(latest_tbl$has_cnrfc_deterministic_forecast, na.rm = TRUE),
   cnrfc_ensemble_available_count = sum(latest_tbl$has_cnrfc_ensemble_forecast, na.rm = TRUE),
+  blm_distance_fields_present = sum(!is.na(latest_tbl$dist_to_blm_mi)) > 0,
+  on_blm_ca_count = sum(latest_tbl$on_blm_ca, na.rm = TRUE),
+  within_1mi_blm_count = sum(latest_tbl$dist_to_blm_mi <= 1, na.rm = TRUE),
+  within_5mi_blm_count = sum(latest_tbl$dist_to_blm_mi <= 5, na.rm = TRUE),
   history_mode = history_mode,
   history_query_start_date = ifelse(history_mode == "none", NA_character_, dv_start),
   history_query_end_date = ifelse(history_mode == "none", NA_character_, dv_end),
@@ -1025,7 +1039,8 @@ summary <- list(
     "USGS Water Data API daily values are used only for compact recent-history context; daily chunks can fall back to direct OGC API calls if dataRetrieval progress UI fails.",
     "CNRFC/HADS/APRFC links are included only where the optional NWSLI crosswalk provides an ID.",
     "USGS rating-table links are generated from official USGS rating-file URL templates and may be unavailable for sites without traditional stage-discharge ratings.",
-    "CNRFC observation, deterministic forecast, and ensemble links are shown only when the crosswalked NWSLI appears on checked CNRFC product pages during the feed build."
+    "CNRFC observation, deterministic forecast, and ensemble links are shown only when the crosswalked NWSLI appears on checked CNRFC product pages during the feed build.",
+    "BLM-distance fields are precomputed by BRIM preprocessing in EPSG:3310 using the canonical BLM-CA managed lands RDS; missing distance fields remain null and only affect BRIM browser-side BLM filters."
   )
 )
 
