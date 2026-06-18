@@ -376,6 +376,77 @@ pt_precip_amount <- function(precip, gauge_catch, precip_trace, gauge_trace) {
   NA_real_
 }
 
+
+pt_time_num <- function(x) {
+  x <- pt_chr(x)
+  out <- rep(NA_real_, length(x))
+
+  ok <- !is.na(x) & nzchar(x)
+  if (!any(ok)) return(out)
+
+  parsed <- suppressWarnings(lubridate::ymd_hms(x[ok], tz = "UTC", quiet = TRUE))
+
+  still_bad <- is.na(parsed)
+  if (any(still_bad)) {
+    parsed[still_bad] <- suppressWarnings(lubridate::ymd_hm(x[ok][still_bad], tz = "UTC", quiet = TRUE))
+  }
+
+  still_bad <- is.na(parsed)
+  if (any(still_bad)) {
+    parsed[still_bad] <- suppressWarnings(lubridate::ymd(x[ok][still_bad], tz = "UTC", quiet = TRUE))
+  }
+
+  out[ok] <- as.numeric(parsed)
+  out
+}
+
+pt_latest_station_rows <- function(df) {
+  if (nrow(df) == 0) {
+    return(list(rows = df, removed_count = 0L, duplicate_station_count = 0L))
+  }
+
+  station_number <- pt_chr(pt_get_col(df, c("stationNumber", "StationNumber", "station_number")))
+  latitude <- pt_num(pt_get_col(df, c("latitude", "Latitude", "lat", "Lat")))
+  longitude <- pt_num(pt_get_col(df, c("longitude", "Longitude", "lon", "Lon", "lng", "Lng")))
+
+  station_key <- ifelse(
+    !is.na(station_number) & station_number != "",
+    paste0("station:", toupper(station_number)),
+    ifelse(
+      !is.na(latitude) & !is.na(longitude),
+      paste0("xy:", sprintf("%.5f", latitude), ",", sprintf("%.5f", longitude)),
+      paste0("row:", seq_len(nrow(df)))
+    )
+  )
+
+  obs_time <- pt_time_num(pt_get_col(df, c("obsDateTime", "ObsDateTime", "observationDateTime", "ObservationDateTime")))
+  entry_time <- pt_time_num(pt_get_col(df, c("entryDateTime", "EntryDateTime")))
+  stamp_time <- pt_time_num(pt_get_col(df, c("dateTimeStamp", "DateTimeStamp")))
+
+  obs_time[is.na(obs_time)] <- -Inf
+  entry_time[is.na(entry_time)] <- -Inf
+  stamp_time[is.na(stamp_time)] <- -Inf
+
+  duplicate_station_count <- sum(duplicated(station_key))
+
+  ord <- order(
+    station_key,
+    -obs_time,
+    -entry_time,
+    -stamp_time,
+    seq_len(nrow(df))
+  )
+
+  keep_ord <- ord[!duplicated(station_key[ord])]
+  out <- df[sort(keep_ord), , drop = FALSE]
+
+  list(
+    rows = tibble::as_tibble(out),
+    removed_count = as.integer(nrow(df) - nrow(out)),
+    duplicate_station_count = as.integer(duplicate_station_count)
+  )
+}
+
 pt_fetch_state <- function(state) {
   offset <- 0L
   out <- list()
@@ -551,6 +622,9 @@ api_rows_fetched <- nrow(rows)
 
 message("CoCoRaHS API rows fetched: ", api_rows_fetched)
 
+station_duplicate_reports_removed <- 0L
+station_duplicate_station_count <- 0L
+
 # Basic de-duplication.  The API can be paginated safely, but keep duplicate
 # station/time/report IDs out of the map if an upstream page overlaps.
 if (nrow(rows) > 0) {
@@ -566,6 +640,18 @@ if (nrow(rows) > 0) {
       dplyr::distinct(.data[[station_col]], .data[[obs_col]], .keep_all = TRUE)
   }
 }
+
+# Keep the hosted Ops layer to one current daily report per station.
+# The API date window may span two local report dates depending on the GitHub
+# Action run time; without this step, the map can draw two overlapping points at
+# stations that have both yesterday's and today's daily reports in the feed.
+latest_station <- pt_latest_station_rows(rows)
+rows <- latest_station$rows
+station_duplicate_reports_removed <- latest_station$removed_count
+station_duplicate_station_count <- latest_station$duplicate_station_count
+
+message("CoCoRaHS latest-station de-dup removed ", station_duplicate_reports_removed,
+        " older duplicate station report(s).")
 
 features <- pt_record_features(rows)
 
@@ -640,6 +726,9 @@ pt_summary_for_scope <- function(features, scope_label, states, api_rows_scope_n
     api_total_count = api_total_count,
     api_rows_fetched = api_rows_fetched,
     output_feature_count = length(features),
+    station_duplicate_reports_removed = station_duplicate_reports_removed,
+    station_duplicate_station_count = station_duplicate_station_count,
+    station_dedup_rule = "One latest report per stationNumber, using obsDateTime first and entryDateTime/dateTimeStamp as tie-breakers; falls back to rounded coordinates when stationNumber is missing.",
     measurable_count = measurable_count,
     zero_count = zero_count,
     trace_count = trace_count,
