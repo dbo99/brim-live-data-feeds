@@ -1,6 +1,6 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-06-20 02:02 AM PDT",
+  "build_time_local": "2026-06-20 08:38 AM PDT",
   "build_date_local": "2026-06-20",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
@@ -8,12 +8,12 @@
   "fetch_end_date": "2026-06-20",
   "station_rows": 304,
   "latest_geojson_rows": 304,
-  "current_wy_trace_rows": 73039,
-  "snotel_wteq_rows_returned": 42907,
-  "snotel_snwd_rows_returned": 45776,
-  "cdec_swe_rows_returned": 30132,
-  "cdec_sensor3_rows_returned": 31833,
-  "cdec_sensor82_rows_returned": 31810,
+  "current_wy_trace_rows": 73672,
+  "snotel_wteq_rows_returned": 42953,
+  "snotel_snwd_rows_returned": 45830,
+  "cdec_swe_rows_returned": 30719,
+  "cdec_sensor3_rows_returned": 33927,
+  "cdec_sensor82_rows_returned": 33925,
   "cdec_raw_tail_days": 21,
   "normal_medians_file_exists": true,
   "normal_medians_rows_loaded": 107476,
@@ -25,34 +25,34 @@
     {
       "swe_source_class": "cdec_sno_adj_82",
       "swe_source_label": "CDEC SNO ADJ (#82)",
-      "stations": 106
+      "stations": 107
     },
     {
       "swe_source_class": "cdec_snow_wc_3_fallback_no_82",
       "swe_source_label": "CDEC SNOW WC (#3 fallback; no #82)",
-      "stations": 8
+      "stations": 2
     },
     {
       "swe_source_class": "cdec_snow_wc_3_recent_tail",
       "swe_source_label": "CDEC SNOW WC (#3 limited raw tail <=21d)",
-      "stations": 9
+      "stations": 14
     }
   ],
   "cdec_trace_source_counts": [
     {
       "swe_source_class": "cdec_sno_adj_82",
       "swe_source_label": "CDEC SNO ADJ (#82)",
-      "rows": 28491
+      "rows": 30140
     },
     {
       "swe_source_class": "cdec_snow_wc_3_fallback_no_82",
       "swe_source_label": "CDEC SNOW WC (#3 fallback; no #82)",
-      "rows": 1564
+      "rows": 496
     },
     {
       "swe_source_class": "cdec_snow_wc_3_recent_tail",
       "swe_source_label": "CDEC SNOW WC (#3 limited raw tail <=21d)",
-      "rows": 77
+      "rows": 83
     }
   ],
   "max_valid_swe_in": 250,
@@ -64,18 +64,18 @@
   "invalid_high_swe_rows_excluded": 0,
   "rows_with_latest_swe": 287,
   "rows_without_latest_swe": 17,
-  "rows_reported_zero": 252,
-  "rows_reported_positive": 24,
+  "rows_reported_zero": 260,
+  "rows_reported_positive": 19,
   "rows_missing_recent_value": 17,
   "rows_outside_snow_season_no_recent_report": 0,
-  "rows_stale_last_value": 11,
-  "rows_with_1day_delta": 276,
-  "rows_with_3day_delta": 276,
-  "rows_with_7day_delta": 276,
-  "rows_with_1day_delta_current_display": 276,
-  "rows_with_3day_delta_current_display": 276,
-  "rows_with_7day_delta_current_display": 276,
-  "rows_suppressed_delta_stale_latest": 11,
+  "rows_stale_last_value": 8,
+  "rows_with_1day_delta": 279,
+  "rows_with_3day_delta": 279,
+  "rows_with_7day_delta": 279,
+  "rows_with_1day_delta_current_display": 279,
+  "rows_with_3day_delta_current_display": 279,
+  "rows_with_7day_delta_current_display": 279,
+  "rows_suppressed_delta_stale_latest": 8,
   "delta_stale_suppression_days": 7,
   "awdb_preflight_enabled": true,
   "awdb_preflight_passed": true,
@@ -90,15 +90,15 @@
     },
     {
       "latest_swe_report_status": "reported_positive",
-      "n": 24
+      "n": 19
     },
     {
       "latest_swe_report_status": "reported_zero",
-      "n": 252
+      "n": 260
     },
     {
       "latest_swe_report_status": "stale_last_value",
-      "n": 11
+      "n": 8
     }
   ],
   "provider_status_counts": [
@@ -110,17 +110,17 @@
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "reported_positive",
-      "n": 7
+      "n": 2
     },
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "reported_zero",
-      "n": 105
+      "n": 113
     },
     {
       "live_provider_key": "cdec_snow_sensor",
       "latest_swe_report_status": "stale_last_value",
-      "n": 11
+      "n": 8
     },
     {
       "live_provider_key": "nrcs_snotel",
@@ -147,12 +147,12 @@
     "min_cdec_swe_rows": 6785,
     "min_current_wy_trace_rows": 15990,
     "min_latest_swe_rows": 228,
-    "observed_snotel_wteq_rows": 42907,
-    "observed_snotel_snwd_rows": 45776,
-    "observed_cdec_swe_rows": 30132,
-    "observed_cdec_sensor3_rows": 31833,
-    "observed_cdec_sensor82_rows": 31810,
-    "observed_current_wy_trace_rows": 73039,
+    "observed_snotel_wteq_rows": 42953,
+    "observed_snotel_snwd_rows": 45830,
+    "observed_cdec_swe_rows": 30719,
+    "observed_cdec_sensor3_rows": 33927,
+    "observed_cdec_sensor82_rows": 33925,
+    "observed_current_wy_trace_rows": 73672,
     "observed_latest_swe_rows": 287
   }
 }
