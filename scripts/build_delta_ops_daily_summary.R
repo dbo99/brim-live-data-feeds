@@ -64,6 +64,33 @@ local_tz <- "America/Los_Angeles"
 feed_build_time <- Sys.time()
 feed_build_time_utc <- format(lubridate::with_tz(feed_build_time, "UTC"), "%Y-%m-%dT%H:%M:%SZ")
 feed_build_time_local <- format(lubridate::with_tz(feed_build_time, local_tz), "%Y-%m-%d %H:%M:%S %Z")
+feed_build_date_local <- as.character(as.Date(lubridate::with_tz(feed_build_time, local_tz)))
+
+# Skip repeated same-day fetches by default. This lets the GitHub Action run several
+# morning retries without repeatedly downloading/parsing the PDF once today's report
+# has already been published. Set DELTA_OPS_FORCE_REFRESH=true to override.
+skip_if_current <- tolower(Sys.getenv("DELTA_OPS_SKIP_IF_CURRENT_DATE", unset = "true")) %in% c("true", "1", "yes", "y")
+force_refresh <- tolower(Sys.getenv("DELTA_OPS_FORCE_REFRESH", unset = "false")) %in% c("true", "1", "yes", "y")
+
+# Guardrail: report_date must come from the PDF text and must be plausible.
+# The build date is only used to decide whether the parsed PDF date is plausible.
+# It is never used as the data/report date.
+max_report_lag_days <- suppressWarnings(as.integer(Sys.getenv("DELTA_OPS_MAX_REPORT_LAG_DAYS", unset = "7")))
+if (is.na(max_report_lag_days) || max_report_lag_days < 0) max_report_lag_days <- 7L
+allow_future_report_date <- tolower(Sys.getenv("DELTA_OPS_ALLOW_FUTURE_REPORT_DATE", unset = "false")) %in% c("true", "1", "yes", "y")
+
+pt_existing_report_date <- function(path) {
+  if (!file.exists(path)) return(NA_character_)
+  x <- try(jsonlite::read_json(path, simplifyVector = TRUE), silent = TRUE)
+  if (inherits(x, "try-error") || is.null(x$report_date)) return(NA_character_)
+  as.character(x$report_date)[1]
+}
+
+existing_report_date <- pt_existing_report_date(out_summary_json)
+if (skip_if_current && !force_refresh && !is.na(existing_report_date) && identical(existing_report_date, feed_build_date_local)) {
+  message("Delta Ops output already exists for local date ", feed_build_date_local, "; skipping PDF download/parse. Set DELTA_OPS_FORCE_REFRESH=true to override.")
+  quit(save = "no", status = 0)
+}
 
 # ---- Helpers ----------------------------------------------------------------
 
@@ -219,9 +246,44 @@ if (length(lines) < 20) stop("PDF text extraction returned too few lines; cannot
 
 report_date_raw <- NA_character_
 report_line <- lines[grep("EXECUTIVE OPERATIONS SUMMARY ON", lines, ignore.case = TRUE)][1]
-if (!is.na(report_line)) report_date_raw <- sub(".*SUMMARY ON\\s+", "", report_line, ignore.case = TRUE)
+
+if (!is.na(report_line)) {
+  report_date_raw <- sub(".*SUMMARY ON\\s+", "", report_line, ignore.case = TRUE)
+  report_date_raw <- trimws(report_date_raw)
+  report_date_raw <- sub("\\s+.*$", "", report_date_raw)
+}
+
+if (is.na(report_date_raw) || !grepl("^\\d{1,2}/\\d{1,2}/\\d{4}$", report_date_raw)) {
+  stop(
+    "Could not find an explicit MM/DD/YYYY report date on the PDF 'EXECUTIVE OPERATIONS SUMMARY ON' line. ",
+    "Refusing to publish because report_date must be parsed from the PDF, not inferred from build time. ",
+    "report_line=", paste0(report_line, collapse = " | ")
+  )
+}
+
 report_date <- suppressWarnings(as.Date(report_date_raw, format = "%m/%d/%Y"))
-if (is.na(report_date)) stop("Could not parse report date from PDF text.")
+if (is.na(report_date)) {
+  stop("Could not parse report date from PDF text. report_date_raw=", report_date_raw)
+}
+
+build_local_date <- as.Date(feed_build_date_local)
+if (!allow_future_report_date && report_date > build_local_date) {
+  stop(
+    "Parsed PDF report_date is in the future relative to the GitHub/Pacific build date. ",
+    "report_date=", as.character(report_date), "; build_local_date=", as.character(build_local_date), ". ",
+    "Refusing to publish."
+  )
+}
+
+lag_days <- as.integer(build_local_date - report_date)
+if (!force_refresh && !is.na(lag_days) && lag_days > max_report_lag_days) {
+  stop(
+    "Parsed PDF report_date is older than the configured guardrail. ",
+    "report_date=", as.character(report_date), "; build_local_date=", as.character(build_local_date),
+    "; lag_days=", lag_days, "; max_report_lag_days=", max_report_lag_days, ". ",
+    "Refusing to publish. Set DELTA_OPS_FORCE_REFRESH=true or increase DELTA_OPS_MAX_REPORT_LAG_DAYS if this is intentional."
+  )
+}
 
 scheduled_labels <- c("Clifton Court Inflow", "Jones Pumping Plant")
 hydro_labels <- c("Total Delta Inflow", "Sacramento River", "San Joaquin River")
@@ -262,6 +324,9 @@ parsed <- list(
   source_name = "DWR Delta Operations Daily Summary",
   report_date = as.character(report_date),
   report_date_raw = report_date_raw,
+  report_date_source = "parsed_from_dwr_pdf_executive_operations_summary_on_line",
+  report_date_guard_build_local_date = as.character(build_local_date),
+  report_date_guard_lag_days = lag_days,
   feed_build_time_utc = feed_build_time_utc,
   feed_build_time_local = feed_build_time_local,
   preliminary_notice = "PRELIMINARY DATA; SUBJECT TO REVISION WITHOUT NOTICE",
@@ -270,6 +335,14 @@ parsed <- list(
     san_luis_cvp_share = if (!is.na(san_luis_cvp_taf)) paste0(format(round(san_luis_cvp_taf), big.mark = ",", scientific = FALSE), " TAF") else NA_character_
   ))
 )
+
+# If we had to download because the existing file was not current, but the PDF still
+# resolves to the same report_date as the existing outputs, stop before rewriting.
+# This avoids unnecessary commits on retry runs when DWR has not posted a newer PDF yet.
+if (skip_if_current && !force_refresh && !is.na(existing_report_date) && identical(existing_report_date, as.character(report_date))) {
+  message("Existing Delta Ops output already has parsed report date ", as.character(report_date), "; skipping writes. Set DELTA_OPS_FORCE_REFRESH=true to override.")
+  quit(save = "no", status = 0)
+}
 
 # ---- Feature rows -----------------------------------------------------------
 
@@ -320,7 +393,7 @@ metric_rows <- tibble::tibble(
     paste0("Jones/CVP: ", pt_format_cfs(vals$jones_pumping_plant)),
     paste0("Banks/SWP: ", pt_format_cfs(vals$clifton_court_inflow)),
     paste0("Outflow: ", pt_format_cfs(vals$outflow_index)),
-    paste0("Diverted: ", pt_format_percent(vals$percent_inflow_diverted)),
+    paste0("Diverted: ", pt_format_percent(vals$percent_inflow_diverted), " (3-day avg)"),
     paste0("OMR: ", pt_format_cfs(vals$omr_index_daily_value)),
     paste0("Sac: ", pt_format_cfs(vals$sacramento_river)),
     paste0("SJ: ", pt_format_cfs(vals$san_joaquin_river)),
@@ -429,6 +502,9 @@ summary <- list(
   source_name = "DWR Delta Operations Daily Summary",
   source_url = pdf_url,
   report_date = as.character(report_date),
+  report_date_source = "parsed_from_dwr_pdf_executive_operations_summary_on_line",
+  report_date_guard_build_local_date = as.character(build_local_date),
+  report_date_guard_lag_days = lag_days,
   feed_build_time_utc = feed_build_time_utc,
   feed_build_time_local = feed_build_time_local,
   feature_count = nrow(features),
