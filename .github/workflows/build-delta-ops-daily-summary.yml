@@ -3,10 +3,13 @@ name: Build Delta Ops daily summary GeoJSON
 on:
   workflow_dispatch:
   schedule:
-    # Daily retries after normal morning DWR Delta Ops posting time.
+    # Morning retries after normal DWR Delta Ops posting time.
     # GitHub schedules are UTC and may not run exactly on the minute.
-    # During PDT: 16:30 UTC = 9:30 AM Pacific; 18:30 UTC = 11:30 AM Pacific.
-    - cron: "30 16,18 * * *"
+    # During PDT these are about 8:30, 9:00, 9:30, 10:00, and 10:30 AM Pacific.
+    # During PST they run one hour earlier unless adjusted seasonally.
+    - cron: "30 15 * * *"
+    - cron: "0,30 16 * * *"
+    - cron: "0,30 17 * * *"
 
 permissions:
   contents: write
@@ -23,12 +26,62 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check if Delta Ops feed is already current
+        id: delta_ops_precheck
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run: bypassing same-date precheck."
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "today=manual" >> "$GITHUB_OUTPUT"
+            echo "existing=manual" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          summary_path = "docs/data/delta_ops_daily_summary_summary.json"
+          today = datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
+          existing = ""
+
+          if os.path.exists(summary_path):
+              try:
+                  with open(summary_path, "r", encoding="utf-8") as f:
+                      existing = str(json.load(f).get("report_date", ""))
+              except Exception as exc:
+                  print(f"Could not read existing summary JSON: {exc}")
+
+          should_run = existing != today
+          print(f"Pacific date today: {today}")
+          print(f"Existing Delta Ops report date: {existing or '(none)'}")
+          print(f"Should run fetch/build: {should_run}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              print(f"should_run={str(should_run).lower()}", file=out)
+              print(f"today={today}", file=out)
+              print(f"existing={existing}", file=out)
+          PY
+
+      - name: Skip note
+        if: steps.delta_ops_precheck.outputs.should_run != 'true'
+        shell: bash
+        run: |
+          echo "Delta Ops feed already has report date ${{ steps.delta_ops_precheck.outputs.existing }} for Pacific date ${{ steps.delta_ops_precheck.outputs.today }}."
+          echo "Skipping R setup, package install, PDF scrape, and commit."
+
       - name: Set up R
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: "release"
+          use-public-rspm: true
 
       - name: Install Linux system libraries
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: bash
         run: |
           sudo apt-get update
@@ -38,20 +91,31 @@ jobs:
             libxml2-dev \
             libpoppler-cpp-dev
 
-      - name: Install R packages
+      - name: Install and verify R packages
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: Rscript {0}
         run: |
-          install.packages(
-            c("curl", "pdftools", "jsonlite", "readr", "tibble", "dplyr", "lubridate"),
-            repos = "https://cloud.r-project.org"
-          )
+          options(repos = c(CRAN = "https://packagemanager.posit.co/cran/__linux__/jammy/latest"))
+          pkgs <- c("curl", "pdftools", "jsonlite", "readr", "tibble", "dplyr", "lubridate")
+          missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+          if (length(missing) > 0) {
+            install.packages(missing, Ncpus = max(1, parallel::detectCores() - 1))
+          }
+          still_missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+          if (length(still_missing) > 0) {
+            stop("Missing required R packages after install: ", paste(still_missing, collapse = ", "))
+          }
+          cat("Installed/available R packages:\n")
+          print(vapply(pkgs, function(p) as.character(utils::packageVersion(p)), character(1)))
 
       - name: Build latest Delta Ops daily summary GeoJSON
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: Rscript {0}
         run: |
           source("scripts/build_delta_ops_daily_summary.R")
 
       - name: Commit updated feed files
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
