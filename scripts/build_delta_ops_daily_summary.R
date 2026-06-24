@@ -60,6 +60,11 @@ out_summary_json <- file.path(out_dir, "delta_ops_daily_summary_summary.json")
 out_geojson <- file.path(out_dir, "delta_ops_daily_summary_features.geojson")
 out_x2_geojson <- file.path(out_dir, "delta_ops_x2_reference.geojson")
 
+# 1 cfs sustained for one day equals 1.98347 acre-feet.
+# We use this to convert scheduled Jones + Clifton Court/Banks export rates
+# to an approximate daily export volume in KAF/day.
+cfs_to_af_day <- 1.98347
+
 local_tz <- "America/Los_Angeles"
 feed_build_time <- Sys.time()
 feed_build_time_utc <- format(lubridate::with_tz(feed_build_time, "UTC"), "%Y-%m-%dT%H:%M:%SZ")
@@ -187,6 +192,12 @@ pt_format_taf <- function(x) {
   n <- pt_num(x)
   if (is.na(n)) return(NA_character_)
   paste0(format(round(n), big.mark = ",", scientific = FALSE), " TAF")
+}
+
+pt_format_kaf_day <- function(x, digits = 1) {
+  n <- suppressWarnings(as.numeric(x))
+  if (is.na(n)) return(NA_character_)
+  paste0(format(round(n, digits), big.mark = ",", scientific = FALSE), " KAF/day")
 }
 
 pt_format_percent <- function(x) {
@@ -331,6 +342,16 @@ sj_cfs <- pt_num(vals$san_joaquin_river)
 total_inflow_cfs <- pt_num(vals$total_delta_inflow)
 east_side_cfs <- if (all(is.finite(c(total_inflow_cfs, sac_cfs, sj_cfs)))) total_inflow_cfs - sac_cfs - sj_cfs else NA_real_
 
+# Scheduled/expected south Delta project export volume.
+# Jones is the CVP export rate; Clifton Court Inflow is the SWP/Banks intake-side scheduled export rate.
+# Convert the scheduled cfs rates to an approximate daily volume for map annotation.
+cvp_export_cfs <- pt_num(vals$jones_pumping_plant)
+swp_export_cfs <- pt_num(vals$clifton_court_inflow)
+export_total_cfs <- if (all(is.finite(c(cvp_export_cfs, swp_export_cfs)))) cvp_export_cfs + swp_export_cfs else NA_real_
+cvp_export_kaf_day <- if (is.finite(cvp_export_cfs)) cvp_export_cfs * cfs_to_af_day / 1000 else NA_real_
+swp_export_kaf_day <- if (is.finite(swp_export_cfs)) swp_export_cfs * cfs_to_af_day / 1000 else NA_real_
+export_total_kaf_day <- if (is.finite(export_total_cfs)) export_total_cfs * cfs_to_af_day / 1000 else NA_real_
+
 parsed <- list(
   source_url = pdf_url,
   source_name = "DWR Delta Operations Daily Summary",
@@ -346,6 +367,10 @@ parsed <- list(
   preliminary_notice = "PRELIMINARY DATA; SUBJECT TO REVISION WITHOUT NOTICE",
   values = c(vals, list(
     east_side_streams = if (!is.na(east_side_cfs)) paste0(format(round(east_side_cfs), big.mark = ",", scientific = FALSE), " cfs") else NA_character_,
+    export_total_cfs = if (!is.na(export_total_cfs)) paste0(format(round(export_total_cfs), big.mark = ",", scientific = FALSE), " cfs") else NA_character_,
+    export_total_kaf_day = pt_format_kaf_day(export_total_kaf_day),
+    cvp_export_kaf_day = pt_format_kaf_day(cvp_export_kaf_day),
+    swp_export_kaf_day = pt_format_kaf_day(swp_export_kaf_day),
     san_luis_cvp_share = if (!is.na(san_luis_cvp_taf)) paste0(format(round(san_luis_cvp_taf), big.mark = ",", scientific = FALSE), " TAF") else NA_character_
   ))
 )
@@ -529,6 +554,14 @@ summary <- list(
   x2_position_date = if (!is.na(x2_km)) x2_position_date_chr else NA_character_,
   x2_position_date_source = if (!is.na(x2_km)) "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday" else NA_character_,
   x2_lookup_added = x2_lookup_added,
+  cvp_export_cfs = cvp_export_cfs,
+  swp_export_cfs = swp_export_cfs,
+  export_total_cfs = export_total_cfs,
+  cvp_export_kaf_day = cvp_export_kaf_day,
+  swp_export_kaf_day = swp_export_kaf_day,
+  export_total_kaf_day = export_total_kaf_day,
+  export_volume_conversion = "Jones CVP cfs + Clifton Court/SWP cfs; 1 cfs-day = 1.98347 acre-feet; KAF/day = cfs * 1.98347 / 1000",
+  export_volume_label = if (!is.na(export_total_kaf_day)) paste0("CVP/SWP exports: ~", pt_format_kaf_day(export_total_kaf_day)) else NA_character_,
   east_side_streams_cfs = east_side_cfs,
   preliminary_notice = "PRELIMINARY DATA; SUBJECT TO REVISION WITHOUT NOTICE",
   parser_note = "Automated BRIM daily parser for DWR Delta Operations Daily Summary PDF; values are preliminary and subject to revision."
@@ -549,6 +582,7 @@ message("  X2: ", vals$x2_position_yesterday, " (date ", x2_position_date_chr, "
 message("  X-Channel gates: ", vals$cross_channel_gates_percent_open)
 message("  Jones / CVP: ", vals$jones_pumping_plant)
 message("  Banks / SWP: ", vals$clifton_court_inflow)
+message("  Approx CVP/SWP export volume: ", if (!is.na(export_total_kaf_day)) pt_format_kaf_day(export_total_kaf_day) else "NA")
 message("  Outflow: ", vals$outflow_index)
 message("  OMR: ", vals$omr_index_daily_value)
 message("  East side streams: ", if (!is.na(east_side_cfs)) paste0(round(east_side_cfs), " cfs") else "NA")
