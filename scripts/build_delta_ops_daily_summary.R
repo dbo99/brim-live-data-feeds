@@ -198,6 +198,12 @@ pt_format_percent <- function(x) {
   paste0(n, "%")
 }
 
+pt_format_m_d <- function(x) {
+  d <- suppressWarnings(as.Date(x))
+  if (is.na(d)) return(NA_character_)
+  paste0(as.integer(format(d, "%m")), "/", as.integer(format(d, "%d")))
+}
+
 pt_read_locations <- function(path) {
   if (!file.exists(path)) stop("Static locations CSV not found: ", path)
   x <- readr::read_csv(path, show_col_types = FALSE, col_types = readr::cols(.default = readr::col_character()))
@@ -288,6 +294,8 @@ if (!force_refresh && !is.na(lag_days) && lag_days > max_report_lag_days) {
 # DWR labels X2 as "X2 Position (yesterday)" in the Daily Summary.
 # Store the X2 observation date explicitly so BRIM does not label it as the report date.
 x2_position_date <- report_date - 1L
+x2_position_date_chr <- as.character(x2_position_date)
+x2_position_date_label <- pt_format_m_d(x2_position_date)
 
 scheduled_labels <- c("Clifton Court Inflow", "Jones Pumping Plant")
 hydro_labels <- c("Total Delta Inflow", "Sacramento River", "San Joaquin River")
@@ -331,7 +339,7 @@ parsed <- list(
   report_date_source = "parsed_from_dwr_pdf_executive_operations_summary_on_line",
   report_date_guard_build_local_date = as.character(build_local_date),
   report_date_guard_lag_days = lag_days,
-  x2_position_date = as.character(x2_position_date),
+  x2_position_date = x2_position_date_chr,
   x2_position_date_source = "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
   feed_build_time_utc = feed_build_time_utc,
   feed_build_time_local = feed_build_time_local,
@@ -475,12 +483,12 @@ if (file.exists(x2_lookup_csv) && !is.na(x2_km)) {
       sort_order = 130L,
       placement_note = "Current X2 position snapped to nearest available river-km reference point.",
       metric_name = "X2 Position (yesterday)",
-      x2_position_date = as.character(x2_position_date),
+      x2_position_date = x2_position_date_chr,
       x2_position_date_source = "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
       value_raw = vals$x2_position_yesterday,
       value_numeric = x2_km,
       units = "km",
-      label_text = paste0("X2 ", format(x2_position_date, "%-m/%-d"), ": ", format(round(x2_km), big.mark = ",", scientific = FALSE), " km"),
+      label_text = paste0("X2 ", x2_position_date_label, ": ", format(round(x2_km), big.mark = ",", scientific = FALSE), " km"),
       symbol_class = "x2_current",
       source_name = "DWR Delta Operations Daily Summary",
       source_url = pdf_url,
@@ -518,7 +526,7 @@ summary <- list(
   feature_count = nrow(features),
   static_location_count = nrow(loc),
   x2_position_km = x2_km,
-  x2_position_date = if (!is.na(x2_km)) as.character(x2_position_date) else NA_character_,
+  x2_position_date = if (!is.na(x2_km)) x2_position_date_chr else NA_character_,
   x2_position_date_source = if (!is.na(x2_km)) "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday" else NA_character_,
   x2_lookup_added = x2_lookup_added,
   east_side_streams_cfs = east_side_cfs,
@@ -537,7 +545,7 @@ message("Wrote: ", out_summary_json)
 message("Wrote: ", out_geojson)
 message("Wrote: ", out_x2_geojson)
 message("Key parsed values:")
-message("  X2: ", vals$x2_position_yesterday, " (date ", as.character(x2_position_date), ")")
+message("  X2: ", vals$x2_position_yesterday, " (date ", x2_position_date_chr, ")")
 message("  X-Channel gates: ", vals$cross_channel_gates_percent_open)
 message("  Jones / CVP: ", vals$jones_pumping_plant)
 message("  Banks / SWP: ", vals$clifton_court_inflow)
