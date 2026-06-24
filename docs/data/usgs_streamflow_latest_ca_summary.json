@@ -1,5 +1,5 @@
 {
-  "feed_build_time_utc": "2026-06-24T11:21:57Z",
+  "feed_build_time_utc": "2026-06-24T15:15:54Z",
   "scope": "CA",
   "retrieval_backend": "dataRetrieval::read_waterdata_latest_continuous + read_waterdata_daily",
   "station_index_rows": 2387,
@@ -7,9 +7,9 @@
   "iv_query_start_date": "2026-06-21",
   "iv_query_end_date": "2026-06-25",
   "iv_lookback_days": 3,
-  "latest_iv_discharge_count": 436,
+  "latest_iv_discharge_count": 437,
   "latest_iv_stage_count": 456,
-  "stale_discharge_6h_count": 2,
+  "stale_discharge_6h_count": 1,
   "stale_discharge_24h_count": 1,
   "stale_discharge_72h_count": 0,
   "no_recent_iv_discharge_count": 1930,
@@ -25,7 +25,7 @@
   "history_query_start_date": null,
   "history_query_end_date": null,
   "dv_history_count": 0,
-  "max_q_cfs": 13300,
+  "max_q_cfs": 18100,
   "min_q_cfs": 0,
   "notes": ["Latest discharge and stage values are from USGS Water Data API latest-continuous values where available.", "USGS Water Data API daily values are used only for compact recent-history context; daily chunks can fall back to direct OGC API calls if dataRetrieval progress UI fails.", "CNRFC/HADS/APRFC links are included only where the optional NWSLI crosswalk provides an ID.", "USGS rating-table links are generated from official USGS rating-file URL templates and may be unavailable for sites without traditional stage-discharge ratings.", "CNRFC observation, deterministic forecast, and ensemble links are shown only when the crosswalked NWSLI appears on checked CNRFC product pages during the feed build.", "BLM-distance fields are precomputed by BRIM preprocessing in EPSG:3310 using the canonical BLM-CA managed lands RDS; missing distance fields remain null and only affect BRIM browser-side BLM filters."]
 }
