@@ -5,11 +5,13 @@ on:
   schedule:
     # Morning retries after normal DWR Delta Ops posting time.
     # GitHub schedules are UTC and may not run exactly on the minute.
-    # During PDT these are about 8:30, 9:00, 9:30, 10:00, and 10:30 AM Pacific.
+    # Avoid :00 and :30 because GitHub documents higher scheduled-workflow load
+    # near the start of the hour, where runs can be delayed or dropped.
+    # During PDT these are about 8:37, 9:07, 9:37, 10:07, and 10:37 AM Pacific.
     # During PST they run one hour earlier unless adjusted seasonally.
-    - cron: "30 15 * * *"
-    - cron: "0,30 16 * * *"
-    - cron: "0,30 17 * * *"
+    - cron: "37 15 * * *"
+    - cron: "7,37 16 * * *"
+    - cron: "7,37 17 * * *"
 
 permissions:
   contents: write
@@ -21,10 +23,19 @@ concurrency:
 jobs:
   build-feed:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Log trigger context
+        shell: bash
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+          echo "utc_now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
       - name: Check if Delta Ops feed is already current
         id: delta_ops_precheck
