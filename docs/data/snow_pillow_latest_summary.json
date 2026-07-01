@@ -1,19 +1,19 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-06-30 04:01 PM PDT",
-  "build_date_local": "2026-06-30",
+  "build_time_local": "2026-07-01 02:04 AM PDT",
+  "build_date_local": "2026-07-01",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
   "fetch_start_date": "2025-10-01",
-  "fetch_end_date": "2026-06-30",
+  "fetch_end_date": "2026-07-01",
   "station_rows": 304,
   "latest_geojson_rows": 304,
-  "current_wy_trace_rows": 76388,
-  "snotel_wteq_rows_returned": 44831,
-  "snotel_snwd_rows_returned": 47553,
+  "current_wy_trace_rows": 76544,
+  "snotel_wteq_rows_returned": 44987,
+  "snotel_snwd_rows_returned": 47719,
   "cdec_swe_rows_returned": 31813,
-  "cdec_sensor3_rows_returned": 35217,
-  "cdec_sensor82_rows_returned": 35217,
+  "cdec_sensor3_rows_returned": 35346,
+  "cdec_sensor82_rows_returned": 35346,
   "cdec_raw_tail_days": 21,
   "normal_medians_file_exists": true,
   "normal_medians_rows_loaded": 107476,
@@ -64,10 +64,10 @@
   "invalid_high_swe_rows_excluded": 0,
   "rows_with_latest_swe": 288,
   "rows_without_latest_swe": 16,
-  "rows_reported_zero": 257,
-  "rows_reported_positive": 23,
-  "rows_missing_recent_value": 16,
-  "rows_outside_snow_season_no_recent_report": 0,
+  "rows_reported_zero": 247,
+  "rows_reported_positive": 33,
+  "rows_missing_recent_value": 0,
+  "rows_outside_snow_season_no_recent_report": 16,
   "rows_stale_last_value": 8,
   "rows_with_1day_delta": 277,
   "rows_with_3day_delta": 277,
@@ -81,20 +81,20 @@
   "awdb_preflight_passed": true,
   "awdb_preflight_element_code": "WTEQ",
   "awdb_preflight_station_triplets_tested": ["301:CA:SNTL", "356:CA:SNTL", "1051:CA:SNTL"],
-  "awdb_preflight_rows_returned": 272,
-  "awdb_preflight_message": "AWDB preflight passed: 301:CA:SNTL returned 272 parsed WTEQ row(s).",
+  "awdb_preflight_rows_returned": 273,
+  "awdb_preflight_message": "AWDB preflight passed: 301:CA:SNTL returned 273 parsed WTEQ row(s).",
   "status_counts": [
     {
-      "latest_swe_report_status": "missing_recent_value",
+      "latest_swe_report_status": "outside_snow_season_no_recent_report",
       "n": 16
     },
     {
       "latest_swe_report_status": "reported_positive",
-      "n": 23
+      "n": 33
     },
     {
       "latest_swe_report_status": "reported_zero",
-      "n": 257
+      "n": 247
     },
     {
       "latest_swe_report_status": "stale_last_value",
@@ -104,7 +104,7 @@
   "provider_status_counts": [
     {
       "live_provider_key": "cdec_snow_sensor",
-      "latest_swe_report_status": "missing_recent_value",
+      "latest_swe_report_status": "outside_snow_season_no_recent_report",
       "n": 6
     },
     {
@@ -124,35 +124,35 @@
     },
     {
       "live_provider_key": "nrcs_snotel",
-      "latest_swe_report_status": "missing_recent_value",
+      "latest_swe_report_status": "outside_snow_season_no_recent_report",
       "n": 10
     },
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_positive",
-      "n": 22
+      "n": 32
     },
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_zero",
-      "n": 143
+      "n": 133
     }
   ],
   "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to 21 days or acts as fallback if no #82 is available.", "Negative provider SWE values and values above 250 in are treated as invalid/missing and excluded from latest/trace products.", "Recent-change deltas are suppressed when the latest SWE observation is older than 7 days.", "Popup % median values use station/day median SWE denominators from WY1991-WY2020 and the rolling 30 complete water years when support is sufficient and the denominator is greater than zero.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."],
   "qa_guardrails": {
     "disabled": false,
-    "expected_fetch_days": 273,
-    "min_snotel_wteq_rows": 9555,
-    "min_snotel_snwd_rows": 9555,
-    "min_cdec_swe_rows": 7043,
-    "min_current_wy_trace_rows": 16598,
-    "min_latest_swe_rows": 228,
-    "observed_snotel_wteq_rows": 44831,
-    "observed_snotel_snwd_rows": 47553,
+    "expected_fetch_days": 274,
+    "min_snotel_wteq_rows": 9590,
+    "min_snotel_snwd_rows": 9590,
+    "min_cdec_swe_rows": 7069,
+    "min_current_wy_trace_rows": 16659,
+    "min_latest_swe_rows": 10,
+    "observed_snotel_wteq_rows": 44987,
+    "observed_snotel_snwd_rows": 47719,
     "observed_cdec_swe_rows": 31813,
-    "observed_cdec_sensor3_rows": 35217,
-    "observed_cdec_sensor82_rows": 35217,
-    "observed_current_wy_trace_rows": 76388,
+    "observed_cdec_sensor3_rows": 35346,
+    "observed_cdec_sensor82_rows": 35346,
+    "observed_current_wy_trace_rows": 76544,
     "observed_latest_swe_rows": 288
   }
 }
