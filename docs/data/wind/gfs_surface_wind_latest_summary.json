@@ -1,0 +1,46 @@
+{
+  "product_id": "gfs_surface_wind",
+  "product": "NOAA GFS 0.25-degree 10-m wind",
+  "version": "RTW011",
+  "status": "success",
+  "domain_id": "broad_npac_namerica",
+  "domain_label": "Broad North Pacific / North America",
+  "source": "NOAA/NCEP NOMADS",
+  "model_cycle_utc": "2026-07-12T00:00:00Z",
+  "model_cycle_local": "2026-07-11 05:00:00 PM PDT",
+  "forecast_hour": 3,
+  "valid_time_utc": "2026-07-12T03:00:00Z",
+  "valid_time_local": "2026-07-11 08:00:00 PM PDT",
+  "build_time_utc": "2026-07-12T06:17:10Z",
+  "build_time_local": "2026-07-11 11:17:10 PM PDT",
+  "local_time_zone": "America/Los_Angeles",
+  "valid_time_age_hours": 3.286247,
+  "model_cycle_age_hours": 6.286247,
+  "stale_after_hours": 12,
+  "is_stale": false,
+  "domain": {
+    "west": -180.125,
+    "east": -59.875,
+    "south": -0.125,
+    "north": 75.125
+  },
+  "grid": {
+    "nx": 481,
+    "ny": 301,
+    "dx": 0.25,
+    "dy": 0.25
+  },
+  "speed_ms": {
+    "min": 0.012706,
+    "median": 4.652043,
+    "max": 19.0327
+  },
+  "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t00z.pgrb2.0p25.f003&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260712%2F00%2Fatmos",
+  "source_grib_bytes": 434702,
+  "output_json_bytes": 2482304,
+  "output_files": {
+    "wind_json": "docs/data/wind/gfs_surface_wind_latest.json",
+    "summary_json": "docs/data/wind/gfs_surface_wind_latest_summary.json",
+    "manifest_json": "docs/data/wind/gfs_surface_wind_feed_manifest.json"
+  }
+}
