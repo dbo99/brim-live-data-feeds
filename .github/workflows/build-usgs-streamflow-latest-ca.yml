@@ -12,6 +12,7 @@ permissions:
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-feed:
@@ -20,7 +21,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2

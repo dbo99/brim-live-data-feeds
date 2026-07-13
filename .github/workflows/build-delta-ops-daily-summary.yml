@@ -5,13 +5,13 @@ on:
   schedule:
     # Morning retries after normal DWR Delta Ops posting time.
     # GitHub schedules are UTC and may not run exactly on the minute.
-    # Avoid :00 and :30 because GitHub documents higher scheduled-workflow load
-    # near the start of the hour, where runs can be delayed or dropped.
-    # During PDT these are about 8:37, 9:07, 9:37, 10:07, and 10:37 AM Pacific.
+    # These minutes avoid an exact collision with CoCoRaHS at 16:37 UTC and
+    # stay away from the top of the hour.
+    # During PDT these are about 8:41, 9:11, 9:41, 10:11, and 10:41 AM Pacific.
     # During PST they run one hour earlier unless adjusted seasonally.
-    - cron: "37 15 * * *"
-    - cron: "7,37 16 * * *"
-    - cron: "7,37 17 * * *"
+    - cron: "41 15 * * *"
+    - cron: "11,41 16 * * *"
+    - cron: "11,41 17 * * *"
 
 permissions:
   contents: write
@@ -19,6 +19,7 @@ permissions:
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-feed:
@@ -27,7 +28,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Log trigger context
         shell: bash

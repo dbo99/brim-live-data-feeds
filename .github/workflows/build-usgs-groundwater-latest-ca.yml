@@ -13,6 +13,7 @@ permissions:
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-feed:
@@ -21,7 +22,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -68,7 +71,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add             docs/data/usgs_groundwater_latest_ca.geojson             docs/data/usgs_groundwater_latest_ca_summary.json
+          git add \
+            docs/data/usgs_groundwater_latest_ca.geojson \
+            docs/data/usgs_groundwater_latest_ca_summary.json
           if git diff --cached --quiet; then
             echo "No USGS groundwater feed changes to commit."
           else

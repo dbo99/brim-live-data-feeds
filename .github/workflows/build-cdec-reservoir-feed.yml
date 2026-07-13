@@ -3,8 +3,9 @@ name: Build CDEC reservoir latest GeoJSON
 on:
   workflow_dispatch:
   schedule:
-    # Every 3 hours. GitHub schedules are UTC and may not run exactly on the minute.
-    - cron: "17 */3 * * *"
+    # Every 3 hours at hh:29 UTC. This avoids the hourly ASOS writer at
+    # hh:17 and the hourly GFS writer at hh:47.
+    - cron: "29 */3 * * *"
 
 permissions:
   contents: write
@@ -12,6 +13,7 @@ permissions:
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-feed:
@@ -20,7 +22,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2

@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: Report trigger
@@ -34,7 +34,7 @@ jobs:
           echo "Configured schedule: once each hour at minute 17 UTC"
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload QA artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: asos-awos-wind-qa
           if-no-files-found: ignore

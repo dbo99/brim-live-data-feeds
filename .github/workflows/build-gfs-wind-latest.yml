@@ -17,6 +17,7 @@ concurrency:
   # try to commit/push docs/data updates at the same time.
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build-feed:
@@ -25,7 +26,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -71,7 +74,7 @@ jobs:
 
       - name: Upload QA artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gfs-wind-qa
           if-no-files-found: ignore
