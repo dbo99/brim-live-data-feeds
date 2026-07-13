@@ -3,12 +3,11 @@ name: Build GFS wind latest
 on:
   workflow_dispatch:
   schedule:
-    # Retry-window after GFS 00/06/12/18Z cycles. GitHub schedules are UTC
-    # and may not run exactly on the minute. Avoid :00 and existing BRIM feed
-    # minutes; the script skips publish writes when the same GFS cycle is
-    # already live, so the second attempt in each window should usually commit
-    # nothing after a successful first attempt.
-    - cron: "47 3,4,9,10,15,16,21,22 * * *"
+    # Hourly, away from :00 GitHub scheduled-workflow congestion and away from
+    # the common BRIM feed minutes already in this repo. The script publishes a
+    # short current-ish GFS time set and keeps only wind-specific files under
+    # docs/data/wind/gfs/surface/.
+    - cron: "47 * * * *"
 
 permissions:
   contents: write
@@ -51,20 +50,22 @@ jobs:
       - name: Install R package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: gfs-wind-v1
+          cache-version: gfs-wind-v2
           packages: |
             any::httr2
             any::jsonlite
             any::terra
 
-      - name: Build latest GFS wind feed
+      - name: Build GFS wind time-set feed
         shell: Rscript {0}
         env:
           BRIM_RTW_BUILD_SANDBOX: "false"
           BRIM_RTW_BUILD_QA_ZIP: "true"
-          BRIM_RTW_SKIP_IF_SAME_PRODUCT: "true"
           BRIM_RTW_FORCE_REFRESH: "false"
           BRIM_RTW_LOCAL_TZ: "America/Los_Angeles"
+          BRIM_RTW_TARGET_PAST_HOURS: "2"
+          BRIM_RTW_TARGET_FUTURE_HOURS: "8"
+          BRIM_RTW_MAX_FORECAST_HOUR: "9"
         run: |
           source("scripts/build_gfs_wind_latest.R")
 
@@ -86,11 +87,12 @@ jobs:
           git add \
             docs/data/wind/gfs_surface_wind_latest.json \
             docs/data/wind/gfs_surface_wind_latest_summary.json \
-            docs/data/wind/gfs_surface_wind_feed_manifest.json
+            docs/data/wind/gfs_surface_wind_feed_manifest.json \
+            docs/data/wind/gfs/surface/
           if git diff --cached --quiet; then
             echo "No GFS wind feed changes to commit."
           else
-            git commit -m "Update GFS wind live feed"
+            git commit -m "Update GFS wind time-set live feed"
             git pull --rebase origin main
             git push
           fi
