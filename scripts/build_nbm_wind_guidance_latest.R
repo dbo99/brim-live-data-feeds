@@ -71,7 +71,7 @@ nbm_project_root <- normalizePath(
 if (!dir.exists(nbm_project_root)) stop("Project root does not exist: ", nbm_project_root)
 setwd(nbm_project_root)
 
-nbm_version <- "RTW-NBM001"
+nbm_version <- "RTW-NBM002"
 nbm_local_tz <- nbm_env("BRIM_NBM_LOCAL_TZ", "America/Los_Angeles")
 nbm_target_lead_hours <- nbm_parse_integer_csv(
   nbm_env("BRIM_NBM_TARGET_LEAD_HOURS", "6,12,24,48"),
@@ -285,24 +285,109 @@ nbm_extract_message <- function(urls, idx, pattern, label, output_path) {
   output_path
 }
 
-nbm_regrid_to_csv <- function(input_grib, output_stub, interpolation = c("bilinear", "neighbor")) {
-  interpolation <- match.arg(interpolation)
-  out_grib <- paste0(output_stub, "_grid.grib2")
-  out_csv <- paste0(output_stub, ".csv")
-  lon_spec <- sprintf("%.8f:%d:%.8f", nbm_domain$west, nbm_domain$nx, nbm_domain$resolution_degrees)
-  lat_spec <- sprintf("%.8f:%d:%.8f", nbm_domain$south, nbm_domain$ny, nbm_domain$resolution_degrees)
+nbm_prepare_regrid_input <- function(input_grib, output_stub) {
+  grid_text <- nbm_run(
+    nbm_wgrib2,
+    c(input_grib, "-grid"),
+    "wgrib2 NBM input-grid inspection"
+  )
+
+  grid_log <- paste0(output_stub, "_input_grid.txt")
+  writeLines(grid_text, grid_log, useBytes = TRUE)
+
+  # NBM CONUS grids use the NDFD/Glahn alternating-row scan convention
+  # (WE|EW:SN; GRIB scan mode 80). IPOLATES/new_grid cannot consume that
+  # orientation directly. Convert each extracted one-message GRIB to ordinary
+  # WE:SN before interpolation, using NOAA's documented workaround.
+  alternating_scan <- any(grepl(
+    "WE\\|EW:SN|scan mode 80|scan=80",
+    grid_text,
+    ignore.case = TRUE,
+    perl = TRUE
+  ))
+
+  if (!alternating_scan) return(input_grib)
+
+  normalized_grib <- paste0(output_stub, "_wesn.grib2")
+  if (file.exists(normalized_grib)) unlink(normalized_grib)
+
+  nbm_log("Normalizing NBM alternating-row scan order to WE:SN.")
   nbm_run(
     nbm_wgrib2,
     c(
       input_grib,
+      "-rpn", "alt_x_scan",
+      "-set", "table_3.4", "64",
+      "-set_grib_type", "same",
+      "-grib_out", normalized_grib
+    ),
+    "wgrib2 NBM scan-order normalization"
+  )
+
+  if (!file.exists(normalized_grib) || file.info(normalized_grib)$size < 100) {
+    stop("NBM scan-order normalization did not create a usable GRIB.")
+  }
+
+  normalized_grid <- nbm_run(
+    nbm_wgrib2,
+    c(normalized_grib, "-grid"),
+    "wgrib2 normalized-grid inspection"
+  )
+  writeLines(
+    normalized_grid,
+    paste0(output_stub, "_normalized_grid.txt"),
+    useBytes = TRUE
+  )
+
+  if (any(grepl("WE\\|EW:SN|scan mode 80|scan=80", normalized_grid, ignore.case = TRUE, perl = TRUE))) {
+    stop("NBM scan-order normalization still reports alternating-row scan order.")
+  }
+
+  normalized_grib
+}
+
+nbm_regrid_to_csv <- function(input_grib, output_stub, interpolation = c("bilinear", "neighbor")) {
+  interpolation <- match.arg(interpolation)
+  regrid_input <- nbm_prepare_regrid_input(input_grib, output_stub)
+
+  out_grib <- paste0(output_stub, "_grid.grib2")
+  out_csv <- paste0(output_stub, ".csv")
+  lon_spec <- sprintf("%.8f:%d:%.8f", nbm_domain$west, nbm_domain$nx, nbm_domain$resolution_degrees)
+  lat_spec <- sprintf("%.8f:%d:%.8f", nbm_domain$south, nbm_domain$ny, nbm_domain$resolution_degrees)
+
+  if (file.exists(out_grib)) unlink(out_grib)
+  if (file.exists(out_csv)) unlink(out_csv)
+
+  nbm_run(
+    nbm_wgrib2,
+    c(
+      regrid_input,
       "-set_grib_type", "same",
       "-new_grid_interpolation", interpolation,
       "-new_grid", "latlon", lon_spec, lat_spec, out_grib
     ),
     paste0("wgrib2 ", interpolation, " regrid")
   )
+
+  if (!file.exists(out_grib) || file.info(out_grib)$size < 100) {
+    stop("NBM regridded GRIB was missing or too small.")
+  }
+
+  output_inventory <- nbm_run(
+    nbm_wgrib2,
+    c(out_grib, "-s"),
+    "wgrib2 regridded inventory"
+  )
+  writeLines(
+    output_inventory,
+    paste0(output_stub, "_regridded_inventory.txt"),
+    useBytes = TRUE
+  )
+
   nbm_run(nbm_wgrib2, c(out_grib, "-csv", out_csv), "wgrib2 CSV export")
-  if (!file.exists(out_csv) || file.info(out_csv)$size < 1000) stop("NBM regridded CSV was missing or too small.")
+  if (!file.exists(out_csv) || file.info(out_csv)$size < 1000) {
+    stop("NBM regridded CSV was missing or too small.")
+  }
   out_csv
 }
 
@@ -311,13 +396,39 @@ nbm_read_field_csv <- function(path, value_name) {
     path,
     header = FALSE,
     stringsAsFactors = FALSE,
-    col.names = c("valid", "variable", "level", "lon", "lat", "value")
+    check.names = FALSE
   )
+
+  # Current wgrib2 CSV output has reference time and valid time as separate
+  # columns. Older builds may emit the legacy six-column form.
+  if (ncol(x) == 7L) {
+    names(x) <- c("reference_time", "valid", "variable", "level", "lon", "lat", "value")
+  } else if (ncol(x) == 6L) {
+    names(x) <- c("valid", "variable", "level", "lon", "lat", "value")
+  } else {
+    stop(
+      "Unexpected wgrib2 CSV column count for ", value_name,
+      ": ", ncol(x), "."
+    )
+  }
+
   x$lon <- suppressWarnings(as.numeric(x$lon))
   x$lat <- suppressWarnings(as.numeric(x$lat))
   x$value <- suppressWarnings(as.numeric(x$value))
   x$lon[x$lon > 180] <- x$lon[x$lon > 180] - 360
-  x <- x[is.finite(x$lon) & is.finite(x$lat) & is.finite(x$value), c("lon", "lat", "value")]
+  x <- x[
+    is.finite(x$lon) & is.finite(x$lat) & is.finite(x$value),
+    c("lon", "lat", "value")
+  ]
+
+  expected <- nbm_domain$nx * nbm_domain$ny
+  if (nrow(x) < expected * 0.95) {
+    stop(
+      "NBM field ", value_name, " retained only ", nrow(x),
+      " finite points of ", expected, " expected."
+    )
+  }
+
   x$key <- sprintf("%.5f|%.5f", x$lon, x$lat)
   if (anyDuplicated(x$key)) x <- x[!duplicated(x$key), ]
   names(x)[names(x) == "value"] <- value_name
