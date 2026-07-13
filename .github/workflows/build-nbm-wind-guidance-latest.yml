@@ -56,10 +56,11 @@ jobs:
       - name: Install R package dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: nbm-wind-guidance-v1
+          cache-version: nbm-wind-guidance-v2
           packages: |
             any::httr2
             any::jsonlite
+            any::maps
 
       - name: Build NBM +6/+12/+24/+48 guidance feed
         shell: bash -el {0}
@@ -74,6 +75,7 @@ jobs:
           BRIM_NBM_SUPPORT_WINDOW_HOURS: "6"
           BRIM_NBM_CYCLE_LOOKBACK_HOURS: "30"
           BRIM_NBM_RETAIN_HOURS: "18"
+          BRIM_NBM_COAST_BUFFER_CELLS: "1"
         run: |
           echo "wgrib2 path: $(command -v wgrib2)"
           wgrib2 -version || true
