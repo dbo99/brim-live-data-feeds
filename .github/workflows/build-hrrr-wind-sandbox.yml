@@ -76,7 +76,9 @@ jobs:
           BRIM_HRRR_MAX_FORECAST_HOUR: "6"
         run: |
           echo "wgrib2 path: $(command -v wgrib2)"
-          wgrib2 -version
+          # wgrib2 3.8.0 may print its version and then return status 8 when
+          # no GRIB input file is supplied. Treat this as a diagnostic only.
+          wgrib2 -version || true
           Rscript scripts/build_hrrr_wind_sandbox.R
 
       - name: Upload HRRR sandbox artifact
