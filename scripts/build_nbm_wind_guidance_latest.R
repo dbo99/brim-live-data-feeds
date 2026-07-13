@@ -71,7 +71,7 @@ nbm_project_root <- normalizePath(
 if (!dir.exists(nbm_project_root)) stop("Project root does not exist: ", nbm_project_root)
 setwd(nbm_project_root)
 
-nbm_version <- "RTW-NBM003"
+nbm_version <- "RTW-NBM004"
 nbm_local_tz <- nbm_env("BRIM_NBM_LOCAL_TZ", "America/Los_Angeles")
 nbm_target_lead_hours <- nbm_parse_integer_csv(
   nbm_env("BRIM_NBM_TARGET_LEAD_HOURS", "6,12,24,48"),
@@ -118,6 +118,73 @@ nbm_domain <- list(
 nbm_domain$nx <- as.integer(round((nbm_domain$east - nbm_domain$west) / nbm_domain$resolution_degrees)) + 1L
 nbm_domain$ny <- as.integer(round((nbm_domain$north - nbm_domain$south) / nbm_domain$resolution_degrees)) + 1L
 if (nbm_domain$nx < 2L || nbm_domain$ny < 2L) stop("Invalid NBM output grid dimensions.")
+
+
+# Operational mask used after the broad download/regrid domain and land mask.
+# The deliberately simple polygon keeps the adjacent basins BRIM needs while
+# dropping Idaho, Utah, eastern Nevada, and most interior Arizona. It is
+# defined independently from the source bounding box so future adjustments do
+# not require changing the upstream GRIB extraction/regridding design.
+nbm_operational_mask <- list(
+  id = "hydrologic_ca_operational_v1",
+  label = paste(
+    "Hydrologic California operational envelope:",
+    "southern Oregon, western/southern Nevada, and lower Colorado context"
+  ),
+  vertices = data.frame(
+    lon = c(
+      -125.5, -125.5, -119.75, -119.00, -117.50,
+      -116.00, -114.00, -112.50, -112.50
+    ),
+    lat = c(
+       31.0,   43.5,   43.50,   42.00,   40.00,
+       38.00,  36.50,   35.00,   31.00
+    )
+  )
+)
+
+nbm_point_in_polygon <- function(x, y, polygon) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  px <- as.numeric(polygon$lon)
+  py <- as.numeric(polygon$lat)
+
+  if (length(px) < 3L || length(px) != length(py)) {
+    stop("NBM operational mask polygon is invalid.")
+  }
+
+  inside <- rep(FALSE, length(x))
+  on_boundary <- rep(FALSE, length(x))
+  j <- length(px)
+  tolerance <- 1e-10
+
+  for (i in seq_along(px)) {
+    xi <- px[i]
+    yi <- py[i]
+    xj <- px[j]
+    yj <- py[j]
+
+    cross <- (x - xi) * (yj - yi) - (y - yi) * (xj - xi)
+    within_box <-
+      x >= min(xi, xj) - tolerance &
+      x <= max(xi, xj) + tolerance &
+      y >= min(yi, yj) - tolerance &
+      y <= max(yi, yj) + tolerance
+    on_boundary <- on_boundary | (abs(cross) <= tolerance & within_box)
+
+    crosses <- ((yi > y) != (yj > y))
+    denominator <- yj - yi
+    intersection_x <- rep(Inf, length(x))
+    usable <- crosses & abs(denominator) > tolerance
+    intersection_x[usable] <-
+      (xj - xi) * (y[usable] - yi) / denominator + xi
+    inside <- xor(inside, usable & x < intersection_x)
+
+    j <- i
+  }
+
+  inside | on_boundary
+}
 
 nbm_dirs <- list(
   cache = file.path(nbm_project_root, "data", "cache", "wind", "nbm"),
@@ -514,23 +581,47 @@ nbm_apply_land_mask <- function(x) {
     keep <- point_keys %in% fringe_keys
   }
 
+  land_and_coast_keep <- keep
+  operational_keep <- nbm_point_in_polygon(
+    x$lon,
+    x$lat,
+    nbm_operational_mask$vertices
+  )
+  keep <- land_and_coast_keep & operational_keep
+
   details <- list(
-    method = "maps::map.where world land polygons plus grid-cell coastal fringe",
+    method = paste(
+      "maps::map.where world land polygons plus grid-cell coastal fringe,",
+      "then hydrologic-California operational polygon"
+    ),
     polygon_database = "maps::world",
     coastal_buffer_cells = nbm_coast_buffer_cells,
+    operational_mask_id = nbm_operational_mask$id,
+    operational_mask_label = nbm_operational_mask$label,
+    operational_mask_vertices = lapply(
+      seq_len(nrow(nbm_operational_mask$vertices)),
+      function(i) list(
+        lon = nbm_operational_mask$vertices$lon[i],
+        lat = nbm_operational_mask$vertices$lat[i]
+      )
+    ),
     source_grid_points = nrow(x),
     mapped_land_points = sum(land_core),
-    coastal_fringe_points = sum(keep & !land_core),
+    coastal_fringe_points = sum(land_and_coast_keep & !land_core),
+    land_and_coast_points = sum(land_and_coast_keep),
+    outside_operational_mask_removed = sum(
+      land_and_coast_keep & !operational_keep
+    ),
     retained_points = sum(keep),
-    offshore_points_removed = sum(!keep)
+    offshore_points_removed = sum(!land_and_coast_keep)
   )
 
   nbm_log(
-    "NBM land mask retained ", details$retained_points,
+    "NBM masks retained ", details$retained_points,
     " of ", details$source_grid_points,
     " points; removed ", details$offshore_points_removed,
-    " offshore points (coastal buffer cells: ",
-    details$coastal_buffer_cells, ")."
+    " offshore and ", details$outside_operational_mask_removed,
+    " outside the operational envelope."
   )
 
   list(
@@ -697,9 +788,23 @@ manifest <- list(
   published_support_lead_hours = as.list(nbm_publish_lead_hours),
   support_window_hours = nbm_support_window_hours,
   land_mask = list(
-    method = "maps::map.where world land polygons plus grid-cell coastal fringe",
+    method = paste(
+      "maps::map.where world land polygons plus grid-cell coastal fringe,",
+      "then hydrologic-California operational polygon"
+    ),
     polygon_database = "maps::world",
-    coastal_buffer_cells = nbm_coast_buffer_cells
+    coastal_buffer_cells = nbm_coast_buffer_cells,
+    operational_mask = list(
+      id = nbm_operational_mask$id,
+      label = nbm_operational_mask$label,
+      vertices = lapply(
+        seq_len(nrow(nbm_operational_mask$vertices)),
+        function(i) list(
+          lon = nbm_operational_mask$vertices$lon[i],
+          lat = nbm_operational_mask$vertices$lat[i]
+        )
+      )
+    )
   ),
   entries = entries
 )
@@ -721,6 +826,12 @@ summary <- list(
     function(x) x$land_mask$offshore_points_removed,
     numeric(1)
   ),
+  outside_operational_mask_removed_per_entry = vapply(
+    entries,
+    function(x) x$land_mask$outside_operational_mask_removed,
+    numeric(1)
+  ),
+  operational_mask_id = nbm_operational_mask$id,
   domain = nbm_domain
 )
 jsonlite::write_json(summary, nbm_files$summary, auto_unbox = TRUE, digits = 8, null = "null", pretty = TRUE)
@@ -746,9 +857,25 @@ inventory <- data.frame(
     function(x) x$land_mask$coastal_fringe_points,
     numeric(1)
   ),
+  land_and_coast_points = vapply(
+    entries,
+    function(x) x$land_mask$land_and_coast_points,
+    numeric(1)
+  ),
+  outside_operational_mask_removed = vapply(
+    entries,
+    function(x) x$land_mask$outside_operational_mask_removed,
+    numeric(1)
+  ),
   stringsAsFactors = FALSE
 )
 utils::write.csv(inventory, file.path(nbm_dirs$qa, "nbm_wind_guidance_inventory.csv"), row.names = FALSE)
+
+utils::write.csv(
+  nbm_operational_mask$vertices,
+  file.path(nbm_dirs$qa, "nbm_operational_mask_vertices.csv"),
+  row.names = FALSE
+)
 
 # Prune old dated GeoJSON files by the cycle encoded in the filename. GitHub
 # checkout mtimes are fresh on every runner, so filesystem age is not reliable.
@@ -772,6 +899,7 @@ qa_files <- c(
   nbm_files$manifest,
   nbm_files$summary,
   file.path(nbm_dirs$qa, "nbm_wind_guidance_inventory.csv"),
+  file.path(nbm_dirs$qa, "nbm_operational_mask_vertices.csv"),
   nbm_log_file
 )
 qa_files <- qa_files[file.exists(qa_files)]
