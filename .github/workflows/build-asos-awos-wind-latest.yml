@@ -1,0 +1,88 @@
+name: Build ASOS/METAR observed wind latest
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly observed-wind refresh, away from :00 GitHub scheduled-workflow
+    # congestion, the GFS wind job at :47, and the common BRIM feed minutes.
+    - cron: "13 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  # Shared with the other BRIM live-data writers so scheduled feed jobs do not
+  # try to commit/push docs/data updates at the same time.
+  group: live-data-feed-writes-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Install Linux system libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libxml2-dev
+
+      - name: Install R package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: asos-awos-wind-v1
+          packages: |
+            any::httr2
+            any::jsonlite
+            any::readr
+
+      - name: Build observed wind speed + gusts feed
+        shell: Rscript {0}
+        env:
+          BRIM_OBS_BUILD_SANDBOX: "false"
+          BRIM_OBS_BUILD_QA_ZIP: "true"
+          BRIM_OBS_LOCAL_TZ: "America/Los_Angeles"
+          BRIM_OBS_MAX_AGE_HOURS: "3.0"
+          BRIM_OBS_STALE_AFTER_HOURS: "2.0"
+        run: |
+          source("scripts/build_asos_awos_wind_latest.R")
+
+      - name: Upload QA artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asos-awos-wind-qa
+          if-no-files-found: ignore
+          path: |
+            qa/wind/asos_awos/RTW_ASOS_latest_QA_upload.zip
+            debug/wind/asos_awos/*.log
+
+      - name: Commit updated observed wind feed
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            docs/data/wind/asos_awos_wind_latest.geojson \
+            docs/data/wind/asos_awos_wind_latest_summary.json \
+            docs/data/wind/asos_awos_wind_feed_manifest.json
+          if git diff --cached --quiet; then
+            echo "No observed wind feed changes to commit."
+          else
+            git commit -m "Update observed wind speed and gusts feed"
+            git pull --rebase origin main
+            git push
+          fi
