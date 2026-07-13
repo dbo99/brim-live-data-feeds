@@ -9,8 +9,8 @@
 #   2. Fall back to NOAA's public HRRR AWS bucket using GRIB byte ranges.
 #   3. Use wgrib2 vector-aware interpolation with -new_grid_winds earth.
 #   4. Regrid to a regular 0.05-degree lon/lat grid for leaflet-velocity.
-#   5. Publish a rolling manifest, one selected field per hourly run, and
-#      backward-compatible latest JSON/summary files.
+#   5. Publish Current, +6 hr, and +12 hr target fields in one hourly run,
+#      plus backward-compatible latest JSON/summary files.
 #
 # REQUIREMENT
 #   wgrib2 must be on PATH and include -new_grid support. The companion GitHub
@@ -24,6 +24,15 @@ brim_hrrr_env <- function(name, default = "") {
 brim_hrrr_bool <- function(x, default = FALSE) {
   if (is.null(x) || !nzchar(x)) return(default)
   tolower(x) %in% c("1", "true", "yes", "y", "on")
+}
+
+brim_hrrr_parse_integer_csv <- function(x, default) {
+  if (is.null(x) || length(x) == 0L || is.na(x)) x <- ""
+  x <- trimws(as.character(x))
+  if (!nzchar(x)) return(as.integer(default))
+  values <- suppressWarnings(as.integer(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
+  values <- values[is.finite(values) & values >= 0L]
+  if (!length(values)) as.integer(default) else sort(unique(values))
 }
 
 brim_hrrr_as_utc <- function(x) {
@@ -59,18 +68,22 @@ if (!dir.exists(brim_hrrr_project_root)) {
 }
 setwd(brim_hrrr_project_root)
 
-brim_hrrr_version <- "RTW-HRRR001"
+brim_hrrr_version <- "RTW-HRRR002"
 brim_hrrr_local_tz <- brim_hrrr_env("BRIM_HRRR_LOCAL_TZ", "America/Los_Angeles")
 brim_hrrr_force_refresh <- brim_hrrr_bool(brim_hrrr_env("BRIM_HRRR_FORCE_REFRESH", "false"), FALSE)
 brim_hrrr_cycle_lookback_hours <- as.integer(brim_hrrr_env("BRIM_HRRR_CYCLE_LOOKBACK_HOURS", "8"))
-brim_hrrr_max_forecast_hour <- as.integer(brim_hrrr_env("BRIM_HRRR_MAX_FORECAST_HOUR", "6"))
+brim_hrrr_target_lead_hours <- brim_hrrr_parse_integer_csv(
+  brim_hrrr_env("BRIM_HRRR_TARGET_LEAD_HOURS", "0,6,12"),
+  c(0L, 6L, 12L)
+)
+brim_hrrr_max_forecast_hour <- as.integer(brim_hrrr_env("BRIM_HRRR_MAX_FORECAST_HOUR", "18"))
 brim_hrrr_request_timeout_seconds <- as.numeric(brim_hrrr_env("BRIM_HRRR_REQUEST_TIMEOUT_SECONDS", "120"))
 brim_hrrr_min_grib_bytes <- as.integer(brim_hrrr_env("BRIM_HRRR_MIN_GRIB_BYTES", "10000"))
 brim_hrrr_min_json_bytes <- as.integer(brim_hrrr_env("BRIM_HRRR_MIN_JSON_BYTES", "200000"))
 brim_hrrr_stale_after_hours <- as.numeric(brim_hrrr_env("BRIM_HRRR_STALE_AFTER_HOURS", "4"))
-brim_hrrr_retain_past_hours <- as.numeric(brim_hrrr_env("BRIM_HRRR_RETAIN_PAST_HOURS", "6"))
-brim_hrrr_retain_future_hours <- as.numeric(brim_hrrr_env("BRIM_HRRR_RETAIN_FUTURE_HOURS", "3"))
-brim_hrrr_max_manifest_entries <- as.integer(brim_hrrr_env("BRIM_HRRR_MAX_MANIFEST_ENTRIES", "12"))
+brim_hrrr_retain_past_hours <- as.numeric(brim_hrrr_env("BRIM_HRRR_RETAIN_PAST_HOURS", "4"))
+brim_hrrr_retain_future_hours <- as.numeric(brim_hrrr_env("BRIM_HRRR_RETAIN_FUTURE_HOURS", "14"))
+brim_hrrr_max_manifest_entries <- as.integer(brim_hrrr_env("BRIM_HRRR_MAX_MANIFEST_ENTRIES", "24"))
 
 # Same footprint as the BRIM observed METAR/ASOS feed. It intentionally covers
 # all of California plus southern Oregon, Nevada, western Arizona, nearby ocean,
@@ -204,8 +217,9 @@ brim_hrrr_aws_urls <- function(cycle_time, forecast_hour) {
   list(grib = base, idx = paste0(base, ".idx"), key = key)
 }
 
-brim_hrrr_candidate_table <- function(now_utc = Sys.time()) {
+brim_hrrr_candidate_table <- function(target_utc, now_utc = Sys.time()) {
   now_utc <- brim_hrrr_as_utc(now_utc)
+  target_utc <- brim_hrrr_as_utc(target_utc)
   current_hour <- brim_hrrr_floor_hour(now_utc)
   cycles <- current_hour - seq.int(0L, brim_hrrr_cycle_lookback_hours) * 3600
   rows <- list()
@@ -217,15 +231,25 @@ brim_hrrr_candidate_table <- function(now_utc = Sys.time()) {
         cycle_time = cycle,
         forecast_hour = as.integer(forecast_hour),
         valid_time = valid,
-        distance_minutes = abs(as.numeric(difftime(valid, now_utc, units = "mins"))),
-        is_future = valid > now_utc,
+        target_time = target_utc,
+        distance_minutes = abs(as.numeric(difftime(valid, target_utc, units = "mins"))),
+        is_after_target = valid > target_utc,
         stringsAsFactors = FALSE
       )
     }
   }
   out <- do.call(rbind, rows)
   out <- out[out$distance_minutes <= 180, , drop = FALSE]
-  out <- out[order(out$distance_minutes, out$is_future, -as.numeric(out$cycle_time), out$forecast_hour), , drop = FALSE]
+  out <- out[
+    order(
+      out$distance_minutes,
+      out$is_after_target,
+      -as.numeric(out$cycle_time),
+      out$forecast_hour
+    ),
+    ,
+    drop = FALSE
+  ]
   rownames(out) <- NULL
   out
 }
@@ -540,10 +564,12 @@ brim_hrrr_entry_is_usable <- function(entry, now_utc) {
   file.exists(file.path(brim_hrrr_dirs$publish, rel))
 }
 
-brim_hrrr_merge_entries <- function(old_entries, new_entry, now_utc) {
-  entries <- c(old_entries, list(new_entry))
+brim_hrrr_merge_entries <- function(old_entries, new_entries, now_utc) {
+  if (is.null(new_entries)) new_entries <- list()
+  if (is.list(new_entries) && !is.null(new_entries$product_id)) new_entries <- list(new_entries)
+  entries <- c(old_entries, new_entries)
   entries <- entries[vapply(entries, brim_hrrr_entry_is_usable, logical(1), now_utc = now_utc)]
-  if (!length(entries)) return(list(new_entry))
+  if (!length(entries)) return(list())
 
   valid_key <- vapply(entries, function(x) as.character(x$valid_time_utc %||% ""), character(1))
   cycle_num <- vapply(entries, function(x) {
@@ -603,6 +629,128 @@ brim_hrrr_cleanup_timeset <- function(keep_relative_urls) {
   invisible(drop)
 }
 
+brim_hrrr_build_target_entry <- function(target_time, requested_lead_hours, now_utc) {
+  target_time <- brim_hrrr_as_utc(target_time)
+  candidates <- brim_hrrr_candidate_table(target_time, now_utc)
+  if (!nrow(candidates)) {
+    stop("No HRRR candidate products were generated for target ", brim_hrrr_fmt_iso_utc(target_time), ".")
+  }
+
+  candidates$requested_lead_hours <- as.integer(requested_lead_hours)
+  selected <- NULL
+  attempt_errors <- character()
+
+  for (i in seq_len(nrow(candidates))) {
+    cycle <- brim_hrrr_as_utc(candidates$cycle_time[i])
+    fh <- candidates$forecast_hour[i]
+    valid <- brim_hrrr_as_utc(candidates$valid_time[i])
+    brim_hrrr_log(
+      "Trying HRRR target +", requested_lead_hours, "h: cycle ",
+      brim_hrrr_fmt_iso_utc(cycle), " f", sprintf("%02d", fh),
+      " valid ", brim_hrrr_fmt_iso_utc(valid)
+    )
+
+    result <- tryCatch(brim_hrrr_download_candidate(cycle, fh), error = function(e) e)
+    if (inherits(result, "error")) {
+      attempt_errors <- c(
+        attempt_errors,
+        paste0(
+          "+", requested_lead_hours, "h | ",
+          brim_hrrr_fmt_iso_utc(cycle), " f", sprintf("%02d", fh), ": ",
+          conditionMessage(result)
+        )
+      )
+      next
+    }
+    selected <- c(result, list(cycle_time = cycle, forecast_hour = fh, valid_time = valid))
+    break
+  }
+
+  if (is.null(selected)) {
+    stop(
+      "No usable HRRR product was found for +", requested_lead_hours,
+      "h target. Attempts:\n", paste(attempt_errors, collapse = "\n")
+    )
+  }
+
+  tag <- paste0(
+    format(selected$cycle_time, "%Y%m%dT%HZ", tz = "UTC"),
+    "_f", sprintf("%02d", selected$forecast_hour)
+  )
+  brim_hrrr_assert_uv_inventory(selected$path)
+  regridded_path <- file.path(
+    brim_hrrr_dirs$debug,
+    paste0("hrrr_10m_uv_earth_relative_", tag, ".grib2")
+  )
+  brim_hrrr_regrid(selected$path, regridded_path)
+
+  r <- terra::rast(regridded_path)
+  uv_idx <- brim_hrrr_identify_uv_layers(r)
+  u <- r[[uv_idx[["u"]]]]
+  v <- r[[uv_idx[["v"]]]]
+  if (!terra::compareGeom(u, v, stopOnError = FALSE)) {
+    stop("Regridded U/V geometries do not match for ", tag, ".")
+  }
+  names(u) <- "UGRD_10m_earth_relative"
+  names(v) <- "VGRD_10m_earth_relative"
+
+  product_path <- file.path(
+    brim_hrrr_dirs$timeset,
+    brim_hrrr_product_filename(selected$cycle_time, selected$forecast_hour)
+  )
+  brim_hrrr_write_velocity_json(
+    u, v, product_path, selected$cycle_time, selected$forecast_hour
+  )
+  stats <- brim_hrrr_speed_stats(u, v)
+
+  entry <- list(
+    product_id = "hrrr_surface_wind",
+    product = "NOAA/NCEP HRRR 10-m wind",
+    model = "NOAA/NCEP HRRR",
+    level = "10 m above ground",
+    variables = c("UGRD", "VGRD"),
+    requested_lead_hours = as.integer(requested_lead_hours),
+    target_valid_time_utc = brim_hrrr_fmt_iso_utc(target_time),
+    target_valid_time_local = brim_hrrr_fmt_local(target_time, brim_hrrr_local_tz),
+    target_distance_minutes = unname(
+      abs(as.numeric(difftime(selected$valid_time, target_time, units = "mins")))
+    ),
+    model_cycle_utc = brim_hrrr_fmt_iso_utc(selected$cycle_time),
+    model_cycle_local = brim_hrrr_fmt_local(selected$cycle_time, brim_hrrr_local_tz),
+    forecast_hour = as.integer(selected$forecast_hour),
+    forecast_hour_label = paste0("f", sprintf("%02d", as.integer(selected$forecast_hour))),
+    valid_time_utc = brim_hrrr_fmt_iso_utc(selected$valid_time),
+    valid_time_local = brim_hrrr_fmt_local(selected$valid_time, brim_hrrr_local_tz),
+    valid_lag_minutes_at_build = unname(
+      as.numeric(difftime(now_utc, selected$valid_time, units = "mins"))
+    ),
+    relative_url = brim_hrrr_relative_url(product_path),
+    filename = basename(product_path),
+    file_bytes = unname(file.info(product_path)$size),
+    source = selected$source,
+    source_request_url = selected$source_url,
+    source_index_url = selected$source_index_url %||% NULL,
+    source_grib_bytes = selected$bytes,
+    domain = c(brim_hrrr_domain[c("id", "label", "west", "east", "south", "north")]),
+    grid = list(
+      nx = terra::ncol(u),
+      ny = terra::nrow(u),
+      resolution_degrees = terra::res(u)[1],
+      cell_count = terra::ncell(u)
+    ),
+    earth_relative_winds_confirmed = TRUE,
+    vector_regrid_method =
+      "wgrib2 -new_grid_winds earth; bilinear interpolation to regular lon/lat",
+    speed_ms = stats$speed_ms,
+    speed_mph = stats$speed_mph,
+    recommended_velocity_scale_ms = stats$recommended_velocity_scale_ms,
+    recommended_velocity_scale_mph = stats$recommended_velocity_scale_mph,
+    velocity_scale_reference = stats$velocity_scale_reference
+  )
+
+  list(entry = entry, candidates = candidates, errors = attempt_errors)
+}
+
 brim_hrrr_package_qa <- function(summary, manifest) {
   manifest_txt <- file.path(brim_hrrr_dirs$qa, "HRRR_QA_manifest.txt")
   lines <- c(
@@ -616,6 +764,7 @@ brim_hrrr_package_qa <- function(summary, manifest) {
     paste0("Domain: ", summary$domain$west, ", ", summary$domain$east, ", ", summary$domain$south, ", ", summary$domain$north),
     paste0("Grid: ", summary$grid$nx, " x ", summary$grid$ny, " at ", summary$grid$resolution_degrees, " degrees"),
     paste0("Earth-relative output confirmed: ", summary$earth_relative_winds_confirmed),
+    paste0("Supported browser lead hours: ", paste(summary$supported_browser_lead_hours, collapse = ", ")),
     paste0("Manifest entries: ", length(manifest$entries)),
     paste0("Latest JSON bytes: ", file.info(brim_hrrr_files$wind_json)$size),
     paste0("p95 mph: ", round(summary$speed_mph$p95, 1)),
@@ -633,6 +782,7 @@ brim_hrrr_package_qa <- function(summary, manifest) {
     brim_hrrr_files$manifest_json,
     file.path(brim_hrrr_dirs$debug, "hrrr_input_inventory.txt"),
     file.path(brim_hrrr_dirs$debug, "hrrr_regridded_inventory.txt"),
+    file.path(brim_hrrr_dirs$debug, "hrrr_target_times.csv"),
     file.path(brim_hrrr_dirs$debug, "hrrr_candidate_order.csv"),
     file.path(brim_hrrr_dirs$debug, "hrrr_failed_attempts.txt")
   )
@@ -653,6 +803,7 @@ brim_hrrr_package_qa <- function(summary, manifest) {
 
 brim_hrrr_log("BRIM HRRR wind production build started: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
 brim_hrrr_log("Version: ", brim_hrrr_version)
+brim_hrrr_log("Target lead hours: ", paste(brim_hrrr_target_lead_hours, collapse = ", "))
 
 run_error <- NULL
 run_summary <- NULL
@@ -661,95 +812,88 @@ qa_zip <- NULL
 
 tryCatch({
   now_utc <- brim_hrrr_as_utc(Sys.time())
-  candidates <- brim_hrrr_candidate_table(now_utc)
-  if (!nrow(candidates)) stop("No HRRR candidate products were generated.")
-  write.csv(candidates, file.path(brim_hrrr_dirs$debug, "hrrr_candidate_order.csv"), row.names = FALSE, na = "")
 
-  selected <- NULL
-  attempt_errors <- character()
-  for (i in seq_len(nrow(candidates))) {
-    cycle <- brim_hrrr_as_utc(candidates$cycle_time[i])
-    fh <- candidates$forecast_hour[i]
-    valid <- brim_hrrr_as_utc(candidates$valid_time[i])
-    brim_hrrr_log(
-      "Trying HRRR cycle ", brim_hrrr_fmt_iso_utc(cycle),
-      " f", sprintf("%02d", fh),
-      " valid ", brim_hrrr_fmt_iso_utc(valid)
+  # Round to the nearest model-valid hour before applying the user-facing leads.
+  # The workflow runs at :33, so this normally anchors to the next whole hour.
+  target_base <- brim_hrrr_floor_hour(now_utc + 1800)
+  target_times <- target_base + brim_hrrr_target_lead_hours * 3600
+  target_table <- data.frame(
+    requested_lead_hours = brim_hrrr_target_lead_hours,
+    target_time_utc = brim_hrrr_fmt_iso_utc(target_times),
+    stringsAsFactors = FALSE
+  )
+  write.csv(
+    target_table,
+    file.path(brim_hrrr_dirs$debug, "hrrr_target_times.csv"),
+    row.names = FALSE,
+    na = ""
+  )
+
+  new_entries <- list()
+  all_candidates <- list()
+  all_attempt_errors <- character()
+  target_failures <- character()
+
+  for (i in seq_along(brim_hrrr_target_lead_hours)) {
+    lead <- brim_hrrr_target_lead_hours[i]
+    target <- target_times[i]
+    result <- tryCatch(
+      brim_hrrr_build_target_entry(target, lead, now_utc),
+      error = function(e) e
     )
-    result <- tryCatch(brim_hrrr_download_candidate(cycle, fh), error = function(e) e)
+
     if (inherits(result, "error")) {
-      attempt_errors <- c(
-        attempt_errors,
-        paste0(brim_hrrr_fmt_iso_utc(cycle), " f", sprintf("%02d", fh), ": ", conditionMessage(result))
-      )
+      msg <- paste0("+", lead, "h target failed: ", conditionMessage(result))
+      brim_hrrr_log(msg)
+      target_failures <- c(target_failures, msg)
       next
     }
-    selected <- c(result, list(cycle_time = cycle, forecast_hour = fh, valid_time = valid))
-    break
+
+    new_entries[[length(new_entries) + 1L]] <- result$entry
+    all_candidates[[length(all_candidates) + 1L]] <- result$candidates
+    all_attempt_errors <- c(all_attempt_errors, result$errors)
   }
-  if (is.null(selected)) {
-    stop("No usable HRRR product was found. Attempts:\n", paste(attempt_errors, collapse = "\n"))
+
+  if (length(all_candidates)) {
+    candidate_audit <- do.call(rbind, all_candidates)
+    write.csv(
+      candidate_audit,
+      file.path(brim_hrrr_dirs$debug, "hrrr_candidate_order.csv"),
+      row.names = FALSE,
+      na = ""
+    )
   }
-  writeLines(attempt_errors, file.path(brim_hrrr_dirs$debug, "hrrr_failed_attempts.txt"), useBytes = TRUE)
-
-  brim_hrrr_assert_uv_inventory(selected$path)
-  regridded_path <- file.path(brim_hrrr_dirs$debug, "hrrr_10m_uv_earth_relative_0p05.grib2")
-  brim_hrrr_regrid(selected$path, regridded_path)
-
-  r <- terra::rast(regridded_path)
-  idx <- brim_hrrr_identify_uv_layers(r)
-  u <- r[[idx[["u"]]]]
-  v <- r[[idx[["v"]]]]
-  if (!terra::compareGeom(u, v, stopOnError = FALSE)) stop("Regridded U/V geometries do not match.")
-  names(u) <- "UGRD_10m_earth_relative"
-  names(v) <- "VGRD_10m_earth_relative"
-
-  product_path <- file.path(
-    brim_hrrr_dirs$timeset,
-    brim_hrrr_product_filename(selected$cycle_time, selected$forecast_hour)
-  )
-  brim_hrrr_write_velocity_json(u, v, product_path, selected$cycle_time, selected$forecast_hour)
-  stats <- brim_hrrr_speed_stats(u, v)
-
-  new_entry <- list(
-    product_id = "hrrr_surface_wind",
-    product = "NOAA/NCEP HRRR 10-m wind",
-    model = "NOAA/NCEP HRRR",
-    level = "10 m above ground",
-    variables = c("UGRD", "VGRD"),
-    model_cycle_utc = brim_hrrr_fmt_iso_utc(selected$cycle_time),
-    model_cycle_local = brim_hrrr_fmt_local(selected$cycle_time, brim_hrrr_local_tz),
-    forecast_hour = as.integer(selected$forecast_hour),
-    forecast_hour_label = paste0("f", sprintf("%02d", as.integer(selected$forecast_hour))),
-    valid_time_utc = brim_hrrr_fmt_iso_utc(selected$valid_time),
-    valid_time_local = brim_hrrr_fmt_local(selected$valid_time, brim_hrrr_local_tz),
-    valid_lag_minutes_at_build = unname(as.numeric(difftime(now_utc, selected$valid_time, units = "mins"))),
-    relative_url = brim_hrrr_relative_url(product_path),
-    filename = basename(product_path),
-    file_bytes = unname(file.info(product_path)$size),
-    source = selected$source,
-    source_request_url = selected$source_url,
-    source_index_url = selected$source_index_url %||% NULL,
-    source_grib_bytes = selected$bytes,
-    domain = c(brim_hrrr_domain[c("id", "label", "west", "east", "south", "north")]),
-    grid = list(
-      nx = terra::ncol(u),
-      ny = terra::nrow(u),
-      resolution_degrees = terra::res(u)[1],
-      cell_count = terra::ncell(u)
-    ),
-    earth_relative_winds_confirmed = TRUE,
-    vector_regrid_method = "wgrib2 -new_grid_winds earth; bilinear interpolation to regular lon/lat",
-    speed_ms = stats$speed_ms,
-    speed_mph = stats$speed_mph,
-    recommended_velocity_scale_ms = stats$recommended_velocity_scale_ms,
-    recommended_velocity_scale_mph = stats$recommended_velocity_scale_mph,
-    velocity_scale_reference = stats$velocity_scale_reference
+  writeLines(
+    c(all_attempt_errors, target_failures),
+    file.path(brim_hrrr_dirs$debug, "hrrr_failed_attempts.txt"),
+    useBytes = TRUE
   )
 
-  entries <- brim_hrrr_merge_entries(brim_hrrr_existing_entries(), new_entry, now_utc)
+  entries <- brim_hrrr_merge_entries(
+    brim_hrrr_existing_entries(),
+    new_entries,
+    now_utc
+  )
+  if (!length(entries)) {
+    stop("No usable HRRR entries were available after building the requested targets.")
+  }
+
   selected_entry <- brim_hrrr_select_best_entry(entries, now_utc)
   if (is.null(selected_entry)) stop("Could not select a closest HRRR manifest entry.")
+
+  current_distance_hours <- abs(
+    as.numeric(
+      difftime(
+        brim_hrrr_parse_iso_utc(selected_entry$valid_time_utc),
+        now_utc,
+        units = "hours"
+      )
+    )
+  )
+  if (!is.finite(current_distance_hours) || current_distance_hours > 3) {
+    stop("The closest HRRR entry is more than 3 hours from current browser context.")
+  }
+
   selected_path <- file.path(brim_hrrr_dirs$publish, selected_entry$relative_url)
   if (!file.exists(selected_path)) stop("Selected HRRR JSON is missing: ", selected_path)
   file.copy(selected_path, brim_hrrr_files$wind_json, overwrite = TRUE)
@@ -758,13 +902,28 @@ tryCatch({
   valid_time <- brim_hrrr_parse_iso_utc(selected_entry$valid_time_utc)
   valid_age_hours <- unname(as.numeric(difftime(build_time, valid_time, units = "hours")))
 
+  nearest_lead_availability <- lapply(brim_hrrr_target_lead_hours, function(lead) {
+    target_ms <- as.numeric(now_utc + lead * 3600)
+    valid_ms <- vapply(
+      entries,
+      function(x) as.numeric(brim_hrrr_parse_iso_utc(x$valid_time_utc)),
+      numeric(1)
+    )
+    distance_hours <- min(abs(valid_ms - target_ms) / 3600, na.rm = TRUE)
+    list(
+      lead_hours = as.integer(lead),
+      nearest_distance_hours = unname(distance_hours),
+      available_within_2_hours = isTRUE(distance_hours <= 2)
+    )
+  })
+
   run_summary <- list(
     product_id = "hrrr_surface_wind",
     product = "NOAA/NCEP HRRR 10-m wind over Hydrologic California + adjacent basins",
-    feed_mode = "rolling_time_set_with_legacy_latest",
+    feed_mode = "multi_target_time_set_with_legacy_latest",
     version = brim_hrrr_version,
     status = "success",
-    selection_strategy = "closest valid_time_utc to build time; BRIM selects again using browser time",
+    selection_strategy = "closest valid_time_utc to build time; BRIM targets Current, +6 hr, or +12 hr using browser time",
     source = selected_entry$source,
     model_cycle_utc = selected_entry$model_cycle_utc,
     model_cycle_local = selected_entry$model_cycle_local,
@@ -779,6 +938,10 @@ tryCatch({
     valid_time_age_hours = valid_age_hours,
     stale_after_hours = brim_hrrr_stale_after_hours,
     is_stale = isTRUE(valid_age_hours > brim_hrrr_stale_after_hours),
+    supported_browser_lead_hours = brim_hrrr_target_lead_hours,
+    target_base_utc = brim_hrrr_fmt_iso_utc(target_base),
+    target_build_results = nearest_lead_availability,
+    target_failures = target_failures,
     domain = selected_entry$domain,
     grid = selected_entry$grid,
     earth_relative_winds_confirmed = TRUE,
@@ -804,10 +967,10 @@ tryCatch({
 
   run_manifest <- list(
     product_id = "hrrr_surface_wind",
-    product = "NOAA/NCEP HRRR 10-m wind rolling time set",
-    feed_mode = "rolling_time_set",
+    product = "NOAA/NCEP HRRR 10-m wind Current/+6/+12 time set",
+    feed_mode = "multi_target_time_set",
     version = brim_hrrr_version,
-    description = "HRRR 10-m U/V wind converted to Earth-relative regular lon/lat fields for Leaflet particle-flow rendering over Hydrologic California + adjacent basins.",
+    description = "HRRR 10-m U/V wind converted to Earth-relative regular lon/lat fields for Current, +6 hr, and +12 hr Leaflet particle-flow views over Hydrologic California + adjacent basins.",
     source = "NOAA/NCEP HRRR via NOMADS with NOAA AWS byte-range fallback",
     domain = c(brim_hrrr_domain[c("id", "label", "west", "east", "south", "north")]),
     local_time_zone = brim_hrrr_local_tz,
@@ -815,7 +978,8 @@ tryCatch({
     generated_local = brim_hrrr_fmt_local(build_time, brim_hrrr_local_tz),
     browser_selection = list(
       recommended = TRUE,
-      strategy = "fetch this manifest first; choose entry with valid_time_utc closest to Date.now(); prefer recent past over future for equal-distance ties; then fetch entry.relative_url relative to this manifest directory"
+      supported_lead_hours = brim_hrrr_target_lead_hours,
+      strategy = "fetch this manifest first; choose entry with valid_time_utc closest to Date.now() plus the selected lead hours; prefer recent past over future for equal-distance ties; then fetch entry.relative_url relative to this manifest directory"
     ),
     dynamic_particle_scaling = list(
       recommended = TRUE,
@@ -828,21 +992,34 @@ tryCatch({
       selected_entry = selected_entry
     ),
     stale_after_hours = brim_hrrr_stale_after_hours,
+    supported_browser_lead_hours = brim_hrrr_target_lead_hours,
+    target_base_utc = brim_hrrr_fmt_iso_utc(target_base),
+    target_failures = target_failures,
     retain_past_hours = brim_hrrr_retain_past_hours,
     retain_future_hours = brim_hrrr_retain_future_hours,
     entry_count = length(entries),
     entries = entries
   )
 
-  jsonlite::write_json(run_summary, brim_hrrr_files$summary_json, auto_unbox = TRUE, pretty = TRUE, digits = 6, na = "null", null = "null")
-  jsonlite::write_json(run_manifest, brim_hrrr_files$manifest_json, auto_unbox = TRUE, pretty = TRUE, digits = 6, na = "null", null = "null")
+  jsonlite::write_json(
+    run_summary, brim_hrrr_files$summary_json,
+    auto_unbox = TRUE, pretty = TRUE, digits = 6, na = "null", null = "null"
+  )
+  jsonlite::write_json(
+    run_manifest, brim_hrrr_files$manifest_json,
+    auto_unbox = TRUE, pretty = TRUE, digits = 6, na = "null", null = "null"
+  )
   brim_hrrr_cleanup_timeset(vapply(entries, function(x) x$relative_url, character(1)))
   qa_zip <- brim_hrrr_package_qa(run_summary, run_manifest)
 
   brim_hrrr_log("HRRR production feed complete.")
-  brim_hrrr_log("Selected: ", run_summary$model_cycle_utc, " ", run_summary$forecast_hour_label, " valid ", run_summary$valid_time_utc)
-  brim_hrrr_log("Manifest entries: ", length(entries))
-  brim_hrrr_log("Latest JSON: ", brim_hrrr_files$wind_json, " (", file.info(brim_hrrr_files$wind_json)$size, " bytes)")
+  brim_hrrr_log("Selected current field: ", run_summary$model_cycle_utc, " ",
+                run_summary$forecast_hour_label, " valid ", run_summary$valid_time_utc)
+  brim_hrrr_log("Requested leads: ", paste(brim_hrrr_target_lead_hours, collapse = ", "), " hours")
+  brim_hrrr_log("New entries built: ", length(new_entries), "; manifest entries: ", length(entries))
+  brim_hrrr_log("Latest JSON: ", brim_hrrr_files$wind_json, " (",
+                file.info(brim_hrrr_files$wind_json)$size, " bytes)")
+
 }, error = function(e) {
   run_error <<- e
   brim_hrrr_log("ERROR: ", conditionMessage(e))

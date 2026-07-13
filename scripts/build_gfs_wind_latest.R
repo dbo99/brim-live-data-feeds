@@ -1,10 +1,9 @@
 # BRIM GFS wind live-feed builder -------------------------------------------
 # Converts NOAA/NCEP GFS 0.25-degree 10-m U/V wind into Leaflet-velocity
-# compatible JSON.  RTW014/RTW015 changes the product from one fixed f003 field to a
-# short current-ish time set so BRIM can choose the closest valid hour at
-# layer-enable time. RTW015 adds robust wind-speed distribution statistics so
-# BRIM can scale particle colors dynamically without scanning U/V arrays in the
-# browser.
+# compatible JSON. RTW014/RTW015 replaced the original fixed-f003 product with
+# a manifest-driven time set and robust wind-speed statistics. RTW017 keeps that
+# architecture but publishes sparse clusters around the browser-facing Current
+# and +24-hour targets, avoiding a separate workflow for each outlook.
 
 brim_rtw_env <- function(name, default = "") {
   value <- Sys.getenv(name, unset = default)
@@ -14,6 +13,15 @@ brim_rtw_env <- function(name, default = "") {
 brim_rtw_bool <- function(x, default = FALSE) {
   if (is.null(x) || !nzchar(x)) return(default)
   tolower(x) %in% c("1", "true", "yes", "y", "on")
+}
+
+brim_rtw_parse_integer_csv <- function(x, default) {
+  if (is.null(x) || length(x) == 0L || is.na(x)) x <- ""
+  x <- trimws(as.character(x))
+  if (!nzchar(x)) return(as.integer(default))
+  values <- suppressWarnings(as.integer(trimws(strsplit(x, ",", fixed = TRUE)[[1]])))
+  values <- values[is.finite(values)]
+  if (!length(values)) as.integer(default) else sort(unique(values))
 }
 
 brim_rtw_null <- function(x, y) {
@@ -30,18 +38,23 @@ if (!dir.exists(brim_rtw_project_root)) {
 }
 setwd(brim_rtw_project_root)
 
-brim_rtw_version <- "RTW015"
+brim_rtw_version <- "RTW017"
 brim_rtw_local_tz <- brim_rtw_env("BRIM_RTW_LOCAL_TZ", "America/Los_Angeles")
 brim_rtw_build_sandbox <- brim_rtw_bool(brim_rtw_env("BRIM_RTW_BUILD_SANDBOX", "true"), TRUE)
 brim_rtw_build_qa_zip <- brim_rtw_bool(brim_rtw_env("BRIM_RTW_BUILD_QA_ZIP", "true"), TRUE)
 brim_rtw_force_refresh <- brim_rtw_bool(brim_rtw_env("BRIM_RTW_FORCE_REFRESH", "false"), FALSE)
 
-# Time-set strategy.  BRIM should use the manifest and select the closest valid
-# hour in the browser.  The legacy latest.json is still written as the closest
-# valid field at build time so the older one-file integration keeps working.
-brim_rtw_target_past_hours <- as.integer(brim_rtw_env("BRIM_RTW_TARGET_PAST_HOURS", "2"))
-brim_rtw_target_future_hours <- as.integer(brim_rtw_env("BRIM_RTW_TARGET_FUTURE_HOURS", "8"))
-brim_rtw_max_forecast_hour <- as.integer(brim_rtw_env("BRIM_RTW_MAX_FORECAST_HOUR", "9"))
+# Sparse time-set strategy. BRIM offers Current and +24 hr views, so the feed
+# keeps a small cluster around each target instead of publishing every hour from
+# now through tomorrow. The neighboring hours let browser-time selection remain
+# accurate even when the workflow or user click occurs late within an hour.
+brim_rtw_target_offsets_hours <- brim_rtw_parse_integer_csv(
+  brim_rtw_env("BRIM_RTW_TARGET_OFFSETS_HOURS", "-2,-1,0,1,2,23,24,25"),
+  c(-2L, -1L, 0L, 1L, 2L, 23L, 24L, 25L)
+)
+brim_rtw_target_past_hours <- abs(min(c(0L, brim_rtw_target_offsets_hours)))
+brim_rtw_target_future_hours <- max(c(0L, brim_rtw_target_offsets_hours))
+brim_rtw_max_forecast_hour <- as.integer(brim_rtw_env("BRIM_RTW_MAX_FORECAST_HOUR", "42"))
 brim_rtw_cycle_lookback_hours <- as.integer(brim_rtw_env("BRIM_RTW_CYCLE_LOOKBACK_HOURS", "24"))
 brim_rtw_stale_after_hours <- as.numeric(brim_rtw_env("BRIM_RTW_STALE_AFTER_HOURS", "9"))
 brim_rtw_min_json_bytes <- as.integer(brim_rtw_env("BRIM_RTW_MIN_JSON_BYTES", "100000"))
@@ -137,8 +150,7 @@ brim_rtw_cycle_candidates <- function(now_utc = Sys.time(), lookback_hours = 24L
 
 brim_rtw_target_valid_times <- function(now_utc = Sys.time()) {
   now_hour <- brim_rtw_floor_hour(now_utc)
-  offsets <- seq.int(-brim_rtw_target_past_hours, brim_rtw_target_future_hours)
-  now_hour + offsets * 3600
+  sort(unique(now_hour + brim_rtw_target_offsets_hours * 3600))
 }
 
 brim_rtw_nomads_url <- function(cycle_time, forecast_hour) {
@@ -628,9 +640,11 @@ brim_rtw_log("BRIM GFS wind live-feed build started: ", format(Sys.time(), "%Y-%
 brim_rtw_log("Project root: ", brim_rtw_project_root)
 brim_rtw_log("Version: ", brim_rtw_version)
 brim_rtw_log("Build sandbox HTML: ", brim_rtw_build_sandbox)
-brim_rtw_log("Time-set target window: now -", brim_rtw_target_past_hours,
-             "h to now +", brim_rtw_target_future_hours, "h; max forecast hour f",
-             sprintf("%03d", brim_rtw_max_forecast_hour))
+brim_rtw_log(
+  "Time-set target offsets (hours): ",
+  paste(brim_rtw_target_offsets_hours, collapse = ", "),
+  "; max forecast hour f", sprintf("%03d", brim_rtw_max_forecast_hour)
+)
 
 run_error <- NULL
 run_summary <- NULL
@@ -715,6 +729,8 @@ tryCatch({
     velocity_scale_reference = speed_stats$velocity_scale_reference,
     selected_entry = selected,
     available_entry_count = length(entries),
+    supported_browser_lead_hours = c(0L, 24L),
+    target_offsets_hours = brim_rtw_target_offsets_hours,
     target_past_hours = brim_rtw_target_past_hours,
     target_future_hours = brim_rtw_target_future_hours,
     max_forecast_hour = brim_rtw_max_forecast_hour,
@@ -747,8 +763,9 @@ tryCatch({
     generated_local = brim_rtw_fmt_local(build_time),
     browser_selection = list(
       recommended = TRUE,
-      strategy = "fetch this manifest first; choose entry with valid_time_utc closest to Date.now(); prefer recent past over farther future for ties; then fetch entry.relative_url relative to this manifest's directory",
-      utc_selection_note = "Use UTC ISO strings for selection. Format labels in America/Los_Angeles only after selection."
+      strategy = "fetch this manifest first; for Current choose valid_time_utc closest to Date.now(); for +24 hr choose closest to Date.now() + 24 hours; prefer recent past over future for equal-distance ties; then fetch entry.relative_url relative to this manifest directory",
+      supported_lead_hours = c(0L, 24L),
+      utc_selection_note = "Use UTC milliseconds for target selection. Format labels in America/Los_Angeles only after selection."
     ),
     dynamic_particle_scaling = list(
       recommended = TRUE,
@@ -768,6 +785,8 @@ tryCatch({
       selected_entry = selected
     ),
     stale_after_hours = brim_rtw_stale_after_hours,
+    supported_browser_lead_hours = c(0L, 24L),
+    target_offsets_hours = brim_rtw_target_offsets_hours,
     target_past_hours = brim_rtw_target_past_hours,
     target_future_hours = brim_rtw_target_future_hours,
     max_forecast_hour = brim_rtw_max_forecast_hour,
