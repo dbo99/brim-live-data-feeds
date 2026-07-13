@@ -131,7 +131,22 @@ brim_hrrr_run <- function(command, args, label = basename(command)) {
 brim_hrrr_log("Starting ", brim_hrrr_version)
 brim_hrrr_log("Project root: ", brim_hrrr_project_root)
 brim_hrrr_log("wgrib2: ", brim_hrrr_wgrib2)
-brim_hrrr_log(paste(brim_hrrr_run(brim_hrrr_wgrib2, "-version", "wgrib2 version check"), collapse = " | "))
+
+# wgrib2 3.8.0 can print its version but return status 8 when no GRIB input
+# file is supplied. The executable path check above is authoritative; keep the
+# version call as a nonfatal diagnostic rather than passing it through the
+# strict command runner used for real GRIB operations.
+brim_hrrr_wgrib2_version <- suppressWarnings(
+  system2(brim_hrrr_wgrib2, args = "-version", stdout = TRUE, stderr = TRUE)
+)
+if (length(brim_hrrr_wgrib2_version)) {
+  brim_hrrr_log(
+    "wgrib2 version probe: ",
+    paste(brim_hrrr_wgrib2_version, collapse = " | ")
+  )
+} else {
+  brim_hrrr_log("wgrib2 version probe returned no text; continuing.")
+}
 
 brim_hrrr_url <- function(base, query) {
   paste0(
