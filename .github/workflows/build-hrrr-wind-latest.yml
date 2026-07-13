@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   schedule:
     # Hourly at :33 UTC, between ASOS at :17 and GFS at :47. GitHub schedules
-    # are best-effort and can start late; the rolling manifest preserves recent
-    # valid hours so BRIM can still select the closest available field.
+    # are best-effort and can start late; one run publishes Current, +6 hr, and
+    # +12 hr targets into the same rolling manifest.
     - cron: "33 * * * *"
 
 permissions:
@@ -66,7 +66,7 @@ jobs:
             any::jsonlite
             any::terra
 
-      - name: Build HRRR rolling time-set feed
+      - name: Build HRRR Current/+6/+12 time-set feed
         shell: bash -el {0}
         env:
           BRIM_HRRR_LOCAL_TZ: "America/Los_Angeles"
@@ -77,10 +77,11 @@ jobs:
           BRIM_HRRR_NORTH: "43.5"
           BRIM_HRRR_RESOLUTION_DEGREES: "0.05"
           BRIM_HRRR_CYCLE_LOOKBACK_HOURS: "8"
-          BRIM_HRRR_MAX_FORECAST_HOUR: "6"
-          BRIM_HRRR_RETAIN_PAST_HOURS: "6"
-          BRIM_HRRR_RETAIN_FUTURE_HOURS: "3"
-          BRIM_HRRR_MAX_MANIFEST_ENTRIES: "12"
+          BRIM_HRRR_TARGET_LEAD_HOURS: "0,6,12"
+          BRIM_HRRR_MAX_FORECAST_HOUR: "18"
+          BRIM_HRRR_RETAIN_PAST_HOURS: "4"
+          BRIM_HRRR_RETAIN_FUTURE_HOURS: "14"
+          BRIM_HRRR_MAX_MANIFEST_ENTRIES: "24"
         run: |
           echo "wgrib2 path: $(command -v wgrib2)"
           wgrib2 -version || true

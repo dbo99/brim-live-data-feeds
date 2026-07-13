@@ -5,7 +5,7 @@ on:
   schedule:
     # Hourly, away from :00 GitHub scheduled-workflow congestion and away from
     # the common BRIM feed minutes already in this repo. The script publishes a
-    # short current-ish GFS time set and keeps only wind-specific files under
+    # sparse Current/+24-hour GFS time set and keeps only wind-specific files under
     # docs/data/wind/gfs/surface/.
     - cron: "47 * * * *"
 
@@ -66,9 +66,9 @@ jobs:
           BRIM_RTW_BUILD_QA_ZIP: "true"
           BRIM_RTW_FORCE_REFRESH: "false"
           BRIM_RTW_LOCAL_TZ: "America/Los_Angeles"
-          BRIM_RTW_TARGET_PAST_HOURS: "2"
-          BRIM_RTW_TARGET_FUTURE_HOURS: "8"
-          BRIM_RTW_MAX_FORECAST_HOUR: "9"
+          # Sparse clusters around Current and +24 hr browser targets.
+          BRIM_RTW_TARGET_OFFSETS_HOURS: "-2,-1,0,1,2,23,24,25"
+          BRIM_RTW_MAX_FORECAST_HOUR: "42"
         run: |
           source("scripts/build_gfs_wind_latest.R")
 
