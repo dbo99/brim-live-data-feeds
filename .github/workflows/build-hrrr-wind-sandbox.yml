@@ -1,0 +1,93 @@
+name: Build HRRR wind sandbox
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Manual sandbox only. A newer sandbox request may replace an older one.
+  group: hrrr-wind-sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-sandbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Set up wgrib2
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: hrrr-tools
+          create-args: >-
+            -c conda-forge
+            wgrib2=3.8.*
+          cache-environment: true
+          init-shell: bash
+
+      - name: Install Linux system libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gdal-bin \
+            libgdal-dev \
+            libproj-dev \
+            libgeos-dev \
+            libudunits2-dev \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libxml2-dev
+
+      - name: Install R package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: hrrr-wind-sandbox-v1
+          packages: |
+            any::httr2
+            any::jsonlite
+            any::terra
+
+      - name: Build HRRR sandbox
+        shell: bash -el {0}
+        env:
+          BRIM_HRRR_LOCAL_TZ: "America/Los_Angeles"
+          BRIM_HRRR_FORCE_REFRESH: "false"
+          BRIM_HRRR_OPEN_HTML: "false"
+          BRIM_HRRR_WEST: "-125.5"
+          BRIM_HRRR_EAST: "-112.0"
+          BRIM_HRRR_SOUTH: "31.0"
+          BRIM_HRRR_NORTH: "43.5"
+          BRIM_HRRR_RESOLUTION_DEGREES: "0.05"
+          BRIM_HRRR_CYCLE_LOOKBACK_HOURS: "8"
+          BRIM_HRRR_MAX_FORECAST_HOUR: "6"
+        run: |
+          echo "wgrib2 path: $(command -v wgrib2)"
+          wgrib2 -version
+          Rscript scripts/build_hrrr_wind_sandbox.R
+
+      - name: Upload HRRR sandbox artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hrrr-wind-sandbox
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            qa/wind/hrrr_sandbox/HRRR_sandbox_QA_upload.zip
+            debug/wind/hrrr_sandbox/html/brim_hrrr_wind_sandbox_latest.html
+            debug/wind/hrrr_sandbox/hrrr_surface_wind_sandbox_summary.json
+            debug/wind/hrrr_sandbox/*.log
