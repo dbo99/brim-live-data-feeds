@@ -71,7 +71,7 @@ nbm_project_root <- normalizePath(
 if (!dir.exists(nbm_project_root)) stop("Project root does not exist: ", nbm_project_root)
 setwd(nbm_project_root)
 
-nbm_version <- "RTW-NBM004"
+nbm_version <- "RTW-NBM005"
 nbm_local_tz <- nbm_env("BRIM_NBM_LOCAL_TZ", "America/Los_Angeles")
 nbm_target_lead_hours <- nbm_parse_integer_csv(
   nbm_env("BRIM_NBM_TARGET_LEAD_HOURS", "6,12,24,48"),
@@ -300,11 +300,53 @@ nbm_parse_idx <- function(text) {
 
 nbm_find_record <- function(idx, pattern, label) {
   hit <- which(grepl(pattern, idx$desc, perl = TRUE))
-  if (length(hit) != 1L) {
-    stop("Expected exactly one ", label, " record; found ", length(hit), ".")
+
+  # NBM QMD inventories can contain both instantaneous percentile guidance and
+  # interval/maximum-wind percentile products with the same variable and
+  # percentile labels. If a future inventory broadens unexpectedly, prefer one
+  # ordinary "<n> hour fcst" record rather than silently choosing by position.
+  if (length(hit) > 1L) {
+    instantaneous <- hit[
+      grepl(
+        ":[0-9]+ hour fcst:",
+        idx$desc[hit],
+        perl = TRUE
+      )
+    ]
+    if (length(instantaneous) == 1L) {
+      nbm_log(
+        "Resolved ", length(hit), " candidate ", label,
+        " records to the instantaneous forecast record."
+      )
+      hit <- instantaneous
+    }
   }
+
+  if (length(hit) != 1L) {
+    candidates <- if (length(hit)) idx$desc[hit] else character()
+    candidate_text <- if (length(candidates)) {
+      paste0(
+        "\nCandidate records:\n  ",
+        paste(utils::head(candidates, 12L), collapse = "\n  ")
+      )
+    } else {
+      ""
+    }
+
+    stop(
+      "Expected exactly one instantaneous ", label,
+      " record; found ", length(hit), ".",
+      candidate_text
+    )
+  }
+
   rec <- idx[hit, , drop = FALSE]
-  if (!is.finite(rec$end)) stop("Selected ", label, " record was the final index record; end byte unavailable.")
+  if (!is.finite(rec$end)) {
+    stop(
+      "Selected ", label,
+      " record was the final index record; end byte unavailable."
+    )
+  }
   rec
 }
 
@@ -642,14 +684,75 @@ nbm_build_entry <- function(cycle_time, row) {
   core_idx <- nbm_parse_idx(nbm_http_text(core_urls$idx))
   qmd_idx <- nbm_parse_idx(nbm_http_text(qmd_urls$idx))
 
+  # Match ordinary forecast-hour guidance explicitly. The QMD files also
+  # contain interval/maximum-wind percentile products at some longer leads;
+  # broad ".*" patterns can therefore return two records beginning near f066.
+  instant_fcst <- "[0-9]+ hour fcst"
+
   specs <- list(
-    wind_dir_deg = list(product = "core", pattern = ":WDIR:10 m above ground:.*fcst:$", interpolation = "neighbor"),
-    wind_p10_ms = list(product = "qmd", pattern = ":WIND:10 m above ground:.*:10% level$", interpolation = "bilinear"),
-    wind_p50_ms = list(product = "qmd", pattern = ":WIND:10 m above ground:.*:50% level$", interpolation = "bilinear"),
-    wind_p90_ms = list(product = "qmd", pattern = ":WIND:10 m above ground:.*:90% level$", interpolation = "bilinear"),
-    gust_p10_ms = list(product = "qmd", pattern = ":GUST:10 m above ground:.*:10% level$", interpolation = "bilinear"),
-    gust_p50_ms = list(product = "qmd", pattern = ":GUST:10 m above ground:.*:50% level$", interpolation = "bilinear"),
-    gust_p90_ms = list(product = "qmd", pattern = ":GUST:10 m above ground:.*:90% level$", interpolation = "bilinear")
+    wind_dir_deg = list(
+      product = "core",
+      pattern = paste0(
+        ":WDIR:10 m above ground:",
+        instant_fcst,
+        ":$"
+      ),
+      interpolation = "neighbor"
+    ),
+    wind_p10_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":WIND:10 m above ground:",
+        instant_fcst,
+        ":10% level$"
+      ),
+      interpolation = "bilinear"
+    ),
+    wind_p50_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":WIND:10 m above ground:",
+        instant_fcst,
+        ":50% level$"
+      ),
+      interpolation = "bilinear"
+    ),
+    wind_p90_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":WIND:10 m above ground:",
+        instant_fcst,
+        ":90% level$"
+      ),
+      interpolation = "bilinear"
+    ),
+    gust_p10_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":GUST:10 m above ground:",
+        instant_fcst,
+        ":10% level$"
+      ),
+      interpolation = "bilinear"
+    ),
+    gust_p50_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":GUST:10 m above ground:",
+        instant_fcst,
+        ":50% level$"
+      ),
+      interpolation = "bilinear"
+    ),
+    gust_p90_ms = list(
+      product = "qmd",
+      pattern = paste0(
+        ":GUST:10 m above ground:",
+        instant_fcst,
+        ":90% level$"
+      ),
+      interpolation = "bilinear"
+    )
   )
 
   fields <- list()
