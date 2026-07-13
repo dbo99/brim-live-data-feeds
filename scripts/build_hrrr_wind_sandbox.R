@@ -59,7 +59,7 @@ if (!dir.exists(brim_hrrr_project_root)) {
 }
 setwd(brim_hrrr_project_root)
 
-brim_hrrr_version <- "RTW-HRRR-SBX001"
+brim_hrrr_version <- "RTW-HRRR-SBX002"
 brim_hrrr_local_tz <- brim_hrrr_env("BRIM_HRRR_LOCAL_TZ", "America/Los_Angeles")
 brim_hrrr_force_refresh <- brim_hrrr_bool(brim_hrrr_env("BRIM_HRRR_FORCE_REFRESH", "false"), FALSE)
 brim_hrrr_open_html <- brim_hrrr_bool(brim_hrrr_env("BRIM_HRRR_OPEN_HTML", "true"), TRUE)
@@ -443,10 +443,27 @@ brim_hrrr_speed_stats <- function(u, v) {
   speed <- sqrt(uv[, 1]^2 + uv[, 2]^2)
   speed <- speed[is.finite(speed)]
   if (!length(speed)) stop("No finite wind speeds in regridded HRRR field.")
+
+  # quantile() normally labels results as 0%, 50%, 75%, etc., even when the
+  # input probability vector is named. Assign stable feed-facing names
+  # explicitly so later p95/max lookups and JSON fields are deterministic.
   probs <- c(min = 0, p50 = .50, p75 = .75, p90 = .90, p95 = .95, max = 1)
-  ms <- stats::quantile(speed, probs = probs, names = TRUE, type = 7, na.rm = TRUE)
-  mph <- ms * 2.23694
+  ms <- stats::quantile(
+    speed,
+    probs = unname(probs),
+    names = FALSE,
+    type = 7,
+    na.rm = TRUE
+  )
+  names(ms) <- names(probs)
+
+  if (length(ms) != length(probs) || any(!is.finite(ms))) {
+    stop("Could not calculate complete finite HRRR wind-speed statistics.")
+  }
+
+  mph <- stats::setNames(unname(ms) * 2.23694, names(ms))
   recommended_ms <- min(max(unname(ms[["p95"]]) * 1.10, 8), 35)
+
   list(
     speed_ms = as.list(ms),
     speed_mph = as.list(mph),
