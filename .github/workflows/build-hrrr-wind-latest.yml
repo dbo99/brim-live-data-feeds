@@ -1,0 +1,116 @@
+name: Build HRRR wind latest
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly at :33 UTC, between ASOS at :17 and GFS at :47. GitHub schedules
+    # are best-effort and can start late; the rolling manifest preserves recent
+    # valid hours so BRIM can still select the closest available field.
+    - cron: "33 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-data-feed-writes-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Set up wgrib2
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: hrrr-tools
+          create-args: >-
+            -c conda-forge
+            wgrib2=3.8.*
+          cache-environment: true
+          init-shell: bash
+
+      - name: Install Linux system libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gdal-bin \
+            libgdal-dev \
+            libproj-dev \
+            libgeos-dev \
+            libudunits2-dev \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libxml2-dev
+
+      - name: Install R package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: hrrr-wind-production-v1
+          packages: |
+            any::httr2
+            any::jsonlite
+            any::terra
+
+      - name: Build HRRR rolling time-set feed
+        shell: bash -el {0}
+        env:
+          BRIM_HRRR_LOCAL_TZ: "America/Los_Angeles"
+          BRIM_HRRR_FORCE_REFRESH: "false"
+          BRIM_HRRR_WEST: "-125.5"
+          BRIM_HRRR_EAST: "-112.0"
+          BRIM_HRRR_SOUTH: "31.0"
+          BRIM_HRRR_NORTH: "43.5"
+          BRIM_HRRR_RESOLUTION_DEGREES: "0.05"
+          BRIM_HRRR_CYCLE_LOOKBACK_HOURS: "8"
+          BRIM_HRRR_MAX_FORECAST_HOUR: "6"
+          BRIM_HRRR_RETAIN_PAST_HOURS: "6"
+          BRIM_HRRR_RETAIN_FUTURE_HOURS: "3"
+          BRIM_HRRR_MAX_MANIFEST_ENTRIES: "12"
+        run: |
+          echo "wgrib2 path: $(command -v wgrib2)"
+          wgrib2 -version || true
+          Rscript scripts/build_hrrr_wind_latest.R
+
+      - name: Upload HRRR QA artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hrrr-wind-qa
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            qa/wind/hrrr/HRRR_latest_QA_upload.zip
+            debug/wind/hrrr/*.log
+
+      - name: Commit updated HRRR wind feed
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            docs/data/wind/hrrr_surface_wind_latest.json \
+            docs/data/wind/hrrr_surface_wind_latest_summary.json \
+            docs/data/wind/hrrr_surface_wind_feed_manifest.json \
+            docs/data/wind/hrrr/surface/
+          if git diff --cached --quiet; then
+            echo "No HRRR wind feed changes to commit."
+          else
+            git commit -m "Update HRRR wind rolling live feed"
+            git pull --rebase origin main
+            git push
+          fi
