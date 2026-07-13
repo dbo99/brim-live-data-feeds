@@ -3,18 +3,22 @@ name: Build ASOS/METAR observed wind latest
 on:
   workflow_dispatch:
   schedule:
-    # Hourly observed-wind refresh, away from :00 GitHub scheduled-workflow
-    # congestion, the GFS wind job at :47, and the common BRIM feed minutes.
-    - cron: "13 * * * *"
+    # Hourly observed-wind refresh at hh:17 UTC. The hour field is *, so this
+    # is once every hour—not once every three hours.
+    - cron: "17 * * * *"
 
 permissions:
   contents: write
 
 concurrency:
-  # Shared with the other BRIM live-data writers so scheduled feed jobs do not
-  # try to commit/push docs/data updates at the same time.
+  # Shared with the other BRIM live-data writers so feed jobs do not try to
+  # commit/push docs/data updates at the same time.
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
+
+  # Keep queued live-feed writers instead of allowing a newer queued writer to
+  # replace an older pending one in this shared concurrency group.
+  queue: max
 
 jobs:
   build-feed:
@@ -22,8 +26,17 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Report trigger
+        shell: bash
+        run: |
+          echo "Event: ${GITHUB_EVENT_NAME}"
+          echo "Workflow start UTC: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Configured schedule: once each hour at minute 17 UTC"
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
