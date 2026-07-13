@@ -71,7 +71,7 @@ nbm_project_root <- normalizePath(
 if (!dir.exists(nbm_project_root)) stop("Project root does not exist: ", nbm_project_root)
 setwd(nbm_project_root)
 
-nbm_version <- "RTW-NBM002"
+nbm_version <- "RTW-NBM003"
 nbm_local_tz <- nbm_env("BRIM_NBM_LOCAL_TZ", "America/Los_Angeles")
 nbm_target_lead_hours <- nbm_parse_integer_csv(
   nbm_env("BRIM_NBM_TARGET_LEAD_HOURS", "6,12,24,48"),
@@ -94,6 +94,16 @@ nbm_publish_lead_hours <- sort(unique(c(
 nbm_cycle_lookback_hours <- as.integer(nbm_env("BRIM_NBM_CYCLE_LOOKBACK_HOURS", "30"))
 nbm_request_timeout_seconds <- as.numeric(nbm_env("BRIM_NBM_REQUEST_TIMEOUT_SECONDS", "120"))
 nbm_retain_hours <- as.numeric(nbm_env("BRIM_NBM_RETAIN_HOURS", "18"))
+
+# Keep mapped land plus a narrow coastal fringe. A one-cell fringe preserves
+# immediate coastal guidance while removing the many points well offshore that
+# add little value to land-focused BRIM and slow browser redraws.
+nbm_coast_buffer_cells <- suppressWarnings(
+  as.integer(nbm_env("BRIM_NBM_COAST_BUFFER_CELLS", "1"))
+)
+if (!is.finite(nbm_coast_buffer_cells) || nbm_coast_buffer_cells < 0L) {
+  nbm_coast_buffer_cells <- 1L
+}
 
 nbm_domain <- list(
   id = "hydrologic_ca_adjacent",
@@ -127,7 +137,7 @@ nbm_install_missing <- function(pkgs) {
   missing <- pkgs[!vapply(pkgs, requireNamespace, quietly = TRUE, FUN.VALUE = logical(1))]
   if (length(missing)) install.packages(missing, repos = "https://cloud.r-project.org")
 }
-nbm_install_missing(c("httr2", "jsonlite"))
+nbm_install_missing(c("httr2", "jsonlite", "maps"))
 
 nbm_wgrib2 <- Sys.which("wgrib2")
 if (!nzchar(nbm_wgrib2)) stop("wgrib2 was not found on PATH.")
@@ -449,6 +459,86 @@ nbm_cardinal <- function(degrees) {
   dirs[(floor((degrees + 11.25) / 22.5) %% 16) + 1]
 }
 
+nbm_apply_land_mask <- function(x) {
+  if (!nrow(x)) stop("NBM land mask received an empty grid.")
+
+  regions <- suppressWarnings(
+    unlist(
+      maps::map.where("world", x = x$lon, y = x$lat),
+      use.names = FALSE
+    )
+  )
+  if (length(regions) != nrow(x)) {
+    stop(
+      "NBM land-mask lookup returned ", length(regions),
+      " results for ", nrow(x), " grid points."
+    )
+  }
+
+  land_core <- !is.na(regions) & nzchar(regions)
+  if (!any(land_core)) {
+    stop("NBM land mask did not identify any land points in the output domain.")
+  }
+
+  keep <- land_core
+  if (nbm_coast_buffer_cells > 0L) {
+    land_cells <- unique(x[land_core, c("grid_i", "grid_j"), drop = FALSE])
+    expanded <- vector(
+      "list",
+      (2L * nbm_coast_buffer_cells + 1L)^2L
+    )
+    k <- 0L
+
+    for (di in seq.int(-nbm_coast_buffer_cells, nbm_coast_buffer_cells)) {
+      for (dj in seq.int(-nbm_coast_buffer_cells, nbm_coast_buffer_cells)) {
+        k <- k + 1L
+        candidate <- data.frame(
+          grid_i = land_cells$grid_i + di,
+          grid_j = land_cells$grid_j + dj
+        )
+        candidate <- candidate[
+          candidate$grid_i >= 0L &
+            candidate$grid_i < nbm_domain$nx &
+            candidate$grid_j >= 0L &
+            candidate$grid_j < nbm_domain$ny,
+          ,
+          drop = FALSE
+        ]
+        expanded[[k]] <- candidate
+      }
+    }
+
+    fringe <- unique(do.call(rbind, expanded))
+    fringe_keys <- sprintf("%d|%d", fringe$grid_i, fringe$grid_j)
+    point_keys <- sprintf("%d|%d", x$grid_i, x$grid_j)
+    keep <- point_keys %in% fringe_keys
+  }
+
+  details <- list(
+    method = "maps::map.where world land polygons plus grid-cell coastal fringe",
+    polygon_database = "maps::world",
+    coastal_buffer_cells = nbm_coast_buffer_cells,
+    source_grid_points = nrow(x),
+    mapped_land_points = sum(land_core),
+    coastal_fringe_points = sum(keep & !land_core),
+    retained_points = sum(keep),
+    offshore_points_removed = sum(!keep)
+  )
+
+  nbm_log(
+    "NBM land mask retained ", details$retained_points,
+    " of ", details$source_grid_points,
+    " points; removed ", details$offshore_points_removed,
+    " offshore points (coastal buffer cells: ",
+    details$coastal_buffer_cells, ")."
+  )
+
+  list(
+    data = x[keep, , drop = FALSE],
+    details = details
+  )
+}
+
 nbm_build_entry <- function(cycle_time, row) {
   fhr <- as.integer(row$forecast_hour)
   ff <- sprintf("%03d", fhr)
@@ -493,11 +583,20 @@ nbm_build_entry <- function(cycle_time, row) {
     stop("NBM merged grid retained only ", nrow(merged), " of ", expected, " expected points.")
   }
 
+  merged$grid_i <- as.integer(round((merged$lon - nbm_domain$west) / nbm_domain$resolution_degrees))
+  merged$grid_j <- as.integer(round((merged$lat - nbm_domain$south) / nbm_domain$resolution_degrees))
+
+  mask_result <- nbm_apply_land_mask(merged)
+  merged <- mask_result$data
+  land_mask_details <- mask_result$details
+
+  if (nrow(merged) < 100L) {
+    stop("NBM land mask retained too few points: ", nrow(merged), ".")
+  }
+
   merged$wind_dir_deg <- ((merged$wind_dir_deg %% 360) + 360) %% 360
   ms_names <- c("wind_p10_ms", "wind_p50_ms", "wind_p90_ms", "gust_p10_ms", "gust_p50_ms", "gust_p90_ms")
   for (name in ms_names) merged[[sub("_ms$", "_mph", name)]] <- merged[[name]] * 2.2369362921
-  merged$grid_i <- as.integer(round((merged$lon - nbm_domain$west) / nbm_domain$resolution_degrees))
-  merged$grid_j <- as.integer(round((merged$lat - nbm_domain$south) / nbm_domain$resolution_degrees))
   merged$wind_dir_cardinal <- nbm_cardinal(merged$wind_dir_deg)
 
   valid_time <- nbm_as_utc(row$valid_time)
@@ -535,6 +634,7 @@ nbm_build_entry <- function(cycle_time, row) {
       forecast_hour = fhr,
       target_lead_hours = as.integer(row$lead_hours),
       domain = nbm_domain,
+      land_mask = land_mask_details,
       guidance = list(
         direction = "NBM core 10-m WDIR central guidance",
         sustained = "NBM QMD 10th/50th/90th percentile 10-m WIND",
@@ -564,6 +664,7 @@ nbm_build_entry <- function(cycle_time, row) {
     valid_time_local = nbm_fmt_local(valid_time, nbm_local_tz),
     relative_url = file.path("nbm", "guidance", file_name),
     feature_count = nrow(merged),
+    land_mask = land_mask_details,
     grid = list(nx = nbm_domain$nx, ny = nbm_domain$ny, resolution_degrees = nbm_domain$resolution_degrees),
     wind_p50_mph = wind50_stats,
     gust_p50_mph = gust50_stats,
@@ -595,6 +696,11 @@ manifest <- list(
   target_lead_hours = as.list(nbm_target_lead_hours),
   published_support_lead_hours = as.list(nbm_publish_lead_hours),
   support_window_hours = nbm_support_window_hours,
+  land_mask = list(
+    method = "maps::map.where world land polygons plus grid-cell coastal fringe",
+    polygon_database = "maps::world",
+    coastal_buffer_cells = nbm_coast_buffer_cells
+  ),
   entries = entries
 )
 jsonlite::write_json(manifest, nbm_files$manifest, auto_unbox = TRUE, digits = 8, null = "null", pretty = TRUE)
@@ -610,6 +716,11 @@ summary <- list(
   target_lead_hours = as.list(nbm_target_lead_hours),
   published_support_lead_hours = vapply(entries, function(x) x$target_lead_hours, numeric(1)),
   support_window_hours = nbm_support_window_hours,
+  offshore_points_removed_per_entry = vapply(
+    entries,
+    function(x) x$land_mask$offshore_points_removed,
+    numeric(1)
+  ),
   domain = nbm_domain
 )
 jsonlite::write_json(summary, nbm_files$summary, auto_unbox = TRUE, digits = 8, null = "null", pretty = TRUE)
@@ -620,6 +731,21 @@ inventory <- data.frame(
   valid_time_utc = vapply(entries, function(x) x$valid_time_utc, character(1)),
   relative_url = vapply(entries, function(x) x$relative_url, character(1)),
   feature_count = vapply(entries, function(x) x$feature_count, numeric(1)),
+  source_grid_points = vapply(
+    entries,
+    function(x) x$land_mask$source_grid_points,
+    numeric(1)
+  ),
+  offshore_points_removed = vapply(
+    entries,
+    function(x) x$land_mask$offshore_points_removed,
+    numeric(1)
+  ),
+  coastal_fringe_points = vapply(
+    entries,
+    function(x) x$land_mask$coastal_fringe_points,
+    numeric(1)
+  ),
   stringsAsFactors = FALSE
 )
 utils::write.csv(inventory, file.path(nbm_dirs$qa, "nbm_wind_guidance_inventory.csv"), row.names = FALSE)
