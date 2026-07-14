@@ -1,0 +1,509 @@
+name: Check BRIM wind feeds
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Lightweight repair check four times per hour. These minutes fall just
+    # after the normal ASOS (:17/:42), HRRR (:33), and GFS (:47) opportunities
+    # often enough to catch missed dispatches without installing R or wgrib2.
+    - cron: "5,20,35,50 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: wind-feed-watchdog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-feeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Check out published manifests
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Check coverage and dispatch repairs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WATCHDOG_REF: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import datetime as dt
+          import json
+          import math
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          UTC = dt.timezone.utc
+          NOW = dt.datetime.now(UTC)
+          REPOSITORY = os.environ["GITHUB_REPOSITORY"]
+          TOKEN = os.environ["GH_TOKEN"]
+          REF = os.environ.get("WATCHDOG_REF") or "main"
+          API_ROOT = "https://api.github.com"
+
+          ACTIVE_STATUSES = {
+              "queued", "in_progress", "requested", "waiting", "pending"
+          }
+          NBM_AVAILABLE_FORECAST_HOURS = (
+              list(range(1, 49))
+              + list(range(51, 193, 3))
+              + list(range(198, 265, 6))
+          )
+          NBM_PUBLISH_LEADS = [6, 12, 18, 24, 30, 48, 54]
+
+          results: list[dict[str, str]] = []
+          errors: list[str] = []
+
+
+          def utc_time(value):
+              if value is None:
+                  return None
+              if isinstance(value, (int, float)):
+                  return dt.datetime.fromtimestamp(float(value), tz=UTC)
+              text = str(value).strip()
+              if not text:
+                  return None
+              try:
+                  parsed = dt.datetime.fromisoformat(
+                      text.replace("Z", "+00:00")
+                  )
+              except ValueError:
+                  return None
+              if parsed.tzinfo is None:
+                  parsed = parsed.replace(tzinfo=UTC)
+              return parsed.astimezone(UTC)
+
+
+          def first_time(mapping, keys):
+              if not isinstance(mapping, dict):
+                  return None
+              for key in keys:
+                  parsed = utc_time(mapping.get(key))
+                  if parsed is not None:
+                      return parsed
+              return None
+
+
+          def load_manifest(path):
+              file_path = Path(path)
+              if not file_path.is_file():
+                  return None, f"manifest missing: {path}"
+              try:
+                  return json.loads(file_path.read_text(encoding="utf-8")), ""
+              except Exception as exc:
+                  return None, f"manifest unreadable: {exc}"
+
+
+          def manifest_generated(manifest):
+              return first_time(
+                  manifest,
+                  [
+                      "generated_utc",
+                      "build_time_utc",
+                      "generated_at_utc",
+                      "checked_utc",
+                      "created_utc",
+                  ],
+              )
+
+
+          def manifest_entries(manifest):
+              entries = manifest.get("entries", []) if isinstance(manifest, dict) else []
+              return entries if isinstance(entries, list) else []
+
+
+          def valid_times(manifest):
+              times = []
+              for entry in manifest_entries(manifest):
+                  parsed = first_time(
+                      entry,
+                      ["valid_time_utc", "valid_utc", "valid_time"],
+                  )
+                  if parsed is not None:
+                      times.append(parsed)
+              return times
+
+
+          def model_cycles(manifest):
+              times = []
+              top = first_time(
+                  manifest,
+                  [
+                      "model_cycle_utc",
+                      "selected_cycle_utc",
+                      "cycle_time_utc",
+                      "blend_cycle_utc",
+                  ],
+              )
+              if top is not None:
+                  times.append(top)
+              for entry in manifest_entries(manifest):
+                  parsed = first_time(
+                      entry,
+                      [
+                          "model_cycle_utc",
+                          "cycle_time_utc",
+                          "blend_cycle_utc",
+                      ],
+                  )
+                  if parsed is not None:
+                      times.append(parsed)
+              return times
+
+
+          def age_minutes(timestamp):
+              if timestamp is None:
+                  return math.inf
+              return (NOW - timestamp).total_seconds() / 60.0
+
+
+          def nearest_hours(times, target):
+              if not times:
+                  return math.inf
+              return min(abs((value - target).total_seconds()) for value in times) / 3600.0
+
+
+          def api_request(method, path, payload=None):
+              url = API_ROOT + path
+              data = None
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+              request = urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {TOKEN}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "BRIM-wind-feed-watchdog/1.0",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      body = response.read()
+                      if not body:
+                          return None
+                      return json.loads(body.decode("utf-8"))
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(
+                      f"GitHub API {method} {path} returned {exc.code}: {body}"
+                  ) from exc
+
+
+          def workflow_run_state(workflow_file, cooldown_minutes):
+              encoded = urllib.parse.quote(workflow_file, safe="")
+              data = api_request(
+                  "GET",
+                  f"/repos/{REPOSITORY}/actions/workflows/{encoded}/runs?per_page=20",
+              ) or {}
+              runs = data.get("workflow_runs", [])
+
+              active = [run for run in runs if run.get("status") in ACTIVE_STATUSES]
+              if active:
+                  run = active[0]
+                  return {
+                      "blocked": True,
+                      "reason": (
+                          f"workflow already {run.get('status')} "
+                          f"(run {run.get('run_number', '?')})"
+                      ),
+                  }
+
+              recent_times = []
+              for run in runs:
+                  for key in ("run_started_at", "created_at", "updated_at"):
+                      parsed = utc_time(run.get(key))
+                      if parsed is not None:
+                          recent_times.append(parsed)
+                          break
+              if recent_times:
+                  latest = max(recent_times)
+                  minutes = age_minutes(latest)
+                  if minutes < cooldown_minutes:
+                      return {
+                          "blocked": True,
+                          "reason": (
+                              f"latest workflow run started {minutes:.1f} minutes ago"
+                          ),
+                      }
+
+              return {"blocked": False, "reason": "no active/recent run"}
+
+
+          def dispatch(workflow_file):
+              encoded = urllib.parse.quote(workflow_file, safe="")
+              api_request(
+                  "POST",
+                  f"/repos/{REPOSITORY}/actions/workflows/{encoded}/dispatches",
+                  {"ref": REF},
+              )
+
+
+          def standard_decision(path, max_age_minutes, targets):
+              manifest, problem = load_manifest(path)
+              if manifest is None:
+                  return True, problem
+
+              reasons = []
+              generated = manifest_generated(manifest)
+              age = age_minutes(generated)
+              if age > max_age_minutes:
+                  reasons.append(
+                      f"manifest age {age:.0f} min exceeds {max_age_minutes} min"
+                  )
+
+              times = valid_times(manifest)
+              for lead, tolerance in targets:
+                  delta = nearest_hours(times, NOW + dt.timedelta(hours=lead))
+                  if delta > tolerance:
+                      reasons.append(
+                          f"+{lead:g} hr coverage misses target by "
+                          f"{delta:.1f} hr (limit {tolerance:g})"
+                      )
+
+              if reasons:
+                  return True, "; ".join(reasons)
+              return False, (
+                  f"manifest age {age:.0f} min; requested valid-time coverage present"
+              )
+
+
+          def floor_six_hour_cycle(value):
+              value = value.astimezone(UTC).replace(
+                  minute=0, second=0, microsecond=0
+              )
+              return value - dt.timedelta(hours=value.hour % 6)
+
+
+          def snap_nbm_forecast_hour(cycle, target):
+              desired = (target - cycle).total_seconds() / 3600.0
+              return min(
+                  NBM_AVAILABLE_FORECAST_HOURS,
+                  key=lambda hour: abs(hour - desired),
+              )
+
+
+          def nbm_index_url(cycle, forecast_hour, product):
+              ymd = cycle.strftime("%Y%m%d")
+              hh = cycle.strftime("%H")
+              ff = f"{forecast_hour:03d}"
+              key = (
+                  f"blend.{ymd}/{hh}/{product}/"
+                  f"blend.t{hh}z.{product}.f{ff}.co.grib2.idx"
+              )
+              return "https://noaa-nbm-grib2-pds.s3.amazonaws.com/" + key
+
+
+          def url_exists(url):
+              request = urllib.request.Request(
+                  url,
+                  method="HEAD",
+                  headers={"User-Agent": "BRIM-wind-feed-watchdog/1.0"},
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=12) as response:
+                      return 200 <= response.status < 400
+              except urllib.error.HTTPError as exc:
+                  if exc.code in (403, 405):
+                      # Some object stores are stricter about HEAD than GET.
+                      request = urllib.request.Request(
+                          url,
+                          method="GET",
+                          headers={
+                              "Range": "bytes=0-0",
+                              "User-Agent": "BRIM-wind-feed-watchdog/1.0",
+                          },
+                      )
+                      try:
+                          with urllib.request.urlopen(request, timeout=12) as response:
+                              return response.status in (200, 206)
+                      except Exception:
+                          return False
+                  return False
+              except Exception:
+                  return False
+
+
+          def nbm_cycle_complete(cycle):
+              forecast_hours = sorted(
+                  {
+                      snap_nbm_forecast_hour(
+                          cycle,
+                          NOW + dt.timedelta(hours=lead),
+                      )
+                      for lead in NBM_PUBLISH_LEADS
+                  }
+              )
+              for forecast_hour in forecast_hours:
+                  for product in ("core", "qmd"):
+                      if not url_exists(
+                          nbm_index_url(cycle, forecast_hour, product)
+                      ):
+                          return False, forecast_hours
+              return True, forecast_hours
+
+
+          def nbm_decision(path):
+              manifest, problem = load_manifest(path)
+              if manifest is None:
+                  return True, problem
+
+              reasons = []
+              times = valid_times(manifest)
+              for lead in (6, 12, 24, 48):
+                  delta = nearest_hours(times, NOW + dt.timedelta(hours=lead))
+                  if delta > 4.0:
+                      reasons.append(
+                          f"+{lead} hr coverage misses target by {delta:.1f} hr"
+                      )
+
+              cycles = model_cycles(manifest)
+              current_cycle = max(cycles) if cycles else None
+              newest_candidate = floor_six_hour_cycle(NOW)
+              candidate = newest_candidate
+              available_cycle = None
+              available_hours = []
+
+              # Probe only cycles newer than the one already published. This
+              # normally makes no NOAA requests once BRIM has the latest cycle.
+              while current_cycle is None or candidate > current_cycle:
+                  complete, forecast_hours = nbm_cycle_complete(candidate)
+                  if complete:
+                      available_cycle = candidate
+                      available_hours = forecast_hours
+                      break
+                  candidate -= dt.timedelta(hours=6)
+                  if current_cycle is None and candidate < newest_candidate - dt.timedelta(hours=30):
+                      break
+
+              if available_cycle is not None:
+                  reasons.append(
+                      "new complete NBM QMD/core cycle available: "
+                      + available_cycle.strftime("%Y-%m-%d %HZ")
+                      + " (f"
+                      + ", f".join(f"{hour:03d}" for hour in available_hours)
+                      + ")"
+                  )
+
+              if reasons:
+                  return True, "; ".join(reasons)
+
+              generated = manifest_generated(manifest)
+              cycle_text = (
+                  current_cycle.strftime("%Y-%m-%d %HZ")
+                  if current_cycle is not None
+                  else "unknown"
+              )
+              return False, (
+                  f"published cycle {cycle_text}; manifest age "
+                  f"{age_minutes(generated):.0f} min; coverage present"
+              )
+
+
+          checks = [
+              {
+                  "name": "ASOS/METAR",
+                  "workflow": "build-asos-awos-wind-latest.yml",
+                  "cooldown": 20,
+                  "decision": lambda: standard_decision(
+                      "docs/data/wind/asos_awos_wind_feed_manifest.json",
+                      75,
+                      [],
+                  ),
+              },
+              {
+                  "name": "GFS",
+                  "workflow": "build-gfs-wind-latest.yml",
+                  "cooldown": 25,
+                  "decision": lambda: standard_decision(
+                      "docs/data/wind/gfs_surface_wind_feed_manifest.json",
+                      90,
+                      [(0, 2.5), (24, 4.0)],
+                  ),
+              },
+              {
+                  "name": "HRRR",
+                  "workflow": "build-hrrr-wind-latest.yml",
+                  "cooldown": 25,
+                  "decision": lambda: standard_decision(
+                      "docs/data/wind/hrrr_surface_wind_feed_manifest.json",
+                      90,
+                      [(0, 2.0), (6, 2.5), (12, 2.5)],
+                  ),
+              },
+              {
+                  "name": "NBM",
+                  "workflow": "build-nbm-wind-guidance-latest.yml",
+                  "cooldown": 35,
+                  "decision": lambda: nbm_decision(
+                      "docs/data/wind/nbm_wind_guidance_feed_manifest.json"
+                  ),
+              },
+          ]
+
+          print(f"Wind watchdog UTC: {NOW.isoformat()}")
+          print(f"Repository/ref: {REPOSITORY} @ {REF}")
+
+          for check in checks:
+              name = check["name"]
+              workflow = check["workflow"]
+              try:
+                  due, reason = check["decision"]()
+                  if not due:
+                      action = "healthy; no dispatch"
+                  else:
+                      state = workflow_run_state(
+                          workflow,
+                          check["cooldown"],
+                      )
+                      if state["blocked"]:
+                          action = "repair deferred: " + state["reason"]
+                      else:
+                          dispatch(workflow)
+                          action = "repair workflow dispatched"
+
+                  results.append(
+                      {"feed": name, "reason": reason, "action": action}
+                  )
+                  print(f"{name}: {action} — {reason}")
+              except Exception as exc:
+                  message = f"{name}: {type(exc).__name__}: {exc}"
+                  errors.append(message)
+                  results.append(
+                      {"feed": name, "reason": str(exc), "action": "ERROR"}
+                  )
+                  print(message, file=sys.stderr)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write("## BRIM wind-feed watchdog\n\n")
+                  summary.write(
+                      f"Checked `{NOW.strftime('%Y-%m-%d %H:%M:%S UTC')}`.\n\n"
+                  )
+                  summary.write("| Feed | Result | Reason |\n")
+                  summary.write("|---|---|---|\n")
+                  for item in results:
+                      result = item["action"].replace("|", "\\|")
+                      reason = item["reason"].replace("|", "\\|")
+                      summary.write(
+                          f"| {item['feed']} | {result} | {reason} |\n"
+                      )
+
+          if errors:
+              raise SystemExit(1)
+          PY

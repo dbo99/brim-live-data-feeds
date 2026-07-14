@@ -66,8 +66,9 @@ jobs:
           BRIM_RTW_BUILD_QA_ZIP: "true"
           BRIM_RTW_FORCE_REFRESH: "false"
           BRIM_RTW_LOCAL_TZ: "America/Los_Angeles"
-          # Sparse clusters around Current and +24 hr browser targets.
-          BRIM_RTW_TARGET_OFFSETS_HOURS: "-2,-1,0,1,2,23,24,25"
+          # Sparse support around Current and +24 hr. The wider edge fields
+          # keep both buttons usable through several missed hourly dispatches.
+          BRIM_RTW_TARGET_OFFSETS_HOURS: "-3,-2,-1,0,1,2,3,21,24,27,30"
           BRIM_RTW_MAX_FORECAST_HOUR: "42"
         run: |
           source("scripts/build_gfs_wind_latest.R")
