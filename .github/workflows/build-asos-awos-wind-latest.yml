@@ -3,9 +3,10 @@ name: Build ASOS/METAR observed wind latest
 on:
   workflow_dispatch:
   schedule:
-    # Hourly observed-wind refresh at hh:17 UTC. The hour field is *, so this
-    # is once every hour—not once every three hours.
-    - cron: "17 * * * *"
+    # Primary hourly refresh at hh:17 UTC plus a backup opportunity at hh:42.
+    # A freshness guard below skips the backup when the primary run published
+    # successfully within the previous 45 minutes.
+    - cron: "17,42 * * * *"
 
 permissions:
   contents: write
@@ -31,20 +32,89 @@ jobs:
         run: |
           echo "Event: ${GITHUB_EVENT_NAME}"
           echo "Workflow start UTC: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          echo "Configured schedule: once each hour at minute 17 UTC"
+          echo "Configured schedule: primary hh:17 UTC; backup hh:42 UTC"
 
       - name: Check out repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Decide whether refresh is due
+        id: freshness
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+          manifest_path = Path(
+              "docs/data/wind/asos_awos_wind_feed_manifest.json"
+          )
+
+          should_run = True
+          reason = "manual dispatch always runs"
+          age_minutes = None
+
+          if event == "schedule":
+              reason = "manifest missing or unreadable"
+              try:
+                  manifest = json.loads(
+                      manifest_path.read_text(encoding="utf-8")
+                  )
+                  stamp = (
+                      manifest.get("build_time_utc")
+                      or manifest.get("generated_utc")
+                  )
+                  if not stamp:
+                      raise ValueError("manifest has no build timestamp")
+
+                  built = dt.datetime.fromisoformat(
+                      stamp.replace("Z", "+00:00")
+                  )
+                  now = dt.datetime.now(dt.timezone.utc)
+                  age_minutes = (now - built).total_seconds() / 60.0
+
+                  should_run = age_minutes >= 45.0
+                  if should_run:
+                      reason = (
+                          f"published feed is {age_minutes:.1f} minutes old"
+                      )
+                  else:
+                      reason = (
+                          f"published feed is only "
+                          f"{age_minutes:.1f} minutes old"
+                      )
+              except Exception as exc:
+                  should_run = True
+                  reason = f"freshness check failed: {exc}"
+
+          print(f"Refresh due: {should_run}")
+          print(f"Reason: {reason}")
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as fh:
+              fh.write(
+                  "should_run="
+                  + ("true" if should_run else "false")
+                  + "\n"
+              )
+              fh.write(f"reason={reason}\n")
+              if age_minutes is not None:
+                  fh.write(f"age_minutes={age_minutes:.1f}\n")
+          PY
+
       - name: Set up R
+        if: steps.freshness.outputs.should_run == 'true'
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: "release"
           use-public-rspm: true
 
       - name: Install Linux system libraries
+        if: steps.freshness.outputs.should_run == 'true'
         shell: bash
         run: |
           sudo apt-get update
@@ -54,6 +124,7 @@ jobs:
             libxml2-dev
 
       - name: Install R package dependencies
+        if: steps.freshness.outputs.should_run == 'true'
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           cache-version: asos-awos-wind-v1
@@ -63,6 +134,7 @@ jobs:
             any::readr
 
       - name: Build observed wind speed + gusts feed
+        if: steps.freshness.outputs.should_run == 'true'
         shell: Rscript {0}
         env:
           BRIM_OBS_BUILD_SANDBOX: "false"
@@ -74,7 +146,7 @@ jobs:
           source("scripts/build_asos_awos_wind_latest.R")
 
       - name: Upload QA artifact
-        if: always()
+        if: always() && steps.freshness.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: asos-awos-wind-qa
@@ -84,6 +156,7 @@ jobs:
             debug/wind/asos_awos/*.log
 
       - name: Commit updated observed wind feed
+        if: steps.freshness.outputs.should_run == 'true'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
