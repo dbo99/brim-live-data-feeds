@@ -175,6 +175,15 @@ jobs:
               return min(abs((value - target).total_seconds()) for value in times) / 3600.0
 
 
+          def minutes_since_hourly_slot(minutes):
+              # Scheduled workflow dispatch can be delayed. Do not launch a
+              # watchdog repair only a few minutes after a normal slot, because
+              # the delayed scheduled event may still appear and create a
+              # duplicate heavy build.
+              current = NOW.minute + NOW.second / 60.0
+              return min((current - minute) % 60.0 for minute in minutes)
+
+
           def api_request(method, path, payload=None):
               url = API_ROOT + path
               data = None
@@ -188,7 +197,7 @@ jobs:
                       "Accept": "application/vnd.github+json",
                       "Authorization": f"Bearer {TOKEN}",
                       "X-GitHub-Api-Version": "2022-11-28",
-                      "User-Agent": "BRIM-wind-feed-watchdog/1.0",
+                      "User-Agent": "BRIM-wind-feed-watchdog/1.1",
                   },
               )
               try:
@@ -312,7 +321,7 @@ jobs:
               request = urllib.request.Request(
                   url,
                   method="HEAD",
-                  headers={"User-Agent": "BRIM-wind-feed-watchdog/1.0"},
+                  headers={"User-Agent": "BRIM-wind-feed-watchdog/1.1"},
               )
               try:
                   with urllib.request.urlopen(request, timeout=12) as response:
@@ -325,7 +334,7 @@ jobs:
                           method="GET",
                           headers={
                               "Range": "bytes=0-0",
-                              "User-Agent": "BRIM-wind-feed-watchdog/1.0",
+                              "User-Agent": "BRIM-wind-feed-watchdog/1.1",
                           },
                       )
                       try:
@@ -419,6 +428,8 @@ jobs:
                   "name": "ASOS/METAR",
                   "workflow": "build-asos-awos-wind-latest.yml",
                   "cooldown": 20,
+                  "hourly_slots": [17, 42],
+                  "dispatch_grace": 15,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/asos_awos_wind_feed_manifest.json",
                       75,
@@ -429,6 +440,8 @@ jobs:
                   "name": "GFS",
                   "workflow": "build-gfs-wind-latest.yml",
                   "cooldown": 25,
+                  "hourly_slots": [47],
+                  "dispatch_grace": 15,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/gfs_surface_wind_feed_manifest.json",
                       90,
@@ -439,6 +452,8 @@ jobs:
                   "name": "HRRR",
                   "workflow": "build-hrrr-wind-latest.yml",
                   "cooldown": 25,
+                  "hourly_slots": [33],
+                  "dispatch_grace": 15,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/hrrr_surface_wind_feed_manifest.json",
                       90,
@@ -466,15 +481,29 @@ jobs:
                   if not due:
                       action = "healthy; no dispatch"
                   else:
-                      state = workflow_run_state(
-                          workflow,
-                          check["cooldown"],
+                      slots = check.get("hourly_slots")
+                      grace = check.get("dispatch_grace", 0)
+                      elapsed = (
+                          minutes_since_hourly_slot(slots)
+                          if slots
+                          else math.inf
                       )
-                      if state["blocked"]:
-                          action = "repair deferred: " + state["reason"]
+
+                      if elapsed < grace:
+                          action = (
+                              "repair deferred: only "
+                              f"{elapsed:.1f} min since normal schedule slot"
+                          )
                       else:
-                          dispatch(workflow)
-                          action = "repair workflow dispatched"
+                          state = workflow_run_state(
+                              workflow,
+                              check["cooldown"],
+                          )
+                          if state["blocked"]:
+                              action = "repair deferred: " + state["reason"]
+                          else:
+                              dispatch(workflow)
+                              action = "repair workflow dispatched"
 
                   results.append(
                       {"feed": name, "reason": reason, "action": action}
