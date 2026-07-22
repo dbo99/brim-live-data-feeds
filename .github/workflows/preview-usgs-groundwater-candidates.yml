@@ -68,7 +68,7 @@ jobs:
           source("scripts/preview_usgs_groundwater_candidate_discovery.R")
 
       - name: Upload preview QA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: usgs-groundwater-candidate-discovery-preview
