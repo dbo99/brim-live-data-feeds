@@ -38,6 +38,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Decide whether refresh is due
         id: freshness
@@ -161,95 +162,30 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
+                "${GITHUB_REF}" != refs/heads/* ]]; then
+            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Generated feed files are complete snapshots, not source text that
-          # should be merged line-by-line. Preserve this run's payload outside
-          # the checkout, sync to current origin/main, then restore and commit.
-          publish_dir="${RUNNER_TEMP}/asos-awos-publish"
-          rm -rf "${publish_dir}"
-          mkdir -p "${publish_dir}"
-          cp docs/data/wind/asos_awos_wind_latest.geojson "${publish_dir}/"
-          cp docs/data/wind/asos_awos_wind_latest_summary.json "${publish_dir}/"
-          cp docs/data/wind/asos_awos_wind_feed_manifest.json "${publish_dir}/"
+          git add \
+            docs/data/wind/asos_awos_wind_latest.geojson \
+            docs/data/wind/asos_awos_wind_latest_summary.json \
+            docs/data/wind/asos_awos_wind_feed_manifest.json
 
-          manifest_epoch() {
-            python - "$1" <<'PY_EPOCH'
-          import datetime as dt
-          import json
-          import sys
-          from pathlib import Path
-          
-          path = Path(sys.argv[1])
-          if not path.is_file():
-              raise SystemExit(0)
-          
-          try:
-              data = json.loads(path.read_text(encoding="utf-8"))
-          except Exception:
-              raise SystemExit(0)
-          
-          stamp = (
-              data.get("generated_utc")
-              or data.get("build_time_utc")
-              or data.get("generated_at_utc")
-          )
-          if not stamp:
-              raise SystemExit(0)
-          
-          try:
-              value = dt.datetime.fromisoformat(
-                  str(stamp).replace("Z", "+00:00")
-              )
-          except ValueError:
-              raise SystemExit(0)
-          
-          if value.tzinfo is None:
-              value = value.replace(tzinfo=dt.timezone.utc)
-          print(int(value.timestamp()))
-          PY_EPOCH
-          }
-          payload_epoch="$(manifest_epoch "${publish_dir}/asos_awos_wind_feed_manifest.json")"
+          if git diff --cached --quiet; then
+            echo "No observed wind feed changes to commit."
+            exit 0
+          fi
 
-          for attempt in 1 2 3 4 5; do
-            echo "ASOS publish attempt ${attempt}/5"
-            git fetch origin main
-            git reset --hard origin/main
+          git commit -m "Update observed wind speed and gusts feed"
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
+          fi
 
-            remote_epoch="$(manifest_epoch docs/data/wind/asos_awos_wind_feed_manifest.json)"
-            if [[ -n "${payload_epoch}" && -n "${remote_epoch}" ]] && \
-               (( remote_epoch >= payload_epoch )); then
-              echo "Remote ASOS feed is already as new or newer; skipping stale payload."
-              exit 0
-            fi
-
-            cp "${publish_dir}/asos_awos_wind_latest.geojson" \
-              docs/data/wind/asos_awos_wind_latest.geojson
-            cp "${publish_dir}/asos_awos_wind_latest_summary.json" \
-              docs/data/wind/asos_awos_wind_latest_summary.json
-            cp "${publish_dir}/asos_awos_wind_feed_manifest.json" \
-              docs/data/wind/asos_awos_wind_feed_manifest.json
-
-            git add \
-              docs/data/wind/asos_awos_wind_latest.geojson \
-              docs/data/wind/asos_awos_wind_latest_summary.json \
-              docs/data/wind/asos_awos_wind_feed_manifest.json
-
-            if git diff --cached --quiet; then
-              echo "No observed wind feed changes to commit."
-              exit 0
-            fi
-
-            git commit -m "Update observed wind speed and gusts feed"
-            if git push origin HEAD:main; then
-              echo "Published observed wind feed."
-              exit 0
-            fi
-
-            echo "Push raced with another repository update; retrying from current main."
-            sleep $((attempt * 4))
-          done
-
-          echo "Could not publish observed wind feed after 5 attempts." >&2
-          exit 1
+          echo "Published observed wind feed to ${GITHUB_REF}."
