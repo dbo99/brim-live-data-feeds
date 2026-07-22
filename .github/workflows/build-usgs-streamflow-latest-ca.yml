@@ -20,9 +20,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Check out repository
+      - name: Check out latest branch tip
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Set up R
@@ -73,15 +74,29 @@ jobs:
       - name: Commit updated feed files
         shell: bash
         run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
+                "${GITHUB_REF}" != refs/heads/* ]]; then
+            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             docs/data/usgs_streamflow_latest_ca.geojson \
             docs/data/usgs_streamflow_latest_ca_summary.json
+
           if git diff --cached --quiet; then
             echo "No USGS streamflow feed changes to commit."
-          else
-            git commit -m "Update USGS CA streamflow latest feed"
-            git pull --rebase origin main
-            git push
+            exit 0
+          fi
+
+          git commit -m "Update USGS CA streamflow latest feed"
+
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
           fi

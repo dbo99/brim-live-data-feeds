@@ -27,9 +27,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Check out repository
+      - name: Check out latest branch tip
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Log trigger context
@@ -132,6 +133,14 @@ jobs:
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: bash
         run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
+                "${GITHUB_REF}" != refs/heads/* ]]; then
+            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
@@ -139,10 +148,16 @@ jobs:
             docs/data/delta_ops_daily_summary_summary.json \
             docs/data/delta_ops_daily_summary.json \
             docs/data/delta_ops_x2_reference.geojson
+
           if git diff --cached --quiet; then
             echo "No Delta Ops feed changes to commit."
-          else
-            git commit -m "Update Delta Ops daily summary feed"
-            git pull --rebase origin main
-            git push
+            exit 0
+          fi
+
+          git commit -m "Update Delta Ops daily summary feed"
+
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
           fi
