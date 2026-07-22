@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -88,100 +89,31 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
+                "${GITHUB_REF}" != refs/heads/* ]]; then
+            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Preserve the complete generated time set outside the checkout.
-          # Rebase-merging generated JSON snapshots is both fragile and wrong;
-          # instead, sync to current main and publish this run's full snapshot.
-          publish_dir="${RUNNER_TEMP}/gfs-wind-publish"
-          rm -rf "${publish_dir}"
-          mkdir -p "${publish_dir}"
-          cp docs/data/wind/gfs_surface_wind_latest.json "${publish_dir}/"
-          cp docs/data/wind/gfs_surface_wind_latest_summary.json "${publish_dir}/"
-          cp docs/data/wind/gfs_surface_wind_feed_manifest.json "${publish_dir}/"
-          cp -a docs/data/wind/gfs/surface "${publish_dir}/surface"
+          git add \
+            docs/data/wind/gfs_surface_wind_latest.json \
+            docs/data/wind/gfs_surface_wind_latest_summary.json \
+            docs/data/wind/gfs_surface_wind_feed_manifest.json \
+            docs/data/wind/gfs/surface/
 
-          manifest_epoch() {
-            python - "$1" <<'PY_EPOCH'
-          import datetime as dt
-          import json
-          import sys
-          from pathlib import Path
-          
-          path = Path(sys.argv[1])
-          if not path.is_file():
-              raise SystemExit(0)
-          
-          try:
-              data = json.loads(path.read_text(encoding="utf-8"))
-          except Exception:
-              raise SystemExit(0)
-          
-          stamp = (
-              data.get("generated_utc")
-              or data.get("build_time_utc")
-              or data.get("generated_at_utc")
-          )
-          if not stamp:
-              raise SystemExit(0)
-          
-          try:
-              value = dt.datetime.fromisoformat(
-                  str(stamp).replace("Z", "+00:00")
-              )
-          except ValueError:
-              raise SystemExit(0)
-          
-          if value.tzinfo is None:
-              value = value.replace(tzinfo=dt.timezone.utc)
-          print(int(value.timestamp()))
-          PY_EPOCH
-          }
-          payload_epoch="$(manifest_epoch "${publish_dir}/gfs_surface_wind_feed_manifest.json")"
+          if git diff --cached --quiet; then
+            echo "No GFS wind feed changes to commit."
+            exit 0
+          fi
 
-          for attempt in 1 2 3 4 5; do
-            echo "GFS publish attempt ${attempt}/5"
-            git fetch origin main
-            git reset --hard origin/main
+          git commit -m "Update GFS wind time-set live feed"
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
+          fi
 
-            remote_epoch="$(manifest_epoch docs/data/wind/gfs_surface_wind_feed_manifest.json)"
-            if [[ -n "${payload_epoch}" && -n "${remote_epoch}" ]] && \
-               (( remote_epoch >= payload_epoch )); then
-              echo "Remote GFS feed is already as new or newer; skipping stale payload."
-              exit 0
-            fi
-
-            cp "${publish_dir}/gfs_surface_wind_latest.json" \
-              docs/data/wind/gfs_surface_wind_latest.json
-            cp "${publish_dir}/gfs_surface_wind_latest_summary.json" \
-              docs/data/wind/gfs_surface_wind_latest_summary.json
-            cp "${publish_dir}/gfs_surface_wind_feed_manifest.json" \
-              docs/data/wind/gfs_surface_wind_feed_manifest.json
-            rm -rf docs/data/wind/gfs/surface
-            mkdir -p docs/data/wind/gfs
-            cp -a "${publish_dir}/surface" docs/data/wind/gfs/surface
-
-            git add \
-              docs/data/wind/gfs_surface_wind_latest.json \
-              docs/data/wind/gfs_surface_wind_latest_summary.json \
-              docs/data/wind/gfs_surface_wind_feed_manifest.json \
-              docs/data/wind/gfs/surface/
-
-            if git diff --cached --quiet; then
-              echo "No GFS wind feed changes to commit."
-              exit 0
-            fi
-
-            git commit -m "Update GFS wind time-set live feed"
-            if git push origin HEAD:main; then
-              echo "Published GFS wind feed."
-              exit 0
-            fi
-
-            echo "Push raced with another repository update; retrying from current main."
-            sleep $((attempt * 4))
-          done
-
-          echo "Could not publish GFS wind feed after 5 attempts." >&2
-          exit 1
+          echo "Published GFS wind feed to ${GITHUB_REF}."
