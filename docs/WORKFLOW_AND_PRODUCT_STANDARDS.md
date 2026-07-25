@@ -188,6 +188,10 @@ is no separate least-privilege build job.
 - Wind producers create local `data/cache`, `debug` and `qa` material.
 - Model tools use working files before writing JSON/GeoJSON.
 - Official product paths are directly writable by several scripts.
+- The snow producer constructs and validates its four writer-managed outputs in
+  a same-directory staging area before replacement, keeps backups during
+  promotion, and restores already-promoted members after a later promotion
+  failure.
 
 **Gap**
 
@@ -223,6 +227,13 @@ directory and atomically promoted locally.
 
 - Several producers enforce minimum counts and source-specific validation.
 - Failed scripts do not reach Git publication.
+- Snow implements product-specific partial publication: exactly one healthy
+  provider may refresh while validated prior latest/trace rows for the failed
+  provider are carried forward unchanged. Provider health includes
+  provider-specific station and expected-station-day completeness gates; a
+  response near 20% coverage fails rather than being labeled refreshed.
+  Both-provider failure, invalid prior files, unavailable failed-provider rows,
+  or failed combined QA retains the complete prior output set.
 
 **Gaps**
 
@@ -278,6 +289,9 @@ directory and atomically promoted locally.
 - User-facing local time is normally Pacific.
 - Wind products separate model cycle and valid time.
 - Station products carry observation time/age where available.
+- Snow summaries distinguish the current build UTC from carried-forward station
+  observation and row-level build/fetch fields; carried-forward rows are not
+  restamped.
 
 **Gaps**
 

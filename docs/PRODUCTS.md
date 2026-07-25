@@ -407,12 +407,55 @@ ownership.
   stale, and more than 21 days as very stale.
 - **Fallback:** CDEC adjusted SWE element 82 is preferred; element 3 may fill a
   limited recent tail or act as current-WY fallback. Historical context remains
-  conceptually distinct.
-- **QA/empty policy:** Provider preflights, retry logic, minimum provider and
-  output counts, and latest/trace checks stop unusable publication.
+  conceptually distinct. At the provider-family level, if exactly one of AWDB
+  or CDEC fails retrieval or provider QA, the producer refreshes the healthy
+  provider and carries forward the failed provider's validated prior latest and
+  trace rows unchanged.
+- **QA/empty policy:** AWDB and CDEC are attempted and validated independently.
+  Provider row/site minimums, required fields, identifiers, dates, SWE bounds,
+  AWDB depth coverage, CDEC source selection, duplicate protection, and combined
+  latest/trace checks stop unusable publication. Both-provider failure, or one
+  provider failure without a valid four-file prior product set and valid prior
+  rows for that provider, stops without replacing any output.
+- **Provider-completeness baseline and gates:** A read-only audit of 20 recent
+  successful tracked products from July 18–25, 2026 found the following normal
+  current-WY coverage:
+
+  - NRCS/SNOTEL indexed 175 stations and observed 164 (93.71%) in every
+    product. Expected station-days ranged from 50,925 to 52,150; valid SWE rows
+    ranged from 47,493 to 48,674, or 92.92%–93.33%.
+  - CDEC indexed 129 stations and observed 123 (95.35%) in every product.
+    Expected station-days ranged from 37,539 to 38,442; valid SWE rows ranged
+    from 33,876 to 34,675, or 89.93%–90.26%.
+
+  The default NRCS gates require at least 90% of indexed stations and 90% of
+  expected station-days. The default CDEC gates require at least 92% of indexed
+  stations and 85% of expected station-days. Expected station-days are indexed
+  stations multiplied by days in the requested fetch window. The thresholds
+  leave 2.92–4.93 percentage points below the observed healthy row minima and
+  3.35–3.71 points below the observed healthy station fractions, while responses
+  near 20% fail both gates.
+- **Completeness overrides:** Fraction overrides
+  `SNOW_PILLOW_QA_MIN_SNOTEL_STATION_FRACTION`,
+  `SNOW_PILLOW_QA_MIN_SNOTEL_ROW_FRACTION`,
+  `SNOW_PILLOW_QA_MIN_CDEC_STATION_FRACTION`, and
+  `SNOW_PILLOW_QA_MIN_CDEC_ROW_FRACTION` must be finite, greater than zero, at
+  most one, and no lower than the defaults. Existing absolute provider row/site
+  overrides must be positive whole numbers, may not fall below the derived
+  fraction gate, and may not exceed the indexed-station or expected-station-day
+  maximum. Invalid or protection-weakening overrides stop the build.
+- **Refresh metadata and timestamps:** The latest and trace summaries contain an
+  additive `refresh` object describing full/partial mode, provider fetch and QA
+  state, refreshed/carried-forward actions and row/site counts. Carried-forward
+  station and trace rows retain their prior observation, source, value and
+  row-level build/fetch fields; they are not restamped as new observations.
+- **Local replacement:** All four writer-managed outputs are constructed and
+  validated in a staging directory before complete-set replacement is attempted.
 - **Attribution:** USDA NRCS and California DWR/CDEC.
 - **Known gaps:** Split static-context ownership, no manifest/schema version,
-  and no common provenance/checksum envelope.
+  no common provenance/checksum envelope, and no filesystem primitive that can
+  atomically rename four paths in one operation; replacement retains backups and
+  restores already-promoted members if a later promotion fails.
 
 ## Nonproduction workflows
 

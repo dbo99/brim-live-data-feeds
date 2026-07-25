@@ -145,7 +145,7 @@ defines a formal limit.
 | USGS streamflow<br>`docs/data/usgs_streamflow_latest_ca.geojson` | GeoJSON `FeatureCollection`; Point | `site_no:string`, `station_nm:string` | `q_cfs:number|null`, `stage_ft:number|null`; `has_latest_iv_q:boolean`, `has_latest_iv_stage:boolean` | `q_datetime_utc:string|null`, `q_obs_age_hours:number|null`, `stage_datetime_utc:string|null`, `stage_obs_age_hours:number|null`; `q_stale_6h:boolean`, `q_stale_24h:boolean`, `q_stale_72h:boolean`; `latest_status:string`; `feed_build_time_utc:string`. Both live values null means no drawable current observation, not zero. | `docs/data/usgs_streamflow_latest_ca_summary.json` is a canonical JSON coverage/status object. The current-value publication guard is not reliably enforced; no compatibility path. |
 | USGS groundwater<br>`docs/data/usgs_groundwater_latest_ca.geojson` | GeoJSON `FeatureCollection`; Point | `site_no:string`, `station_nm:string` | `latest_wl_ft_bgs:number`, `latest_wl_units:string` (feet in current product), `latest_wl_source:string`; `has_api_latest_wl:boolean` distinguishes API measurement from index fallback | `latest_wl_datetime_utc:string`, `latest_wl_date:string`, `latest_age_days:number`; `latest_wl_status:string`, `latest_status:string`; `feed_build_time_utc:string`; source-specific optional API/history fields may be null or absent. | `docs/data/usgs_groundwater_latest_ca_summary.json` is a canonical JSON coverage/status object; no compatibility path. |
 | SCAN soil moisture<br>`docs/data/scan_soil_moisture_latest.geojson` | GeoJSON `FeatureCollection`; Point; canonical trace is CSV | `station_uid:string`, `station_name:string`, `site_code:number` | `display_sms_pct:number` volumetric percent, `display_depth_in:number`; trace logical keys `station_uid`, `site_code`, `depth_in`, `water_year`, `water_day`, `sms_pct` | `display_obs_datetime_utc:string`, `display_obs_age_days:number`, `display_status_class:string`, `feed_build_time_utc:string`; `source_url:string`. Optional context failure must not invalidate valid latest data. | Latest summary and current-WY trace are canonical. Trace summary is producer/QA. `scan_depth_style.csv`, percentiles, monthly context, and prior-WY fallback are consumer context; only depth style is staged by the scheduled writer. |
-| Snow-pillow SWE<br>`docs/data/snow_pillow_latest.geojson` | GeoJSON `FeatureCollection`; Point; canonical trace is CSV | `station_uid:string`, `provider_station_id:string`, `station_name:string`, `provider:string` | `latest_swe_in:number|null`, optional `latest_snow_depth_in:number|null`; trace logical keys `station_uid`, `provider_station_id`, `water_year`, `water_day`, `swe_in` | `latest_swe_date_local:string|null`, `latest_swe_age_days:number|null`, `latest_swe_staleness_class:string`, `latest_swe_report_status:string`, `latest_swe_source_class:string|null`, `feed_build_time_local:string`; null SWE is missing/no recent value, while numeric zero can be valid. | Latest summary and current-WY trace are canonical. Trace summary is producer/QA. Percentiles, monthly context, prior-WY fallback, and normal medians are static/manual consumer context. |
+| Snow-pillow SWE<br>`docs/data/snow_pillow_latest.geojson` | GeoJSON `FeatureCollection`; Point; canonical trace is CSV | `station_uid:string`, `provider_station_id:string`, `station_name:string`, `provider:string` | `latest_swe_in:number|null`, optional `latest_snow_depth_in:number|null`; trace logical keys `station_uid`, `provider_station_id`, `water_year`, `water_day`, `swe_in` | `latest_swe_date_local:string|null`, `latest_swe_age_days:number|null`, `latest_swe_staleness_class:string`, `latest_swe_report_status:string`, `latest_swe_source_class:string|null`, `feed_build_time_local:string`; null SWE is missing/no recent value, while numeric zero can be valid. | Latest summary and current-WY trace are canonical. Latest summary and producer/QA trace summary add a `refresh:object` without changing station or trace rows. Percentiles, monthly context, prior-WY fallback, and normal medians are static/manual consumer context. |
 
 ### Manifest-selected forecast products
 
@@ -294,6 +294,19 @@ and producer scripts.
 - BRIM freshness classes are 0–2, 3–7, 8–21 and greater than 21 days.
 - CDEC adjusted element 82 is preferred; element 3 has a limited tail/fallback
   role that must remain visible.
+- `live_provider_key` distinguishes `nrcs_snotel` from `cdec_snow_sensor` in
+  both latest and trace rows. When exactly one provider fails retrieval or QA,
+  the producer may combine fresh rows from the healthy provider with validated
+  prior rows for the failed provider.
+- Carried-forward provider rows retain all prior observation dates, values,
+  source classifications and row-level build/fetch fields. The new combined
+  summary build time does not make those station observations newly observed.
+- Latest and trace summaries expose additive `refresh.mode`,
+  `refresh.build_time_utc`, `refresh.last_known_good_provider_data_preserved`,
+  and provider-keyed fetch/QA/action/count/failure metadata. Consumers must
+  continue tolerating additive summary members.
+- Both-provider failure, invalid prior products, or unavailable valid prior rows
+  for the failed provider produces no replacement product.
 - Failure of optional context should not invalidate a usable latest layer.
 
 ## Compatibility and fallback
@@ -307,6 +320,9 @@ Current compatibility behavior includes:
 - Browser retention of a previously displayed HRRR/NBM field after a selected
   entry fails.
 - Static/manual SCAN and snow context fetched beside scheduled outputs.
+- Snow provider-level carry-forward: one healthy provider can refresh while the
+  other provider's validated prior latest and current-WY trace rows remain
+  unchanged, with summary-level partial-refresh status.
 
 These behaviors are current implementation, not an indefinite support
 guarantee. Before removing or renaming any path, identify all consumers,
