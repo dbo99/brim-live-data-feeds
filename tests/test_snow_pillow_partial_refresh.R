@@ -28,6 +28,27 @@ assert_equal <- function(actual, expected, message) {
   }
 }
 
+assert_error <- function(code, pattern, message) {
+  error <- tryCatch(
+    {
+      force(code)
+      NULL
+    },
+    error = function(e) e
+  )
+  if (!inherits(error, "error") ||
+      !grepl(pattern, conditionMessage(error), fixed = TRUE)) {
+    stop(
+      message,
+      "\nExpected error containing: ",
+      pattern,
+      "\nActual: ",
+      if (inherits(error, "error")) conditionMessage(error) else "no error",
+      call. = FALSE
+    )
+  }
+}
+
 scenario <- function(name, code) {
   force(code)
   message("PASS: ", name)
@@ -164,6 +185,304 @@ resolve <- function(results, prior = NULL) {
     required_trace_columns = required_trace_columns
   )
 }
+
+coverage_defaults <- snow_provider_completeness_defaults()
+coverage_fetch_start <- as.Date("2025-10-01")
+coverage_fetch_end <- as.Date("2025-10-10")
+coverage_expected_days <- as.integer(coverage_fetch_end - coverage_fetch_start + 1L)
+
+make_provider_observations <- function(provider_id,
+                                       indexed_station_count,
+                                       observed_station_count,
+                                       row_count) {
+  prefix <- if (provider_id == "nrcs_snotel") "NRCS" else "CDEC"
+  expected_station_uids <- sprintf(
+    "%s_%03d",
+    prefix,
+    seq_len(indexed_station_count)
+  )
+  observed_station_uids <- expected_station_uids[seq_len(observed_station_count)]
+  grid <- expand.grid(
+    station_uid = observed_station_uids,
+    obs_date = seq(coverage_fetch_start, coverage_fetch_end, by = "day"),
+    KEEP.OUT.ATTRS = FALSE,
+    stringsAsFactors = FALSE
+  )
+  if (row_count > nrow(grid)) {
+    stop("Synthetic provider fixture requests more rows than unique station-days.")
+  }
+  grid <- tibble::as_tibble(grid[seq_len(row_count), , drop = FALSE])
+
+  observations <- grid |>
+    dplyr::mutate(
+      provider = if (provider_id == "nrcs_snotel") "NRCS" else "CDEC",
+      provider_station_id = sub("^.*_", "", .data$station_uid),
+      swe_in = 10,
+      source_element = if (provider_id == "nrcs_snotel") {
+        "WTEQ"
+      } else {
+        "CDEC_SENSOR_82_SNO_ADJ"
+      },
+      swe_source_class = if (provider_id == "nrcs_snotel") {
+        "nrcs_wteq"
+      } else {
+        "cdec_sno_adj_82"
+      },
+      swe_source_label = if (provider_id == "nrcs_snotel") {
+        "NRCS WTEQ"
+      } else {
+        "CDEC SNO ADJ (#82)"
+      },
+      swe_source_note = "deterministic completeness fixture"
+    )
+
+  list(
+    observations = observations,
+    expected_station_uids = expected_station_uids
+  )
+}
+
+validate_provider_fixture <- function(provider_id,
+                                      indexed_station_count,
+                                      observed_station_count,
+                                      row_count) {
+  policy <- coverage_defaults[[provider_id]]
+  minimums <- snow_provider_completeness_minimums(
+    provider_id = provider_id,
+    indexed_station_count = indexed_station_count,
+    expected_fetch_days = coverage_expected_days,
+    station_fraction = policy$station_fraction,
+    row_fraction = policy$row_fraction
+  )
+  fixture <- make_provider_observations(
+    provider_id = provider_id,
+    indexed_station_count = indexed_station_count,
+    observed_station_count = observed_station_count,
+    row_count = row_count
+  )
+  qa <- snow_validate_provider_observations(
+    observations = fixture$observations,
+    provider_id = provider_id,
+    expected_station_uids = fixture$expected_station_uids,
+    min_rows = minimums$min_rows,
+    min_sites = minimums$min_sites,
+    fetch_start_date = coverage_fetch_start,
+    fetch_end_date = coverage_fetch_end,
+    max_valid_swe_in = max_valid_swe_in
+  )
+
+  list(qa = qa, minimums = minimums)
+}
+
+healthy_nrcs_coverage <- validate_provider_fixture(
+  provider_id = "nrcs_snotel",
+  indexed_station_count = 175L,
+  observed_station_count = 164L,
+  row_count = 1630L
+)
+healthy_cdec_coverage <- validate_provider_fixture(
+  provider_id = "cdec_snow_sensor",
+  indexed_station_count = 129L,
+  observed_station_count = 123L,
+  row_count = 1162L
+)
+truncated_nrcs_coverage <- validate_provider_fixture(
+  provider_id = "nrcs_snotel",
+  indexed_station_count = 175L,
+  observed_station_count = 35L,
+  row_count = 350L
+)
+truncated_nrcs_rows_only <- validate_provider_fixture(
+  provider_id = "nrcs_snotel",
+  indexed_station_count = 175L,
+  observed_station_count = 175L,
+  row_count = 350L
+)
+truncated_cdec_coverage <- validate_provider_fixture(
+  provider_id = "cdec_snow_sensor",
+  indexed_station_count = 129L,
+  observed_station_count = 26L,
+  row_count = 258L
+)
+truncated_cdec_rows_only <- validate_provider_fixture(
+  provider_id = "cdec_snow_sensor",
+  indexed_station_count = 129L,
+  observed_station_count = 129L,
+  row_count = 258L
+)
+
+make_coverage_result <- function(provider_id, coverage, latest_rows, trace_rows) {
+  passed <- isTRUE(coverage$qa$passed)
+  snow_provider_result(
+    provider_id = provider_id,
+    success = passed,
+    fetch_status = "success",
+    qa_status = if (passed) "passed" else "failed",
+    latest_rows = if (passed) latest_rows else tibble::tibble(),
+    trace_rows = if (passed) trace_rows else tibble::tibble(),
+    qa = list(
+      min_sites = 1L,
+      min_rows = 1L,
+      completeness = coverage$qa
+    ),
+    failure_reason = if (passed) {
+      NA_character_
+    } else {
+      paste(coverage$qa$problems, collapse = "; ")
+    },
+    fetch_started_at_utc = "2025-10-05T00:00:00Z",
+    fetch_completed_at_utc = "2025-10-05T00:01:00Z"
+  )
+}
+
+scenario("Provider completeness defaults match conservative healthy-range gates", {
+  actual_nrcs <- snow_provider_completeness_minimums(
+    "nrcs_snotel",
+    indexed_station_count = 175L,
+    expected_fetch_days = 298L,
+    station_fraction = coverage_defaults$nrcs_snotel$station_fraction,
+    row_fraction = coverage_defaults$nrcs_snotel$row_fraction
+  )
+  actual_cdec <- snow_provider_completeness_minimums(
+    "cdec_snow_sensor",
+    indexed_station_count = 129L,
+    expected_fetch_days = 298L,
+    station_fraction = coverage_defaults$cdec_snow_sensor$station_fraction,
+    row_fraction = coverage_defaults$cdec_snow_sensor$row_fraction
+  )
+
+  assert_equal(actual_nrcs$min_sites, 158L, "NRCS station minimum changed.")
+  assert_equal(actual_nrcs$min_rows, 46935L, "NRCS row minimum changed.")
+  assert_equal(actual_cdec$min_sites, 119L, "CDEC station minimum changed.")
+  assert_equal(actual_cdec$min_rows, 32676L, "CDEC row minimum changed.")
+})
+
+scenario("Representative healthy NRCS coverage passes", {
+  assert_true(
+    healthy_nrcs_coverage$qa$passed,
+    paste(healthy_nrcs_coverage$qa$problems, collapse = "; ")
+  )
+  assert_equal(
+    healthy_nrcs_coverage$qa$site_count,
+    164L,
+    "Healthy NRCS observed station count changed."
+  )
+})
+
+scenario("Representative healthy CDEC coverage passes", {
+  assert_true(
+    healthy_cdec_coverage$qa$passed,
+    paste(healthy_cdec_coverage$qa$problems, collapse = "; ")
+  )
+  assert_equal(
+    healthy_cdec_coverage$qa$site_count,
+    123L,
+    "Healthy CDEC observed station count changed."
+  )
+})
+
+scenario("Approximately 20 percent NRCS coverage fails", {
+  assert_true(
+    !truncated_nrcs_coverage$qa$passed,
+    "A 20 percent NRCS response must fail provider QA."
+  )
+  assert_true(
+    all(c("rows too low", "sites too low") %in%
+      sub(":.*$", "", truncated_nrcs_coverage$qa$problems)),
+    "NRCS truncation should fail both row and station gates."
+  )
+  assert_true(
+    !truncated_nrcs_rows_only$qa$passed &&
+      truncated_nrcs_rows_only$qa$site_count == 175L &&
+      any(startsWith(truncated_nrcs_rows_only$qa$problems, "rows too low")),
+    "A 20 percent NRCS row response must fail even with all stations represented."
+  )
+})
+
+scenario("Approximately 20 percent CDEC coverage fails", {
+  assert_true(
+    !truncated_cdec_coverage$qa$passed,
+    "A 20 percent CDEC response must fail provider QA."
+  )
+  assert_true(
+    all(c("rows too low", "sites too low") %in%
+      sub(":.*$", "", truncated_cdec_coverage$qa$problems)),
+    "CDEC truncation should fail both row and station gates."
+  )
+  assert_true(
+    !truncated_cdec_rows_only$qa$passed &&
+      truncated_cdec_rows_only$qa$site_count == 129L &&
+      any(startsWith(truncated_cdec_rows_only$qa$problems, "rows too low")),
+    "A 20 percent CDEC row response must fail even with all stations represented."
+  )
+})
+
+scenario("Environment overrides are strict and cannot weaken provider gates", {
+  assert_equal(
+    snow_env_fraction("TEST_FRACTION", 0.90, raw_value = "0.95"),
+    0.95,
+    "A stricter fraction override should be accepted."
+  )
+  assert_equal(
+    snow_env_integer(
+      "TEST_SITES",
+      default = 158L,
+      minimum_allowed = 158L,
+      maximum_allowed = 175L,
+      raw_value = "160"
+    ),
+    160L,
+    "A stricter feasible station override should be accepted."
+  )
+
+  for (value in c("0", "-0.1", "1.01", "not-a-number", "Inf")) {
+    assert_error(
+      snow_env_fraction("TEST_FRACTION", 0.90, raw_value = value),
+      "must be a finite fraction",
+      paste("Invalid fraction override was accepted:", value)
+    )
+  }
+  assert_error(
+    snow_env_fraction("TEST_FRACTION", 0.90, raw_value = "0.89"),
+    "may not weaken completeness protection",
+    "A fraction below the default gate was accepted."
+  )
+  for (value in c("0", "-1", "10.5", "not-a-number")) {
+    assert_error(
+      snow_env_integer(
+        "TEST_SITES",
+        default = 158L,
+        minimum_allowed = 158L,
+        maximum_allowed = 175L,
+        raw_value = value
+      ),
+      "must be a positive whole number",
+      paste("Invalid integer override was accepted:", value)
+    )
+  }
+  assert_error(
+    snow_env_integer(
+      "TEST_SITES",
+      default = 158L,
+      minimum_allowed = 158L,
+      maximum_allowed = 175L,
+      raw_value = "157"
+    ),
+    "may not weaken completeness protection",
+    "A station minimum below the derived gate was accepted."
+  )
+  assert_error(
+    snow_env_integer(
+      "TEST_SITES",
+      default = 158L,
+      minimum_allowed = 158L,
+      maximum_allowed = 175L,
+      raw_value = "176"
+    ),
+    "is impossible for the indexed stations and fetch window",
+    "An impossible station minimum was accepted."
+  )
+})
 
 scenario("AWDB succeeds and CDEC succeeds: full refresh", {
   results <- list(
@@ -438,6 +757,143 @@ scenario("Malformed or implausibly incomplete provider data fails QA", {
   assert_true(!incomplete_qa$passed, "Implausibly incomplete provider rows must fail QA.")
 })
 
+scenario("Truncated NRCS plus healthy CDEC performs a partial refresh", {
+  results <- list(
+    nrcs_snotel = make_coverage_result(
+      "nrcs_snotel",
+      truncated_nrcs_coverage,
+      fresh_nrcs_latest,
+      fresh_nrcs_trace
+    ),
+    cdec_snow_sensor = make_coverage_result(
+      "cdec_snow_sensor",
+      healthy_cdec_coverage,
+      fresh_cdec_latest,
+      fresh_cdec_trace
+    )
+  )
+  resolved <- resolve(results, make_prior_outputs())
+  metadata <- snow_build_refresh_metadata(results, resolved, "2025-10-05T00:02:00Z")
+  carried_latest <- resolved$latest |>
+    dplyr::filter(.data$live_provider_key == "nrcs_snotel") |>
+    dplyr::arrange(.data$station_uid)
+  expected_latest <- prior_latest |>
+    dplyr::filter(.data$live_provider_key == "nrcs_snotel") |>
+    dplyr::arrange(.data$station_uid)
+  carried_trace <- resolved$trace |>
+    dplyr::filter(.data$live_provider_key == "nrcs_snotel") |>
+    dplyr::arrange(.data$station_uid, .data$obs_date_local)
+  expected_trace <- prior_trace |>
+    dplyr::filter(.data$live_provider_key == "nrcs_snotel") |>
+    dplyr::arrange(.data$station_uid, .data$obs_date_local)
+
+  assert_true(resolved$publish, "Healthy CDEC should permit a partial refresh.")
+  assert_equal(resolved$decision$mode, "partial", "Expected partial mode.")
+  assert_equal(
+    metadata$providers$nrcs_snotel$publication_action,
+    "carried_forward",
+    "Incomplete NRCS was incorrectly labeled refreshed."
+  )
+  assert_equal(
+    metadata$providers$nrcs_snotel$qa_status,
+    "failed",
+    "Incomplete NRCS was incorrectly labeled as passing QA."
+  )
+  assert_equal(
+    carried_latest,
+    expected_latest,
+    "Carried NRCS values or original latest timestamps changed."
+  )
+  assert_equal(
+    carried_trace,
+    expected_trace,
+    "Carried NRCS values or observation timestamps changed."
+  )
+})
+
+scenario("Truncated CDEC plus healthy NRCS performs a partial refresh", {
+  results <- list(
+    nrcs_snotel = make_coverage_result(
+      "nrcs_snotel",
+      healthy_nrcs_coverage,
+      fresh_nrcs_latest,
+      fresh_nrcs_trace
+    ),
+    cdec_snow_sensor = make_coverage_result(
+      "cdec_snow_sensor",
+      truncated_cdec_coverage,
+      fresh_cdec_latest,
+      fresh_cdec_trace
+    )
+  )
+  resolved <- resolve(results, make_prior_outputs())
+  metadata <- snow_build_refresh_metadata(results, resolved, "2025-10-05T00:02:00Z")
+  carried_latest <- resolved$latest |>
+    dplyr::filter(.data$live_provider_key == "cdec_snow_sensor") |>
+    dplyr::arrange(.data$station_uid)
+  expected_latest <- prior_latest |>
+    dplyr::filter(.data$live_provider_key == "cdec_snow_sensor") |>
+    dplyr::arrange(.data$station_uid)
+  carried_trace <- resolved$trace |>
+    dplyr::filter(.data$live_provider_key == "cdec_snow_sensor") |>
+    dplyr::arrange(.data$station_uid, .data$obs_date_local)
+  expected_trace <- prior_trace |>
+    dplyr::filter(.data$live_provider_key == "cdec_snow_sensor") |>
+    dplyr::arrange(.data$station_uid, .data$obs_date_local)
+
+  assert_true(resolved$publish, "Healthy NRCS should permit a partial refresh.")
+  assert_equal(resolved$decision$mode, "partial", "Expected partial mode.")
+  assert_equal(
+    metadata$providers$cdec_snow_sensor$publication_action,
+    "carried_forward",
+    "Incomplete CDEC was incorrectly labeled refreshed."
+  )
+  assert_equal(
+    metadata$providers$cdec_snow_sensor$qa_status,
+    "failed",
+    "Incomplete CDEC was incorrectly labeled as passing QA."
+  )
+  assert_equal(
+    carried_latest,
+    expected_latest,
+    "Carried CDEC values or original latest timestamps changed."
+  )
+  assert_equal(
+    carried_trace,
+    expected_trace,
+    "Carried CDEC values or observation timestamps changed."
+  )
+})
+
+scenario("Both truncated providers cause refusal and outputs remain unchanged", {
+  output_dir <- file.path(test_root, "both-truncated")
+  dir.create(output_dir)
+  outputs <- file.path(output_dir, c("latest.geojson", "latest.json", "trace.csv", "trace.json"))
+  for (i in seq_along(outputs)) {
+    writeLines(paste0("prior-", i), outputs[[i]])
+  }
+  before <- unname(tools::md5sum(outputs))
+  results <- list(
+    nrcs_snotel = make_coverage_result(
+      "nrcs_snotel",
+      truncated_nrcs_coverage,
+      fresh_nrcs_latest,
+      fresh_nrcs_trace
+    ),
+    cdec_snow_sensor = make_coverage_result(
+      "cdec_snow_sensor",
+      truncated_cdec_coverage,
+      fresh_cdec_latest,
+      fresh_cdec_trace
+    )
+  )
+  resolved <- resolve(results)
+  after <- unname(tools::md5sum(outputs))
+
+  assert_true(!resolved$publish, "Two truncated providers must refuse publication.")
+  assert_equal(before, after, "Two truncated providers changed existing output bytes.")
+})
+
 scenario("Duplicate merge protection rejects provider/station/day collisions", {
   duplicate_trace <- dplyr::bind_rows(fresh_nrcs_trace, fresh_nrcs_trace[1, ])
   results <- list(
@@ -675,6 +1131,106 @@ scenario("Prior latest, summary, trace, and trace-summary validation", {
     validation$valid,
     paste("Valid four-file prior fixture was rejected:", paste(validation$problems, collapse = "; "))
   )
+})
+
+scenario("Current full-size tracked product passes provider and combined QA", {
+  current_paths <- c(
+    latest_geojson = "docs/data/snow_pillow_latest.geojson",
+    latest_summary = "docs/data/snow_pillow_latest_summary.json",
+    trace_csv = "docs/data/snow_pillow_current_wy_trace.csv",
+    trace_summary = "docs/data/snow_pillow_current_wy_trace_summary.json"
+  )
+  current_stations <- readr::read_csv(
+    "data/input/snow_pillow_station_index.csv",
+    show_col_types = FALSE
+  )
+  current_latest <- snow_read_geojson_properties(current_paths[["latest_geojson"]])
+  current_trace <- readr::read_csv(
+    current_paths[["trace_csv"]],
+    show_col_types = FALSE
+  )
+  current_summary <- snow_read_json_object(
+    current_paths[["latest_summary"]],
+    "Current latest summary"
+  )
+  current_expected_days <- as.integer(
+    as.Date(current_summary$fetch_end_date) -
+      as.Date(current_summary$fetch_start_date) +
+      1L
+  )
+
+  current_results <- list()
+  current_min_trace_rows <- 0L
+  for (provider_id in names(coverage_defaults)) {
+    policy <- coverage_defaults[[provider_id]]
+    provider_stations <- current_stations |>
+      dplyr::filter(.data$live_provider_key == provider_id)
+    minimums <- snow_provider_completeness_minimums(
+      provider_id = provider_id,
+      indexed_station_count = nrow(provider_stations),
+      expected_fetch_days = current_expected_days,
+      station_fraction = policy$station_fraction,
+      row_fraction = policy$row_fraction
+    )
+    observations <- current_trace |>
+      dplyr::filter(.data$live_provider_key == provider_id) |>
+      dplyr::transmute(
+        station_uid = .data$station_uid,
+        provider = .data$provider,
+        provider_station_id = .data$provider_station_id,
+        obs_date = as.Date(.data$obs_date_local),
+        swe_in = .data$swe_in,
+        source_element = .data$source_element,
+        swe_source_class = .data$swe_source_class,
+        swe_source_label = .data$swe_source_label,
+        swe_source_note = .data$swe_source_note
+      )
+    qa <- snow_validate_provider_observations(
+      observations = observations,
+      provider_id = provider_id,
+      expected_station_uids = provider_stations$station_uid,
+      min_rows = minimums$min_rows,
+      min_sites = minimums$min_sites,
+      fetch_start_date = current_summary$fetch_start_date,
+      fetch_end_date = current_summary$fetch_end_date,
+      max_valid_swe_in = max_valid_swe_in
+    )
+    assert_true(
+      qa$passed,
+      paste("Current", provider_id, "product failed:", paste(qa$problems, collapse = "; "))
+    )
+    current_min_trace_rows <- current_min_trace_rows + minimums$min_rows
+    current_results[[provider_id]] <- snow_provider_result(
+      provider_id = provider_id,
+      success = TRUE,
+      fetch_status = "success",
+      qa_status = "passed",
+      latest_rows = current_latest |>
+        dplyr::filter(.data$live_provider_key == provider_id),
+      trace_rows = current_trace |>
+        dplyr::filter(.data$live_provider_key == provider_id),
+      qa = qa,
+      fetch_started_at_utc = "2026-07-25T00:00:00Z",
+      fetch_completed_at_utc = "2026-07-25T00:01:00Z"
+    )
+  }
+
+  resolved <- snow_resolve_publication(
+    provider_results = current_results,
+    prior_outputs = NULL,
+    stations = current_stations,
+    current_water_year = as.integer(current_summary$current_water_year),
+    max_valid_swe_in = max_valid_swe_in,
+    min_trace_rows = current_min_trace_rows,
+    min_latest_swe_rows = 10L,
+    required_latest_columns = names(current_latest),
+    required_trace_columns = names(current_trace)
+  )
+  assert_true(
+    resolved$publish,
+    paste("Current full-size product simulation failed:", resolved$refusal_reason)
+  )
+  assert_equal(resolved$decision$mode, "full", "Current product should simulate a full refresh.")
 })
 
 message("All deterministic snow partial-refresh tests passed.")

@@ -154,8 +154,13 @@ The repository has product-specific, not universal, QA:
 - SCAN validates endpoint access, canary retrieval and station coverage.
 - Snow attempts AWDB and CDEC independently; validates provider-specific
   row/site coverage, required fields, dates, SWE bounds, source selection and
-  duplicates; validates any required prior four-file product set; and reruns
-  combined latest/trace QA before replacement.
+  duplicates; requires NRCS coverage of at least 90% of indexed stations and
+  90% of expected station-days and CDEC coverage of at least 92% of indexed
+  stations and 85% of expected station-days; validates any required prior
+  four-file product set; and reruns combined latest/trace QA before replacement.
+  A response near 20% station or row coverage is a provider failure. Environment
+  overrides may tighten these gates but invalid, impossible, or weaker values
+  stop the build.
 - Groundwater validates index, API and output counts.
 - Streamflow validates only its static station index; the workflow's declared
   minimum current-discharge threshold is not implemented by the script.

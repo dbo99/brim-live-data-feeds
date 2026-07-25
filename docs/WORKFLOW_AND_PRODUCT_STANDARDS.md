@@ -229,9 +229,11 @@ directory and atomically promoted locally.
 - Failed scripts do not reach Git publication.
 - Snow implements product-specific partial publication: exactly one healthy
   provider may refresh while validated prior latest/trace rows for the failed
-  provider are carried forward unchanged. Both-provider failure, invalid prior
-  files, unavailable failed-provider rows, or failed combined QA retains the
-  complete prior output set.
+  provider are carried forward unchanged. Provider health includes
+  provider-specific station and expected-station-day completeness gates; a
+  response near 20% coverage fails rather than being labeled refreshed.
+  Both-provider failure, invalid prior files, unavailable failed-provider rows,
+  or failed combined QA retains the complete prior output set.
 
 **Gaps**
 

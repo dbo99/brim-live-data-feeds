@@ -16,6 +16,167 @@ snow_utc_now <- function() {
   if (is.null(x) || length(x) == 0L) y else x
 }
 
+snow_provider_completeness_defaults <- function() {
+  list(
+    nrcs_snotel = list(
+      station_fraction = 0.90,
+      row_fraction = 0.90
+    ),
+    cdec_snow_sensor = list(
+      station_fraction = 0.92,
+      row_fraction = 0.85
+    )
+  )
+}
+
+snow_env_fraction <- function(name,
+                              default,
+                              minimum_allowed = default,
+                              raw_value = Sys.getenv(name, unset = "")) {
+  default <- suppressWarnings(as.numeric(default))
+  minimum_allowed <- suppressWarnings(as.numeric(minimum_allowed))
+  if (!is.finite(default) || default <= 0 || default > 1 ||
+      !is.finite(minimum_allowed) || minimum_allowed <= 0 ||
+      minimum_allowed > 1 || default < minimum_allowed) {
+    stop("Invalid internal fraction bounds for ", name, ".", call. = FALSE)
+  }
+
+  raw_value <- trimws(as.character(raw_value))
+  if (length(raw_value) != 1L || is.na(raw_value) || raw_value == "") {
+    return(default)
+  }
+
+  value <- suppressWarnings(as.numeric(raw_value))
+  if (!is.finite(value) || value <= 0 || value > 1) {
+    stop(
+      name,
+      " must be a finite fraction greater than 0 and at most 1; got '",
+      raw_value,
+      "'.",
+      call. = FALSE
+    )
+  }
+  if (value < minimum_allowed) {
+    stop(
+      name,
+      " may not weaken completeness protection below ",
+      minimum_allowed,
+      "; got ",
+      value,
+      ".",
+      call. = FALSE
+    )
+  }
+
+  value
+}
+
+snow_env_integer <- function(name,
+                             default,
+                             minimum_allowed = default,
+                             maximum_allowed = Inf,
+                             raw_value = Sys.getenv(name, unset = "")) {
+  default <- suppressWarnings(as.numeric(default))
+  minimum_allowed <- suppressWarnings(as.numeric(minimum_allowed))
+  maximum_allowed <- suppressWarnings(as.numeric(maximum_allowed))
+  internal_values <- c(default, minimum_allowed, maximum_allowed)
+  finite_values <- internal_values[is.finite(internal_values)]
+  if (any(finite_values <= 0) ||
+      any(finite_values != floor(finite_values)) ||
+      default < minimum_allowed ||
+      default > maximum_allowed ||
+      minimum_allowed > maximum_allowed) {
+    stop("Invalid internal integer bounds for ", name, ".", call. = FALSE)
+  }
+
+  raw_value <- trimws(as.character(raw_value))
+  if (length(raw_value) != 1L || is.na(raw_value) || raw_value == "") {
+    return(as.integer(default))
+  }
+
+  value <- suppressWarnings(as.numeric(raw_value))
+  if (!is.finite(value) || value <= 0 || value != floor(value)) {
+    stop(
+      name,
+      " must be a positive whole number; got '",
+      raw_value,
+      "'.",
+      call. = FALSE
+    )
+  }
+  if (value < minimum_allowed) {
+    stop(
+      name,
+      " may not weaken completeness protection below ",
+      minimum_allowed,
+      "; got ",
+      value,
+      ".",
+      call. = FALSE
+    )
+  }
+  if (value > maximum_allowed) {
+    stop(
+      name,
+      " is impossible for the indexed stations and fetch window; maximum is ",
+      maximum_allowed,
+      ", got ",
+      value,
+      ".",
+      call. = FALSE
+    )
+  }
+
+  as.integer(value)
+}
+
+snow_provider_completeness_minimums <- function(provider_id,
+                                                indexed_station_count,
+                                                expected_fetch_days,
+                                                station_fraction,
+                                                row_fraction) {
+  defaults <- snow_provider_completeness_defaults()
+  if (!provider_id %in% names(defaults)) {
+    stop("Unknown snow provider completeness policy: ", provider_id, ".", call. = FALSE)
+  }
+
+  indexed_station_count <- suppressWarnings(as.numeric(indexed_station_count))
+  expected_fetch_days <- suppressWarnings(as.numeric(expected_fetch_days))
+  if (!is.finite(indexed_station_count) || indexed_station_count <= 0 ||
+      indexed_station_count != floor(indexed_station_count)) {
+    stop("Indexed station count must be a positive whole number.", call. = FALSE)
+  }
+  if (!is.finite(expected_fetch_days) || expected_fetch_days <= 0 ||
+      expected_fetch_days != floor(expected_fetch_days)) {
+    stop("Expected fetch days must be a positive whole number.", call. = FALSE)
+  }
+
+  station_fraction <- snow_env_fraction(
+    paste0(provider_id, " station fraction"),
+    default = station_fraction,
+    minimum_allowed = station_fraction,
+    raw_value = ""
+  )
+  row_fraction <- snow_env_fraction(
+    paste0(provider_id, " row fraction"),
+    default = row_fraction,
+    minimum_allowed = row_fraction,
+    raw_value = ""
+  )
+  expected_station_days <- indexed_station_count * expected_fetch_days
+
+  list(
+    provider_id = provider_id,
+    indexed_station_count = as.integer(indexed_station_count),
+    expected_fetch_days = as.integer(expected_fetch_days),
+    expected_station_days = as.integer(expected_station_days),
+    station_fraction = station_fraction,
+    row_fraction = row_fraction,
+    min_sites = as.integer(ceiling(indexed_station_count * station_fraction)),
+    min_rows = as.integer(ceiling(expected_station_days * row_fraction))
+  )
+}
+
 snow_safe_failure_reason <- function(x, max_chars = 300L) {
   x <- as.character(x %||% NA_character_)
   x <- x[!is.na(x) & nzchar(trimws(x))]
@@ -157,6 +318,22 @@ snow_validate_provider_observations <- function(observations,
   } else {
     0L
   }
+  indexed_station_count <- length(unique(expected_station_uids))
+  expected_fetch_days <- max(
+    0L,
+    as.integer(as.Date(fetch_end_date) - as.Date(fetch_start_date) + 1L)
+  )
+  expected_station_days <- indexed_station_count * expected_fetch_days
+  station_coverage_fraction <- if (indexed_station_count > 0L) {
+    site_count / indexed_station_count
+  } else {
+    0
+  }
+  row_coverage_fraction <- if (expected_station_days > 0L) {
+    row_count / expected_station_days
+  } else {
+    0
+  }
 
   if (row_count < min_rows) {
     problems <- c(problems, paste0("rows too low: ", row_count, " < ", min_rows))
@@ -171,6 +348,11 @@ snow_validate_provider_observations <- function(observations,
     problems = unique(problems),
     row_count = as.integer(row_count),
     site_count = as.integer(site_count),
+    indexed_station_count = as.integer(indexed_station_count),
+    expected_fetch_days = as.integer(expected_fetch_days),
+    expected_station_days = as.integer(expected_station_days),
+    station_coverage_fraction = station_coverage_fraction,
+    row_coverage_fraction = row_coverage_fraction,
     min_rows = as.integer(min_rows),
     min_sites = as.integer(min_sites)
   )

@@ -1146,41 +1146,90 @@ cdec_stations <- stations |>
 message("NRCS/SNOTEL rows in station index: ", nrow(snotel_stations))
 message("CDEC rows in station index: ", nrow(cdec_stations))
 
-snow_env_int <- function(name, default, minimum = 1L) {
-  value <- suppressWarnings(as.integer(Sys.getenv(name, unset = as.character(default))))
-  if (is.na(value) || value < minimum) as.integer(default) else value
-}
-
 expected_fetch_days <- max(1L, as.integer(FETCH_END_DATE - FETCH_START_DATE + 1L))
 in_low_snow_reporting_season <- as.integer(format(TODAY_LOCAL, "%m")) %in% c(7L, 8L, 9L)
 
-qa_min_snotel_wteq_rows <- snow_env_int(
+provider_completeness_defaults <- snow_provider_completeness_defaults()
+qa_min_snotel_station_fraction <- snow_env_fraction(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_STATION_FRACTION",
+  provider_completeness_defaults$nrcs_snotel$station_fraction
+)
+qa_min_snotel_row_fraction <- snow_env_fraction(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_ROW_FRACTION",
+  provider_completeness_defaults$nrcs_snotel$row_fraction
+)
+qa_min_cdec_station_fraction <- snow_env_fraction(
+  "SNOW_PILLOW_QA_MIN_CDEC_STATION_FRACTION",
+  provider_completeness_defaults$cdec_snow_sensor$station_fraction
+)
+qa_min_cdec_row_fraction <- snow_env_fraction(
+  "SNOW_PILLOW_QA_MIN_CDEC_ROW_FRACTION",
+  provider_completeness_defaults$cdec_snow_sensor$row_fraction
+)
+
+snotel_completeness <- snow_provider_completeness_minimums(
+  provider_id = "nrcs_snotel",
+  indexed_station_count = nrow(snotel_stations),
+  expected_fetch_days = expected_fetch_days,
+  station_fraction = qa_min_snotel_station_fraction,
+  row_fraction = qa_min_snotel_row_fraction
+)
+cdec_completeness <- snow_provider_completeness_minimums(
+  provider_id = "cdec_snow_sensor",
+  indexed_station_count = nrow(cdec_stations),
+  expected_fetch_days = expected_fetch_days,
+  station_fraction = qa_min_cdec_station_fraction,
+  row_fraction = qa_min_cdec_row_fraction
+)
+
+qa_min_snotel_wteq_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_WTEQ_ROWS",
-  max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20))
+  default = snotel_completeness$min_rows,
+  minimum_allowed = snotel_completeness$min_rows,
+  maximum_allowed = snotel_completeness$expected_station_days
 )
-qa_min_snotel_snwd_rows <- snow_env_int(
+qa_min_snotel_snwd_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_SNWD_ROWS",
-  max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20))
+  default = snotel_completeness$min_rows,
+  minimum_allowed = snotel_completeness$min_rows,
+  maximum_allowed = snotel_completeness$expected_station_days
 )
-qa_min_cdec_swe_rows <- snow_env_int(
+qa_min_cdec_swe_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_CDEC_SWE_ROWS",
-  max(10L, floor(nrow(cdec_stations) * expected_fetch_days * 0.20))
+  default = cdec_completeness$min_rows,
+  minimum_allowed = cdec_completeness$min_rows,
+  maximum_allowed = cdec_completeness$expected_station_days
 )
-qa_min_trace_rows <- snow_env_int(
-  "SNOW_PILLOW_QA_MIN_CURRENT_WY_TRACE_ROWS",
-  max(10L, floor(nrow(stations) * expected_fetch_days * 0.20))
-)
-qa_min_latest_swe_rows <- snow_env_int(
-  "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
-  if (in_low_snow_reporting_season) 10L else max(200L, floor(nrow(stations) * 0.75))
-)
-qa_min_snotel_sites <- snow_env_int(
+qa_min_snotel_sites <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_SITES",
-  max(1L, min(nrow(snotel_stations), max(10L, floor(nrow(snotel_stations) * 0.20))))
+  default = snotel_completeness$min_sites,
+  minimum_allowed = snotel_completeness$min_sites,
+  maximum_allowed = nrow(snotel_stations)
 )
-qa_min_cdec_sites <- snow_env_int(
+qa_min_cdec_sites <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_CDEC_SITES",
-  max(1L, min(nrow(cdec_stations), max(10L, floor(nrow(cdec_stations) * 0.20))))
+  default = cdec_completeness$min_sites,
+  minimum_allowed = cdec_completeness$min_sites,
+  maximum_allowed = nrow(cdec_stations)
+)
+
+qa_min_trace_rows_default <- qa_min_snotel_wteq_rows + qa_min_cdec_swe_rows
+qa_min_trace_rows <- snow_env_integer(
+  "SNOW_PILLOW_QA_MIN_CURRENT_WY_TRACE_ROWS",
+  default = qa_min_trace_rows_default,
+  minimum_allowed = qa_min_trace_rows_default,
+  maximum_allowed = nrow(stations) * expected_fetch_days
+)
+qa_min_latest_swe_rows_default <- if (in_low_snow_reporting_season) {
+  min(10L, nrow(stations))
+} else {
+  min(nrow(stations), max(200L, ceiling(nrow(stations) * 0.75)))
+}
+qa_min_latest_swe_rows <- snow_env_integer(
+  "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
+  default = qa_min_latest_swe_rows_default,
+  minimum_allowed = qa_min_latest_swe_rows_default,
+  maximum_allowed = nrow(stations)
 )
 
 empty_awdb_preflight <- list(
@@ -1514,9 +1563,15 @@ provider_results <- list(
     qa = c(
       awdb_swe_qa,
       list(
+        min_station_fraction = qa_min_snotel_station_fraction,
+        min_row_fraction = qa_min_snotel_row_fraction,
         min_depth_rows = qa_min_snotel_snwd_rows,
         observed_depth_rows = nrow(snotel_depth_obs),
-        observed_depth_sites = awdb_depth_sites
+        observed_depth_sites = awdb_depth_sites,
+        depth_station_coverage_fraction = awdb_depth_sites /
+          snotel_completeness$indexed_station_count,
+        depth_row_coverage_fraction = nrow(snotel_depth_obs) /
+          snotel_completeness$expected_station_days
       )
     ),
     failure_reason = if (awdb_provider_success) {
@@ -1547,7 +1602,13 @@ provider_results <- list(
       invalid_negative_swe_rows = invalid_negative_cdec_swe_rows,
       invalid_high_swe_rows = invalid_high_cdec_swe_rows
     ),
-    qa = cdec_provider_qa,
+    qa = c(
+      cdec_provider_qa,
+      list(
+        min_station_fraction = qa_min_cdec_station_fraction,
+        min_row_fraction = qa_min_cdec_row_fraction
+      )
+    ),
     failure_reason = if (cdec_provider_success) {
       NA_character_
     } else {
@@ -2075,6 +2136,12 @@ latest_swe_rows <- sum(!is.na(latest$latest_swe_in))
 summary_obj$qa_guardrails <- list(
   disabled = FALSE,
   expected_fetch_days = expected_fetch_days,
+  expected_snotel_station_days = snotel_completeness$expected_station_days,
+  expected_cdec_station_days = cdec_completeness$expected_station_days,
+  min_snotel_station_fraction = qa_min_snotel_station_fraction,
+  min_snotel_row_fraction = qa_min_snotel_row_fraction,
+  min_cdec_station_fraction = qa_min_cdec_station_fraction,
+  min_cdec_row_fraction = qa_min_cdec_row_fraction,
   min_snotel_wteq_rows = qa_min_snotel_wteq_rows,
   min_snotel_snwd_rows = qa_min_snotel_snwd_rows,
   min_cdec_swe_rows = qa_min_cdec_swe_rows,
@@ -2164,6 +2231,28 @@ message("    CDEC #3 invalid high obs:        ", invalid_high_cdec_swe3_rows)
 message("    CDEC #82 invalid high obs:       ", invalid_high_cdec_swe82_rows)
 message("  Missing recent rows:      ", sum(latest$latest_swe_report_status == "missing_recent_value", na.rm = TRUE))
 message("  Stale last-value rows:    ", sum(latest$latest_swe_report_status == "stale_last_value", na.rm = TRUE))
+message(
+  "  NRCS completeness gate:   ",
+  qa_min_snotel_sites,
+  "/",
+  nrow(snotel_stations),
+  " sites; ",
+  qa_min_snotel_wteq_rows,
+  "/",
+  snotel_completeness$expected_station_days,
+  " station-days"
+)
+message(
+  "  CDEC completeness gate:   ",
+  qa_min_cdec_sites,
+  "/",
+  nrow(cdec_stations),
+  " sites; ",
+  qa_min_cdec_swe_rows,
+  "/",
+  cdec_completeness$expected_station_days,
+  " station-days"
+)
 message("  QA min latest SWE rows:   ", qa_min_latest_swe_rows)
 message("  QA min trace rows:        ", qa_min_trace_rows)
 message("\nLatest SWE report-status counts:")

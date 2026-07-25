@@ -47,8 +47,12 @@ Historical runs exposed two recurring classes of failure:
   now attempts AWDB and CDEC independently: one healthy provider can refresh
   while validated prior rows for the failed provider are preserved, but
   both-provider failure or invalid/unavailable prior provider rows still stops
-  before replacement. The incident was an upstream availability/timeout event;
-  it is not evidence by itself of general workflow-runtime exhaustion.
+  before replacement. A follow-up audit of 20 successful tracked products set
+  provider-specific completeness gates below observed healthy coverage but far
+  above the former approximately 20% defaults; invalid or weakening environment
+  overrides now fail closed. The incident was an upstream
+  availability/timeout event; it is not evidence by itself of general
+  workflow-runtime exhaustion.
 
 Run identifiers are operational evidence, not stable documentation links. Retain
 them in the relevant incident record when an event is investigated.
@@ -73,8 +77,8 @@ boundary until the producer, consumer, and public contract are changed together.
   publication.
 - Current artifact upload steps use the same maintained major release.
 - Snow has deterministic provider-failure tests, provider-level partial-refresh
-  status, validated last-known-good carry-forward, and staged four-file local
-  replacement.
+  status, provider-specific completeness and override tests, validated
+  last-known-good carry-forward, and staged four-file local replacement.
 
 ## Risk register
 
