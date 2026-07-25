@@ -43,9 +43,12 @@ Historical runs exposed two recurring classes of failure:
   explicit checkout correction.
 - In a snow-pillow incident, all three NRCS/AWDB preflight stations timed out.
   The workflow stopped before the full producer fetch or publication, the prior
-  official product remained, and a later scheduled run succeeded. This was an
-  upstream availability/timeout incident; it is not evidence by itself of
-  general workflow-runtime exhaustion.
+  official product remained, and a later scheduled run succeeded. The producer
+  now attempts AWDB and CDEC independently: one healthy provider can refresh
+  while validated prior rows for the failed provider are preserved, but
+  both-provider failure or invalid/unavailable prior provider rows still stops
+  before replacement. The incident was an upstream availability/timeout event;
+  it is not evidence by itself of general workflow-runtime exhaustion.
 
 Run identifiers are operational evidence, not stable documentation links. Retain
 them in the relevant incident record when an event is investigated.
@@ -69,6 +72,9 @@ boundary until the producer, consumer, and public contract are changed together.
 - Sandbox/preview workflows separate selected investigation from production
   publication.
 - Current artifact upload steps use the same maintained major release.
+- Snow has deterministic provider-failure tests, provider-level partial-refresh
+  status, validated last-known-good carry-forward, and staged four-file local
+  replacement.
 
 ## Risk register
 
@@ -84,7 +90,7 @@ corruption or outage would require immediate P0 reclassification.
 |---|---|---|---|
 | P1 (highest current latent defect) | Streamflow workflow defines `USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH`, while the builder reads a differently scoped site-count gate and can join an empty latest-value result to the static site set. | A successful publication may contain many features but effectively no current discharge values. | Align the configuration name and implementation; gate on non-null live observations and test empty-upstream behavior before publishing. |
 | P1 | `main` had no observed branch protection or ruleset at the baseline. | A direct push or insufficiently reviewed merge can immediately change the official Pages source. | Require pull requests, successful checks, and restricted direct pushes for `main`. |
-| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. | An interrupted local run can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Build and validate in a temporary directory, then replace the full declared output set immediately before Git staging. |
+| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow now stages, validates, backs up and promotes its four-file set, but the control is not repository-wide and four separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback where one multi-path atomic primitive is unavailable. |
 | P1 | There is no common machine-readable schema or compatibility test for public feeds. | A syntactically valid producer change can silently break a consumer. | Add versioned schemas or contract fixtures and run producer/consumer compatibility checks for changed products. |
 | P2 | CoCoRaHS retrieval lacks a strong repository-wide minimum-completeness or pagination gate. | A partial upstream response can look like a valid low-count day. | Record expected coverage signals and classify partial responses as degraded or failed. |
 | P2 | GFS and HRRR can publish useful but incomplete target sets under product-specific rules. | Target-time choices available to consumers may shrink unexpectedly. | Declare completeness/degraded status in manifests and alert on missing required targets. |

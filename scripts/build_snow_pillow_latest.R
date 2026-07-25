@@ -1,4 +1,13 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE026:
+##   - Attempt AWDB/SNOTEL and CDEC independently.
+##   - When exactly one provider fails retrieval or provider QA, validate the
+##     four current local products and carry that provider's prior latest/trace
+##     rows forward unchanged while refreshing the healthy provider.
+##   - Refuse both-provider failure or partial refresh without valid prior rows.
+##   - Add summary-level refresh metadata and stage/validate the complete output
+##     set before replacement.
+##
 ## SWE025:
 ##   - Join station/day fixed and rolling median-normal denominators from
 ##     data/input/snow_pillow_swe_normal_medians.csv into latest GeoJSON.
@@ -66,6 +75,8 @@
 ##        sensor #3 used only as a limited recent raw-tail fallback
 ##   - Write small browser-facing files under:
 ##       docs/data/
+##   - Build and validate all four prospective files in a same-directory
+##     staging area before replacing the tracked outputs.
 ##
 ## IMPORTANT DATA RULES:
 ##   - Do not assume missing SWE means zero.
@@ -125,6 +136,8 @@ suppressPackageStartupMessages({
   library(curl)
   library(sharpshootR)
 })
+
+source("scripts/snow_pillow_partial_refresh_helpers.R", local = TRUE)
 
 # ==== 3. Paths and user-facing switches =====================================
 
@@ -374,6 +387,7 @@ pt_fetch_text <- function(url, label, attempts = PT_FETCH_ATTEMPTS, timeout_sec 
     if (attempt < attempts) Sys.sleep(pmin(10, attempt * 2))
   }
 
+  message(label, " exhausted ", attempts, " bounded request attempt(s).")
   NULL
 }
 
@@ -1132,46 +1146,135 @@ cdec_stations <- stations |>
 message("NRCS/SNOTEL rows in station index: ", nrow(snotel_stations))
 message("CDEC rows in station index: ", nrow(cdec_stations))
 
-awdb_preflight <- run_awdb_preflight(
-  station_triplets = snotel_stations$nrcs_station_triplet,
-  begin_date = FETCH_START_DATE,
-  end_date = FETCH_END_DATE,
-  element_code = "WTEQ"
-)
-
-if (!isTRUE(awdb_preflight$passed)) {
-  stop(awdb_preflight$message)
+snow_env_int <- function(name, default, minimum = 1L) {
+  value <- suppressWarnings(as.integer(Sys.getenv(name, unset = as.character(default))))
+  if (is.na(value) || value < minimum) as.integer(default) else value
 }
 
-snotel_wteq <- fetch_awdb_element(
-  station_triplets = snotel_stations$nrcs_station_triplet,
+expected_fetch_days <- max(1L, as.integer(FETCH_END_DATE - FETCH_START_DATE + 1L))
+in_low_snow_reporting_season <- as.integer(format(TODAY_LOCAL, "%m")) %in% c(7L, 8L, 9L)
+
+qa_min_snotel_wteq_rows <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_WTEQ_ROWS",
+  max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20))
+)
+qa_min_snotel_snwd_rows <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_SNWD_ROWS",
+  max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20))
+)
+qa_min_cdec_swe_rows <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_CDEC_SWE_ROWS",
+  max(10L, floor(nrow(cdec_stations) * expected_fetch_days * 0.20))
+)
+qa_min_trace_rows <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_CURRENT_WY_TRACE_ROWS",
+  max(10L, floor(nrow(stations) * expected_fetch_days * 0.20))
+)
+qa_min_latest_swe_rows <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
+  if (in_low_snow_reporting_season) 10L else max(200L, floor(nrow(stations) * 0.75))
+)
+qa_min_snotel_sites <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_SNOTEL_SITES",
+  max(1L, min(nrow(snotel_stations), max(10L, floor(nrow(snotel_stations) * 0.20))))
+)
+qa_min_cdec_sites <- snow_env_int(
+  "SNOW_PILLOW_QA_MIN_CDEC_SITES",
+  max(1L, min(nrow(cdec_stations), max(10L, floor(nrow(cdec_stations) * 0.20))))
+)
+
+empty_awdb_preflight <- list(
+  enabled = AWDB_PREFLIGHT_ENABLED,
+  passed = FALSE,
   element_code = "WTEQ",
-  begin_date = FETCH_START_DATE,
-  end_date = FETCH_END_DATE
+  station_triplets_tested = character(),
+  rows_returned = 0L,
+  message = "AWDB preflight did not complete."
 )
 
-snotel_snwd <- fetch_awdb_element(
-  station_triplets = snotel_stations$nrcs_station_triplet,
-  element_code = "SNWD",
-  begin_date = FETCH_START_DATE,
-  end_date = FETCH_END_DATE
-)
+message("Provider attempt: nrcs_snotel (AWDB WTEQ and SNWD).")
+awdb_fetch_started_at_utc <- snow_utc_now()
+awdb_attempt <- tryCatch(
+  {
+    preflight <- run_awdb_preflight(
+      station_triplets = snotel_stations$nrcs_station_triplet,
+      begin_date = FETCH_START_DATE,
+      end_date = FETCH_END_DATE,
+      element_code = "WTEQ"
+    )
+    if (!isTRUE(preflight$passed)) {
+      stop(preflight$message, call. = FALSE)
+    }
 
-cdec_swe_3 <- fetch_cdec_swe(
-  cdec_ids = cdec_stations$cdec_id,
-  sensor_num = CDEC_RAW_SWE_SENSOR,
-  sensor_label = "SNOW WC / raw SWE",
-  begin_date = FETCH_START_DATE,
-  end_date = FETCH_END_DATE
+    list(
+      completed = TRUE,
+      preflight = preflight,
+      wteq = fetch_awdb_element(
+        station_triplets = snotel_stations$nrcs_station_triplet,
+        element_code = "WTEQ",
+        begin_date = FETCH_START_DATE,
+        end_date = FETCH_END_DATE
+      ),
+      snwd = fetch_awdb_element(
+        station_triplets = snotel_stations$nrcs_station_triplet,
+        element_code = "SNWD",
+        begin_date = FETCH_START_DATE,
+        end_date = FETCH_END_DATE
+      ),
+      failure_reason = NA_character_
+    )
+  },
+  error = function(e) {
+    list(
+      completed = FALSE,
+      preflight = if (exists("preflight", inherits = FALSE)) preflight else empty_awdb_preflight,
+      wteq = pt_empty_awdb(),
+      snwd = pt_empty_awdb(),
+      failure_reason = snow_safe_failure_reason(conditionMessage(e))
+    )
+  }
 )
+awdb_fetch_completed_at_utc <- snow_utc_now()
 
-cdec_swe_82 <- fetch_cdec_swe(
-  cdec_ids = cdec_stations$cdec_id,
-  sensor_num = CDEC_REVISED_SWE_SENSOR,
-  sensor_label = "SNO ADJ / revised SWE",
-  begin_date = FETCH_START_DATE,
-  end_date = FETCH_END_DATE
+message("Provider attempt: cdec_snow_sensor (CDEC sensors #3 and #82).")
+cdec_fetch_started_at_utc <- snow_utc_now()
+cdec_attempt <- tryCatch(
+  {
+    list(
+      completed = TRUE,
+      sensor3 = fetch_cdec_swe(
+        cdec_ids = cdec_stations$cdec_id,
+        sensor_num = CDEC_RAW_SWE_SENSOR,
+        sensor_label = "SNOW WC / raw SWE",
+        begin_date = FETCH_START_DATE,
+        end_date = FETCH_END_DATE
+      ),
+      sensor82 = fetch_cdec_swe(
+        cdec_ids = cdec_stations$cdec_id,
+        sensor_num = CDEC_REVISED_SWE_SENSOR,
+        sensor_label = "SNO ADJ / revised SWE",
+        begin_date = FETCH_START_DATE,
+        end_date = FETCH_END_DATE
+      ),
+      failure_reason = NA_character_
+    )
+  },
+  error = function(e) {
+    list(
+      completed = FALSE,
+      sensor3 = pt_empty_cdec(),
+      sensor82 = pt_empty_cdec(),
+      failure_reason = snow_safe_failure_reason(conditionMessage(e))
+    )
+  }
 )
+cdec_fetch_completed_at_utc <- snow_utc_now()
+
+awdb_preflight <- awdb_attempt$preflight
+snotel_wteq <- awdb_attempt$wteq
+snotel_snwd <- awdb_attempt$snwd
+cdec_swe_3 <- cdec_attempt$sensor3
+cdec_swe_82 <- cdec_attempt$sensor82
 
 message(
   "Rows returned: SNOTEL WTEQ = ", nrow(snotel_wteq),
@@ -1225,7 +1328,9 @@ snotel_swe_obs <- snotel_wteq |>
     swe_source_label = "NRCS WTEQ",
     swe_source_note = "NRCS/SNOTEL daily SWE source."
   ) |>
-  dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
+  dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date)) |>
+  dplyr::arrange(.data$station_uid, .data$obs_date) |>
+  dplyr::distinct(.data$station_uid, .data$obs_date, .keep_all = TRUE)
 
 snotel_depth_obs <- snotel_snwd |>
   dplyr::left_join(snotel_key, by = "nrcs_station_triplet") |>
@@ -1234,7 +1339,15 @@ snotel_depth_obs <- snotel_snwd |>
     obs_date = as.Date(.data$obs_date),
     snow_depth_in = pt_num(.data$value)
   ) |>
-  dplyr::filter(!is.na(.data$station_uid), !is.na(.data$obs_date))
+  dplyr::filter(
+    !is.na(.data$station_uid),
+    !is.na(.data$obs_date),
+    !is.na(.data$snow_depth_in),
+    is.finite(.data$snow_depth_in),
+    .data$snow_depth_in >= 0
+  ) |>
+  dplyr::arrange(.data$station_uid, .data$obs_date) |>
+  dplyr::distinct(.data$station_uid, .data$obs_date, .keep_all = TRUE)
 
 standardize_cdec_obs <- function(x, source_element, source_class, source_label, source_note) {
   x |>
@@ -1296,20 +1409,193 @@ print(cdec_selected_source_counts, n = Inf)
 invalid_negative_snotel_swe_rows <- pt_negative_swe_count(snotel_swe_obs$raw_swe_in)
 invalid_negative_cdec_swe3_rows <- pt_negative_swe_count(cdec_swe_3_obs$raw_swe_in)
 invalid_negative_cdec_swe82_rows <- pt_negative_swe_count(cdec_swe_82_obs$raw_swe_in)
-invalid_negative_cdec_swe_rows <- pt_negative_swe_count(cdec_swe_obs$raw_swe_in)
+invalid_negative_cdec_swe_rows <- invalid_negative_cdec_swe3_rows + invalid_negative_cdec_swe82_rows
 invalid_negative_swe_rows <- invalid_negative_snotel_swe_rows + invalid_negative_cdec_swe_rows
 
 invalid_high_snotel_swe_rows <- pt_high_swe_count(snotel_swe_obs$raw_swe_in)
 invalid_high_cdec_swe3_rows <- pt_high_swe_count(cdec_swe_3_obs$raw_swe_in)
 invalid_high_cdec_swe82_rows <- pt_high_swe_count(cdec_swe_82_obs$raw_swe_in)
-invalid_high_cdec_swe_rows <- pt_high_swe_count(cdec_swe_obs$raw_swe_in)
+invalid_high_cdec_swe_rows <- invalid_high_cdec_swe3_rows + invalid_high_cdec_swe82_rows
 invalid_high_swe_rows <- invalid_high_snotel_swe_rows + invalid_high_cdec_swe_rows
 
+snotel_swe_valid <- snotel_swe_obs |>
+  dplyr::filter(!is.na(.data$swe_in))
+
+awdb_swe_qa <- snow_validate_provider_observations(
+  observations = snotel_swe_valid,
+  provider_id = "nrcs_snotel",
+  expected_station_uids = snotel_stations$station_uid,
+  min_rows = qa_min_snotel_wteq_rows,
+  min_sites = qa_min_snotel_sites,
+  fetch_start_date = FETCH_START_DATE,
+  fetch_end_date = FETCH_END_DATE,
+  max_valid_swe_in = MAX_VALID_SWE_IN
+)
+
+awdb_depth_problems <- character()
+awdb_depth_sites <- dplyr::n_distinct(snotel_depth_obs$station_uid)
+if (nrow(snotel_depth_obs) < qa_min_snotel_snwd_rows) {
+  awdb_depth_problems <- c(
+    awdb_depth_problems,
+    paste0(
+      "SNWD rows too low: ",
+      nrow(snotel_depth_obs),
+      " < ",
+      qa_min_snotel_snwd_rows
+    )
+  )
+}
+if (awdb_depth_sites < qa_min_snotel_sites) {
+  awdb_depth_problems <- c(
+    awdb_depth_problems,
+    paste0(
+      "SNWD sites too low: ",
+      awdb_depth_sites,
+      " < ",
+      qa_min_snotel_sites
+    )
+  )
+}
+
+awdb_provider_problems <- unique(c(
+  if (!isTRUE(awdb_attempt$completed)) awdb_attempt$failure_reason else character(),
+  awdb_swe_qa$problems,
+  awdb_depth_problems
+))
+awdb_provider_success <- isTRUE(awdb_attempt$completed) &&
+  length(awdb_provider_problems) == 0L
+
+cdec_swe_valid <- cdec_swe_obs |>
+  dplyr::filter(!is.na(.data$swe_in))
+
+cdec_provider_qa <- snow_validate_provider_observations(
+  observations = cdec_swe_valid,
+  provider_id = "cdec_snow_sensor",
+  expected_station_uids = cdec_stations$station_uid,
+  min_rows = qa_min_cdec_swe_rows,
+  min_sites = qa_min_cdec_sites,
+  fetch_start_date = FETCH_START_DATE,
+  fetch_end_date = FETCH_END_DATE,
+  max_valid_swe_in = MAX_VALID_SWE_IN
+)
+
+cdec_provider_problems <- unique(c(
+  if (!isTRUE(cdec_attempt$completed)) cdec_attempt$failure_reason else character(),
+  cdec_provider_qa$problems
+))
+cdec_provider_success <- isTRUE(cdec_attempt$completed) &&
+  length(cdec_provider_problems) == 0L
+
+provider_results <- list(
+  nrcs_snotel = snow_provider_result(
+    provider_id = "nrcs_snotel",
+    success = awdb_provider_success,
+    fetch_status = if (isTRUE(awdb_attempt$completed) &&
+        nrow(snotel_wteq) > 0L &&
+        nrow(snotel_snwd) > 0L) "success" else "failed",
+    qa_status = if (!isTRUE(awdb_attempt$completed)) {
+      "not_run"
+    } else if (awdb_provider_success) {
+      "passed"
+    } else {
+      "failed"
+    },
+    observations = snotel_swe_valid,
+    depth_observations = snotel_depth_obs,
+    metrics = list(
+      awdb_preflight = awdb_preflight,
+      wteq_rows_returned = nrow(snotel_wteq),
+      snwd_rows_returned = nrow(snotel_snwd),
+      valid_wteq_rows = nrow(snotel_swe_valid),
+      valid_snwd_rows = nrow(snotel_depth_obs),
+      invalid_negative_swe_rows = invalid_negative_snotel_swe_rows,
+      invalid_high_swe_rows = invalid_high_snotel_swe_rows
+    ),
+    qa = c(
+      awdb_swe_qa,
+      list(
+        min_depth_rows = qa_min_snotel_snwd_rows,
+        observed_depth_rows = nrow(snotel_depth_obs),
+        observed_depth_sites = awdb_depth_sites
+      )
+    ),
+    failure_reason = if (awdb_provider_success) {
+      NA_character_
+    } else {
+      paste(awdb_provider_problems, collapse = "; ")
+    },
+    fetch_started_at_utc = awdb_fetch_started_at_utc,
+    fetch_completed_at_utc = awdb_fetch_completed_at_utc
+  ),
+  cdec_snow_sensor = snow_provider_result(
+    provider_id = "cdec_snow_sensor",
+    success = cdec_provider_success,
+    fetch_status = if (isTRUE(cdec_attempt$completed) &&
+        (nrow(cdec_swe_3) > 0L || nrow(cdec_swe_82) > 0L)) "success" else "failed",
+    qa_status = if (!isTRUE(cdec_attempt$completed)) {
+      "not_run"
+    } else if (cdec_provider_success) {
+      "passed"
+    } else {
+      "failed"
+    },
+    observations = cdec_swe_valid,
+    metrics = list(
+      selected_swe_rows = nrow(cdec_swe_valid),
+      sensor3_rows_returned = nrow(cdec_swe_3),
+      sensor82_rows_returned = nrow(cdec_swe_82),
+      invalid_negative_swe_rows = invalid_negative_cdec_swe_rows,
+      invalid_high_swe_rows = invalid_high_cdec_swe_rows
+    ),
+    qa = cdec_provider_qa,
+    failure_reason = if (cdec_provider_success) {
+      NA_character_
+    } else {
+      paste(cdec_provider_problems, collapse = "; ")
+    },
+    fetch_started_at_utc = cdec_fetch_started_at_utc,
+    fetch_completed_at_utc = cdec_fetch_completed_at_utc
+  )
+)
+
+for (provider_id in names(provider_results)) {
+  result <- provider_results[[provider_id]]
+  if (isTRUE(result$success)) {
+    message(
+      "Provider success: ",
+      provider_id,
+      "; QA passed; fresh trace rows = ",
+      nrow(result$observations),
+      "; sites = ",
+      dplyr::n_distinct(result$observations$station_uid)
+    )
+  } else {
+    message(
+      "Provider failure: ",
+      provider_id,
+      "; fetch_status = ",
+      result$fetch_status,
+      "; qa_status = ",
+      result$qa_status,
+      "; reason = ",
+      result$failure_reason
+    )
+  }
+}
+
+initial_refresh_decision <- snow_decide_refresh(provider_results)
+if (!isTRUE(initial_refresh_decision$publish)) {
+  stop(
+    "Snow provider refresh refused before output construction: ",
+    initial_refresh_decision$refusal_reason,
+    call. = FALSE
+  )
+}
+
 swe_obs <- dplyr::bind_rows(
-  snotel_swe_obs,
-  cdec_swe_obs
+  provider_results$nrcs_snotel$observations,
+  provider_results$cdec_snow_sensor$observations
 ) |>
-  dplyr::filter(!is.na(.data$swe_in)) |>
   dplyr::mutate(
     water_year = pt_water_year(.data$obs_date),
     water_day = pt_water_day(.data$obs_date),
@@ -1387,8 +1673,6 @@ load_snow_normal_medians <- function(path = IN_NORMAL_MEDIANS_CSV) {
 latest_swe <- latest_and_delta(swe_obs)
 latest_snwd <- latest_depth(snotel_depth_obs)
 normal_medians <- load_snow_normal_medians(IN_NORMAL_MEDIANS_CSV)
-
-in_low_snow_reporting_season <- as.integer(format(TODAY_LOCAL, "%m")) %in% c(7L, 8L, 9L)
 
 latest <- stations |>
   dplyr::left_join(latest_swe, by = "station_uid") |>
@@ -1563,6 +1847,106 @@ wy_trace <- swe_obs |>
   ) |>
   dplyr::arrange(.data$station_uid, .data$obs_date_local)
 
+required_latest_columns <- names(latest)
+required_trace_columns <- names(wy_trace)
+
+for (provider_id in names(provider_results)) {
+  result <- provider_results[[provider_id]]
+  provider_latest <- latest |>
+    dplyr::filter(.data$live_provider_key == provider_id)
+  provider_trace <- wy_trace |>
+    dplyr::filter(.data$live_provider_key == provider_id)
+
+  if (!isTRUE(result$success)) {
+    provider_latest <- provider_latest |>
+      dplyr::filter(!is.na(.data$latest_swe_in))
+  }
+
+  result$latest_rows <- provider_latest
+  result$trace_rows <- provider_trace
+  provider_results[[provider_id]] <- result
+}
+
+snow_output_paths <- c(
+  latest_geojson = OUT_LATEST_GEOJSON,
+  latest_summary = OUT_LATEST_SUMMARY,
+  trace_csv = OUT_WY_TRACE_CSV,
+  trace_summary = OUT_WY_TRACE_SUMRY
+)
+
+prior_outputs <- NULL
+if (identical(initial_refresh_decision$mode, "partial")) {
+  message(
+    "Partial refresh candidate: loading and validating all four current local snow outputs."
+  )
+  prior_outputs <- snow_validate_prior_outputs(
+    paths = snow_output_paths,
+    stations = stations,
+    current_water_year = CURRENT_WY,
+    max_valid_swe_in = MAX_VALID_SWE_IN,
+    required_latest_columns = required_latest_columns,
+    required_trace_columns = required_trace_columns
+  )
+
+  if (!isTRUE(prior_outputs$valid)) {
+    stop(
+      "Partial refresh refused because last-known-good snow outputs are invalid: ",
+      paste(prior_outputs$problems, collapse = "; "),
+      call. = FALSE
+    )
+  }
+}
+
+resolved_refresh <- snow_resolve_publication(
+  provider_results = provider_results,
+  prior_outputs = prior_outputs,
+  stations = stations,
+  current_water_year = CURRENT_WY,
+  max_valid_swe_in = MAX_VALID_SWE_IN,
+  min_trace_rows = qa_min_trace_rows,
+  min_latest_swe_rows = qa_min_latest_swe_rows,
+  required_latest_columns = required_latest_columns,
+  required_trace_columns = required_trace_columns
+)
+
+if (!isTRUE(resolved_refresh$publish)) {
+  stop(
+    "Snow refresh refused before output replacement: ",
+    resolved_refresh$refusal_reason,
+    call. = FALSE
+  )
+}
+
+latest <- resolved_refresh$latest
+wy_trace <- resolved_refresh$trace
+
+message(
+  "Refresh decision: ",
+  resolved_refresh$decision$mode,
+  "; ",
+  paste(
+    paste0(
+      names(resolved_refresh$decision$actions),
+      "=",
+      unname(resolved_refresh$decision$actions)
+    ),
+    collapse = "; "
+  )
+)
+for (provider_id in names(provider_results)) {
+  carried <- resolved_refresh$carry_counts[[provider_id]]
+  message(
+    "Provider publication: ",
+    provider_id,
+    "; action = ",
+    resolved_refresh$decision$actions[[provider_id]],
+    "; fresh trace rows = ",
+    nrow(provider_results[[provider_id]]$trace_rows),
+    "; carried-forward trace rows = ",
+    carried$trace_rows
+  )
+}
+
 # ==== 14. Summary objects ====================================================
 
 status_counts <- latest |>
@@ -1573,9 +1957,37 @@ provider_counts <- latest |>
   dplyr::count(.data$live_provider_key, .data$latest_swe_report_status, name = "n") |>
   dplyr::arrange(.data$live_provider_key, .data$latest_swe_report_status)
 
+cdec_selected_source_counts <- latest |>
+  dplyr::filter(
+    .data$live_provider_key == "cdec_snow_sensor",
+    !is.na(.data$latest_swe_source_class)
+  ) |>
+  dplyr::count(
+    swe_source_class = .data$latest_swe_source_class,
+    swe_source_label = .data$latest_swe_source_label,
+    name = "stations"
+  ) |>
+  dplyr::arrange(.data$swe_source_class, .data$swe_source_label)
+
+cdec_trace_source_counts <- wy_trace |>
+  dplyr::filter(.data$live_provider_key == "cdec_snow_sensor") |>
+  dplyr::count(.data$swe_source_class, .data$swe_source_label, name = "rows") |>
+  dplyr::arrange(.data$swe_source_class, .data$swe_source_label)
+
+build_time_utc <- snow_utc_now()
+build_time_local <- format(
+  lubridate::with_tz(Sys.time(), LOCAL_TZ),
+  "%Y-%m-%d %I:%M %p %Z"
+)
+refresh_metadata <- snow_build_refresh_metadata(
+  provider_results = provider_results,
+  resolved = resolved_refresh,
+  build_time_utc = build_time_utc
+)
+
 summary_obj <- list(
   layer = "Snow pillows / SWE latest",
-  build_time_local = format(lubridate::with_tz(Sys.time(), LOCAL_TZ), "%Y-%m-%d %I:%M %p %Z"),
+  build_time_local = build_time_local,
   build_date_local = as.character(TODAY_LOCAL),
   local_time_zone = LOCAL_TZ,
   current_water_year = CURRENT_WY,
@@ -1626,6 +2038,7 @@ summary_obj <- list(
   awdb_preflight_station_triplets_tested = awdb_preflight$station_triplets_tested,
   awdb_preflight_rows_returned = awdb_preflight$rows_returned,
   awdb_preflight_message = awdb_preflight$message,
+  refresh = refresh_metadata,
   status_counts = status_counts,
   provider_status_counts = provider_counts,
   data_notes = c(
@@ -1634,6 +2047,8 @@ summary_obj <- list(
     paste0("For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to ", CDEC_RAW_TAIL_DAYS, " days or acts as fallback if no #82 is available."),
     paste0("Negative provider SWE values and values above ", MAX_VALID_SWE_IN, " in are treated as invalid/missing and excluded from latest/trace products."),
     paste0("Recent-change deltas are suppressed when the latest SWE observation is older than ", STALE_DAYS, " days."),
+    "When exactly one provider fails retrieval or QA, valid prior rows for that provider are carried forward unchanged while the healthy provider refreshes.",
+    "A partial refresh is refused if all four prior snow outputs cannot be parsed and validated or if valid prior rows for the failed provider are unavailable.",
     "Popup % median values use station/day median SWE denominators from WY1991-WY2020 and the rolling 30 complete water years when support is sufficient and the denominator is greater than zero.",
     "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."
   )
@@ -1651,86 +2066,20 @@ trace_summary_obj <- list(
   stations_with_trace_rows = dplyr::n_distinct(wy_trace$station_uid),
   providers = sort(unique(wy_trace$live_provider_key)),
   cdec_raw_tail_days = CDEC_RAW_TAIL_DAYS,
-  cdec_trace_source_counts = cdec_trace_source_counts
+  cdec_trace_source_counts = cdec_trace_source_counts,
+  refresh = refresh_metadata
 )
 
-# ==== 14.5. Pre-write QA guardrails =========================================
-
-## The live map should not publish a mostly-empty feed when a provider/API or
-## GitHub runner fetch fails.  These checks intentionally run after all fetches
-## and summaries are built, but before any browser-facing files are written.
-DISABLE_QA_GUARDRAILS <- tolower(Sys.getenv(
-  "SNOW_PILLOW_DISABLE_QA_GUARDRAILS",
-  unset = "false"
-)) %in% c("true", "t", "1", "yes", "y")
-
-expected_fetch_days <- max(1L, as.integer(FETCH_END_DATE - FETCH_START_DATE + 1L))
-
-qa_min_snotel_wteq_rows <- suppressWarnings(as.integer(Sys.getenv(
-  "SNOW_PILLOW_QA_MIN_SNOTEL_WTEQ_ROWS",
-  unset = as.character(max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20)))
-)))
-qa_min_snotel_snwd_rows <- suppressWarnings(as.integer(Sys.getenv(
-  "SNOW_PILLOW_QA_MIN_SNOTEL_SNWD_ROWS",
-  unset = as.character(max(10L, floor(nrow(snotel_stations) * expected_fetch_days * 0.20)))
-)))
-qa_min_cdec_swe_rows <- suppressWarnings(as.integer(Sys.getenv(
-  "SNOW_PILLOW_QA_MIN_CDEC_SWE_ROWS",
-  unset = as.character(max(10L, floor(nrow(cdec_stations) * expected_fetch_days * 0.20)))
-)))
-qa_min_trace_rows <- suppressWarnings(as.integer(Sys.getenv(
-  "SNOW_PILLOW_QA_MIN_CURRENT_WY_TRACE_ROWS",
-  unset = as.character(max(10L, floor(nrow(stations) * expected_fetch_days * 0.20)))
-)))
-qa_min_latest_swe_rows <- suppressWarnings(as.integer(Sys.getenv(
-  "SNOW_PILLOW_QA_MIN_LATEST_SWE_ROWS",
-  unset = as.character(if (in_low_snow_reporting_season) 10L else max(200L, floor(nrow(stations) * 0.75)))
-)))
-
-qa_problems <- character()
-
-if (nrow(snotel_stations) > 0 && nrow(snotel_wteq) < qa_min_snotel_wteq_rows) {
-  qa_problems <- c(
-    qa_problems,
-    paste0("SNOTEL WTEQ rows too low: ", nrow(snotel_wteq), " < ", qa_min_snotel_wteq_rows)
-  )
-}
-
-if (nrow(snotel_stations) > 0 && nrow(snotel_snwd) < qa_min_snotel_snwd_rows) {
-  qa_problems <- c(
-    qa_problems,
-    paste0("SNOTEL SNWD rows too low: ", nrow(snotel_snwd), " < ", qa_min_snotel_snwd_rows)
-  )
-}
-
-if (nrow(cdec_stations) > 0 && nrow(cdec_swe_obs) < qa_min_cdec_swe_rows) {
-  qa_problems <- c(
-    qa_problems,
-    paste0("CDEC selected SWE rows too low: ", nrow(cdec_swe_obs), " < ", qa_min_cdec_swe_rows)
-  )
-}
-
-if (nrow(wy_trace) < qa_min_trace_rows) {
-  qa_problems <- c(
-    qa_problems,
-    paste0("Current-WY trace rows too low: ", nrow(wy_trace), " < ", qa_min_trace_rows)
-  )
-}
-
 latest_swe_rows <- sum(!is.na(latest$latest_swe_in))
-if (latest_swe_rows < qa_min_latest_swe_rows) {
-  qa_problems <- c(
-    qa_problems,
-    paste0("Rows with latest SWE too low: ", latest_swe_rows, " < ", qa_min_latest_swe_rows)
-  )
-}
 
 summary_obj$qa_guardrails <- list(
-  disabled = DISABLE_QA_GUARDRAILS,
+  disabled = FALSE,
   expected_fetch_days = expected_fetch_days,
   min_snotel_wteq_rows = qa_min_snotel_wteq_rows,
   min_snotel_snwd_rows = qa_min_snotel_snwd_rows,
   min_cdec_swe_rows = qa_min_cdec_swe_rows,
+  min_snotel_sites = qa_min_snotel_sites,
+  min_cdec_sites = qa_min_cdec_sites,
   min_current_wy_trace_rows = qa_min_trace_rows,
   min_latest_swe_rows = qa_min_latest_swe_rows,
   observed_snotel_wteq_rows = nrow(snotel_wteq),
@@ -1739,60 +2088,53 @@ summary_obj$qa_guardrails <- list(
   observed_cdec_sensor3_rows = nrow(cdec_swe_3),
   observed_cdec_sensor82_rows = nrow(cdec_swe_82),
   observed_current_wy_trace_rows = nrow(wy_trace),
-  observed_latest_swe_rows = latest_swe_rows
+  observed_latest_swe_rows = latest_swe_rows,
+  provider_qa = list(
+    nrcs_snotel = provider_results$nrcs_snotel$qa,
+    cdec_snow_sensor = provider_results$cdec_snow_sensor$qa
+  ),
+  combined_output_qa = resolved_refresh$combined_qa
 )
 
-if (length(qa_problems) > 0) {
+# ==== 15. Stage, validate, and replace outputs ===============================
 
-  qa_msg <- paste0(
-    "Snow pillow latest-feed QA guardrail failed; refusing to write/publish degraded feed files.\n",
-    "Problems:\n  - ", paste(qa_problems, collapse = "\n  - "), "\n\n",
-    "Observed fetch summary:\n",
-    "  SNOTEL WTEQ rows: ", nrow(snotel_wteq), "\n",
-    "  SNOTEL SNWD rows: ", nrow(snotel_snwd), "\n",
-    "  CDEC selected SWE rows: ", nrow(cdec_swe_obs), "\n",
-    "  CDEC #3 rows: ", nrow(cdec_swe_3), "\n",
-    "  CDEC #82 rows: ", nrow(cdec_swe_82), "\n",
-    "  Current-WY trace rows: ", nrow(wy_trace), "\n",
-    "  Rows with latest SWE: ", latest_swe_rows, "\n",
-    "  Invalid high SWE rows excluded: ", invalid_high_swe_rows, " (threshold > ", MAX_VALID_SWE_IN, " in)\n",
-    "  Stations: ", nrow(stations), "\n",
-    "  Expected fetch days: ", expected_fetch_days, "\n\n",
-    "If this is an intentional emergency override, set ",
-    "SNOW_PILLOW_DISABLE_QA_GUARDRAILS=true for a one-off run."
-  )
+snow_stage_and_promote_outputs(
+  final_paths = snow_output_paths,
+  write_staged = function(staged_paths) {
+    write_point_geojson(latest, staged_paths[["latest_geojson"]])
 
-  if (DISABLE_QA_GUARDRAILS) {
-    warning(qa_msg, call. = FALSE)
-  } else {
-    stop(qa_msg, call. = FALSE)
+    jsonlite::write_json(
+      summary_obj,
+      path = staged_paths[["latest_summary"]],
+      auto_unbox = TRUE,
+      na = "null",
+      null = "null",
+      pretty = TRUE,
+      digits = 8
+    )
+
+    readr::write_csv(wy_trace, staged_paths[["trace_csv"]])
+
+    jsonlite::write_json(
+      trace_summary_obj,
+      path = staged_paths[["trace_summary"]],
+      auto_unbox = TRUE,
+      na = "null",
+      null = "null",
+      pretty = TRUE,
+      digits = 8
+    )
+  },
+  validate_staged = function(staged_paths) {
+    snow_validate_prior_outputs(
+      paths = staged_paths,
+      stations = stations,
+      current_water_year = CURRENT_WY,
+      max_valid_swe_in = MAX_VALID_SWE_IN,
+      required_latest_columns = required_latest_columns,
+      required_trace_columns = required_trace_columns
+    )
   }
-}
-
-# ==== 15. Write outputs ======================================================
-
-write_point_geojson(latest, OUT_LATEST_GEOJSON)
-
-jsonlite::write_json(
-  summary_obj,
-  path = OUT_LATEST_SUMMARY,
-  auto_unbox = TRUE,
-  na = "null",
-  null = "null",
-  pretty = TRUE,
-  digits = 8
-)
-
-readr::write_csv(wy_trace, OUT_WY_TRACE_CSV)
-
-jsonlite::write_json(
-  trace_summary_obj,
-  path = OUT_WY_TRACE_SUMRY,
-  auto_unbox = TRUE,
-  na = "null",
-  null = "null",
-  pretty = TRUE,
-  digits = 8
 )
 
 # ==== 16. Console QA =========================================================
@@ -1835,4 +2177,3 @@ message("  ", OUT_WY_TRACE_CSV)
 message("  ", OUT_WY_TRACE_SUMRY)
 
 message("\nDone: snow pillow / SWE latest feed build complete.")
-

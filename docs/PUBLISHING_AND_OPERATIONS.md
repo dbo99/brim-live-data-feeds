@@ -152,7 +152,10 @@ The repository has product-specific, not universal, QA:
   proximity.
 - NBM validates field sets, grid coverage, masks and retained point counts.
 - SCAN validates endpoint access, canary retrieval and station coverage.
-- Snow validates provider access and output/trace coverage.
+- Snow attempts AWDB and CDEC independently; validates provider-specific
+  row/site coverage, required fields, dates, SWE bounds, source selection and
+  duplicates; validates any required prior four-file product set; and reruns
+  combined latest/trace QA before replacement.
 - Groundwater validates index, API and output counts.
 - Streamflow validates only its static station index; the workflow's declared
   minimum current-discharge threshold is not implemented by the script.
@@ -165,6 +168,8 @@ The final two gaps mean "workflow success" is not universally equivalent to
 | Failure point | Current remote behavior | Prior official product |
 |---|---|---|
 | Upstream retrieval stops the script | No commit step | Remains in Git and Pages |
+| Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
+| Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |
 | Transformation error stops the script | No commit step | Remains |
 | Implemented QA gate fails | No commit step | Remains |
 | Wind QA artifact upload fails | Later default-success commit step is skipped | Remains |
@@ -182,8 +187,12 @@ At the remote Git-ref boundary, one successful commit updates all staged paths
 together. A rejected push updates none of them.
 
 The scripts do not universally construct complete product sets in a separate
-staging directory and atomically rename them into place. A local manual run can
-therefore alter final `docs/data` paths before later processing fails.
+staging directory and atomically rename them into place. The snow producer is a
+product-specific exception: it constructs and validates all four prospective
+outputs in a same-directory staging area, preserves backups, and restores
+already-promoted members if a later replacement fails. The filesystem still
+does not provide one atomic four-path rename. Other local manual runs can alter
+final `docs/data` paths before later processing fails.
 
 Safe local reproduction uses:
 
@@ -237,7 +246,10 @@ Cause classifications:
 
 - Snow run `29933106803` timed out on all three NRCS/AWDB preflight stations
   and stopped before the full fetch. A later comparable run succeeded; the
-  prior official product remained during the failed run.
+  prior official product remained during the failed run. The snow producer now
+  continues to the CDEC attempt and can publish a partial refresh only when
+  CDEC passes and the prior AWDB latest/trace rows and all four prior product
+  files validate.
 - NBM run `29891617635` built seven entries and uploaded QA, then hit conflicts
   while rebasing a stale event-SHA product commit. PR #1 replaced rebase
   publication with latest-selected-branch checkout and reject-on-advance push.

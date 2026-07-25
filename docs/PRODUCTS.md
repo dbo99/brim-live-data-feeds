@@ -407,12 +407,28 @@ ownership.
   stale, and more than 21 days as very stale.
 - **Fallback:** CDEC adjusted SWE element 82 is preferred; element 3 may fill a
   limited recent tail or act as current-WY fallback. Historical context remains
-  conceptually distinct.
-- **QA/empty policy:** Provider preflights, retry logic, minimum provider and
-  output counts, and latest/trace checks stop unusable publication.
+  conceptually distinct. At the provider-family level, if exactly one of AWDB
+  or CDEC fails retrieval or provider QA, the producer refreshes the healthy
+  provider and carries forward the failed provider's validated prior latest and
+  trace rows unchanged.
+- **QA/empty policy:** AWDB and CDEC are attempted and validated independently.
+  Provider row/site minimums, required fields, identifiers, dates, SWE bounds,
+  AWDB depth coverage, CDEC source selection, duplicate protection, and combined
+  latest/trace checks stop unusable publication. Both-provider failure, or one
+  provider failure without a valid four-file prior product set and valid prior
+  rows for that provider, stops without replacing any output.
+- **Refresh metadata and timestamps:** The latest and trace summaries contain an
+  additive `refresh` object describing full/partial mode, provider fetch and QA
+  state, refreshed/carried-forward actions and row/site counts. Carried-forward
+  station and trace rows retain their prior observation, source, value and
+  row-level build/fetch fields; they are not restamped as new observations.
+- **Local replacement:** All four writer-managed outputs are constructed and
+  validated in a staging directory before complete-set replacement is attempted.
 - **Attribution:** USDA NRCS and California DWR/CDEC.
 - **Known gaps:** Split static-context ownership, no manifest/schema version,
-  and no common provenance/checksum envelope.
+  no common provenance/checksum envelope, and no filesystem primitive that can
+  atomically rename four paths in one operation; replacement retains backups and
+  restores already-promoted members if a later promotion fails.
 
 ## Nonproduction workflows
 
