@@ -1,0 +1,407 @@
+# Workflow and product standards
+
+This document separates current implemented conventions from recommended
+future standards. A recommendation here is not an implemented repository
+control and does not authorize a workflow or product change.
+
+Baseline audited: 2026-07-24; the audited commit is recorded in
+[README.md](README.md).
+
+## Status labels
+
+- **Implemented** — verified in current workflow/script/product source.
+- **Product-specific** — intentionally differs by family and must be documented.
+- **Recommended** — desirable future work requiring its own review.
+- **Gap** — current behavior does not meet the proposed standard.
+
+## Workflow inventory
+
+| Workflow file | Display name | Trigger/cadence UTC | Entry point | Publication |
+|---|---|---|---|---|
+| `.github/workflows/build-asos-awos-wind-latest.yml` | Build ASOS/METAR observed wind latest | Manual; :17/:42 hourly | `scripts/build_asos_awos_wind_latest.R` | Three ASOS wind files |
+| `.github/workflows/build-cdec-reservoir-feed.yml` | Build CDEC reservoir latest GeoJSON | Manual; :29 every 3h | `scripts/build_cdec_reservoir_latest.R` | CDEC GeoJSON/summary |
+| `.github/workflows/build-cocorahs-daily-precip-feed.yml` | Build CoCoRaHS daily precip GeoJSON | Manual; 00:37/08:37/16:37 | `scripts/build_cocorahs_daily_precip_latest.R` | CA/CONUS products |
+| `.github/workflows/build-delta-ops-daily-summary.yml` | Build Delta Ops daily summary GeoJSON | Manual; five daily attempts | `scripts/build_delta_ops_daily_summary.R` | Four Delta files |
+| `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
+| `.github/workflows/build-hrrr-wind-latest.yml` | Build HRRR wind latest | Manual; hourly :33 | `scripts/build_hrrr_wind_latest.R` | Rolling set/manifest/compatibility |
+| `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
+| `.github/workflows/build-scan-soil-moisture-latest.yml` | Build SCAN soil moisture latest feed | Manual; daily 14:30 | `scripts/build_scan_soil_moisture_latest.R` | Latest/trace/style |
+| `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
+| `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
+| `.github/workflows/build-usgs-streamflow-latest-ca.yml` | Build USGS CA streamflow latest GeoJSON | Manual; :23 every 4h | `scripts/build_usgs_streamflow_latest_ca.R` | GeoJSON/summary |
+| `.github/workflows/build-hrrr-wind-sandbox.yml` | Build HRRR wind sandbox | Manual | `scripts/build_hrrr_wind_sandbox.R` | Artifact only |
+| `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
+| `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
+
+GitHub's dynamic `pages build and deployment` workflow is a fifteenth active
+workflow but is not source-controlled in `.github/workflows`.
+
+## Names and entry points
+
+**Implemented**
+
+- Workflow filenames describe one product or diagnostic responsibility.
+- Display names identify product and action.
+- Writers call one principal R entry script.
+- Publication paths are explicit in each workflow's `git add`.
+
+**Recommended**
+
+- Preserve stable workflow filenames because dispatch APIs and operational
+  references use them.
+- Keep one public product family per writer unless files form one atomic
+  contract.
+- If producer logic becomes shared, use a reviewed helper rather than copying
+  retrieval/publication logic among scripts.
+- Document renamed workflow/script pairs in product and operations docs in the
+  same change.
+
+## Triggers and manual inputs
+
+**Implemented**
+
+- Eleven writers have schedules and `workflow_dispatch`.
+- Writers do not run on pull requests.
+- HRRR sandbox is manual only.
+- Groundwater preview accepts `lookback_days`.
+- Delta manual dispatch bypasses the scheduled same-date precheck.
+
+**Gaps**
+
+- Production manual dispatch has no confirmation/production-target input.
+- Writers can be manually targeted at a feature branch and write ordinary
+  product paths on that branch.
+- There is no GitHub Environment approval for official publication.
+
+**Recommended**
+
+- Keep production dispatch explicit.
+- If manual modes are added, distinguish `artifact`, `feature_branch`, and
+  `official` behavior unambiguously.
+- Never default a new test input to official publication.
+
+## Permissions
+
+**Implemented**
+
+- Writers request `contents: write`.
+- Wind watchdog requests `contents: read` to inspect wind manifests/state and
+  `actions: write` to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the
+  selected ref; it does not itself commit or publish repository data.
+- Sandbox and preview request `contents: read`.
+
+**Gap**
+
+The build and publication steps share the writer's write-capable token; there
+is no separate least-privilege build job.
+
+**Recommended**
+
+- Request only permissions required by the job.
+- Separate untrusted retrieval/build work from a narrow publisher when the
+  complexity and risk justify it.
+- Do not add secret or OIDC permissions without a documented identity and
+  threat-model review.
+
+## Concurrency and publication ref
+
+**Implemented**
+
+- Writers use `live-data-feed-writes-${{ github.ref }}`,
+  `cancel-in-progress: false`, and `queue: max`.
+- Writers check out the current selected ref and push non-force to the same
+  branch.
+- Unexpected branch advancement fails the run.
+
+**Recommended**
+
+- Preserve one serialization group for writers that share a branch.
+- Include the ref in any new nonproduction group.
+- Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
+  feature-to-main publication.
+- Re-evaluate queue behavior when schedules or runtime increase materially.
+
+## Runner and action versions
+
+**Implemented**
+
+- Jobs use `ubuntu-latest`.
+- Checkout is `actions/checkout@v6`.
+- R actions are `r-lib/actions/*@v2`.
+- Micromamba is `mamba-org/setup-micromamba@v3`.
+- Every upload reference is `actions/upload-artifact@v7`.
+
+**Gaps**
+
+- Action major tags are mutable references rather than commit SHAs.
+- `ubuntu-latest`, R `release`, apt packages and most R packages are not locked
+  to one reproducible environment.
+- HRRR sandbox and groundwater preview have not yet produced post-PR #4 runtime
+  evidence for their updated artifact action.
+
+**Recommended**
+
+- Review upstream release notes, runner minimums and behavior changes before an
+  action major update.
+- Preserve artifact name, path, archive/compression, retention and no-file
+  behavior unless the product of the change is intentional.
+- Consider action SHA pinning and an R dependency lock in a separate,
+  operationally tested initiative.
+
+## Dependency setup
+
+**Implemented**
+
+- R producers use workflow-declared package sets.
+- HRRR/NBM use wgrib2 `3.8.*` through micromamba.
+- Delta installs Poppler for PDF text extraction.
+- GFS/HRRR install geospatial system libraries.
+
+**Recommended**
+
+- Keep workflow packages synchronized with actual script namespaces.
+- Do not upgrade a package to diagnose an upstream/network failure.
+- Record system/runtime changes in the pull request and risk history.
+- Test the exact producer whose dependency surface changed.
+
+## Upstream retrieval
+
+**Implemented**
+
+- Scripts declare upstream endpoints and request timeouts.
+- Most station/API producers implement bounded retries or chunking.
+- Wind model scripts use model-cycle/lead selection.
+- Source-specific index/lookup CSVs are tracked under `data/input`.
+
+**Recommended**
+
+- Use explicit user agents and bounded connect/read timeouts.
+- Bound retries and include backoff/pause appropriate to the provider.
+- Treat pagination completion, tile completion and required model fields as QA.
+- Preserve observation/source timestamps independently from retrieval time.
+- Never place credentials in URLs or logs.
+
+## Temporary files and local output
+
+**Implemented**
+
+- Wind producers create local `data/cache`, `debug` and `qa` material.
+- Model tools use working files before writing JSON/GeoJSON.
+- Official product paths are directly writable by several scripts.
+
+**Gap**
+
+Complete product sets are not universally built under an isolated staging
+directory and atomically promoted locally.
+
+**Recommended**
+
+- Build to a unique temporary directory on the same filesystem.
+- Validate every member of the product set.
+- Rename/promote only after all checks pass where practical.
+- Keep cache/debug/QA paths outside the staged product allowlist.
+- Add a reviewed ignore policy in a separate repository-hygiene change.
+
+## Determinism
+
+**Implemented**
+
+- Producers generally normalize types, deduplicate and sort before writing.
+- Rolling manifests use explicit entry metadata.
+- Timestamps and live observations necessarily change output bytes.
+
+**Recommended**
+
+- Use stable ordering for features, rows, fields and manifest entries.
+- Keep selection tie-breakers explicit.
+- Do not describe a time-varying product as byte-reproducible.
+- Separate deterministic transformation tests from live retrieval tests.
+
+## Empty and partial products
+
+**Implemented**
+
+- Several producers enforce minimum counts and source-specific validation.
+- Failed scripts do not reach Git publication.
+
+**Gaps**
+
+- CoCoRaHS lacks a contractual minimum and strong page-completion gate.
+- GFS/HRRR can represent partial target coverage.
+- Streamflow's workflow-declared current-value minimum is not read by the
+  producer.
+
+**Recommended**
+
+- Distinguish a legitimate empty domain/time period from a failed retrieval.
+- Validate required pages/tiles/fields and record optional failures separately.
+- Gate publication on consumer-usable records, not merely static features.
+- Never lower a threshold merely to make an incident run green.
+
+## Geospatial products
+
+**Implemented**
+
+- Point products use GeoJSON longitude/latitude.
+- GFS/HRRR headers describe their longitude/latitude grids.
+- NBM masks offshore/out-of-domain points.
+- Private BRIM analytical processing may use another CRS before exported
+  producer inputs arrive here.
+
+**Recommended**
+
+- Declare coordinate reference and axis order in the future common envelope.
+- Validate latitude/longitude ranges and geometry type.
+- Document clipping/masks and retain provider/source domain meaning.
+- Never silently swap coordinate order or longitude convention.
+
+## Units and missing values
+
+**Implemented**
+
+- Product-specific field names often encode units.
+- Source values and nulls are retained where possible.
+- BRIM performs some display conversion, especially m/s to mph.
+
+**Recommended**
+
+- Declare canonical machine units and user display units.
+- Preserve zero as a valid value when the source defines it.
+- Serialize missing numeric values as JSON null, not text placeholders.
+- Do not infer vertical datum, storage, flow or uncertainty.
+
+## Timestamps and freshness
+
+**Implemented**
+
+- Machine times are normally UTC.
+- User-facing local time is normally Pacific.
+- Wind products separate model cycle and valid time.
+- Station products carry observation time/age where available.
+
+**Gaps**
+
+- Retrieval, build and publication times are inconsistent or absent across
+  product families.
+- Summary field names vary.
+- Only the four wind manifests express some machine freshness metadata.
+
+**Recommended**
+
+- Use separate nullable fields for retrieval, observation, initialization,
+  valid, build and publication time.
+- Include timezone/offset in serialized timestamps.
+- Define stale thresholds by product semantics, not build cadence alone.
+- Do not call a successfully fetched stale observation current.
+
+## Manifests, schemas and checksums
+
+**Implemented**
+
+- ASOS, GFS, HRRR and NBM have product manifests.
+- Other families have ad hoc summaries.
+
+**Gaps**
+
+- Seven families lack formal manifests.
+- Manifest envelopes and versions differ.
+- No JSON Schemas or product checksums exist.
+- Producer workflow/commit and publication time are absent.
+
+**Recommended**
+
+- Introduce an additive common envelope rather than replacing strong
+  product-specific entries.
+- Version schemas independently from producer releases.
+- Validate manifests and referenced paths before publication.
+- Add checksums and producer provenance during a coordinated migration.
+
+## QA artifacts and logs
+
+**Implemented**
+
+- ASOS/GFS use default artifact retention.
+- HRRR/NBM and HRRR sandbox use 14 days.
+- Groundwater preview uses 30 days.
+- Artifacts may contain QA packages and debug logs.
+
+**Recommended**
+
+- Keep artifacts small, sanitized and named by stable product family.
+- Never include secret values, auth headers, signed URLs or nonpublic payloads.
+- Treat artifact absence separately from product QA where appropriate.
+- Record artifact ID/retention in incident evidence.
+
+## Official versus test paths
+
+**Implemented**
+
+- Official products live under `docs/data`.
+- HRRR sandbox and groundwater preview do not publish there.
+- Feature-branch writers can change ordinary product paths only on that branch;
+  Pages remains `main:/docs`.
+
+**Gap**
+
+Production writers lack a dedicated artifact-only mode or test prefix.
+
+**Recommended**
+
+- Use artifacts, an explicit sandbox directory or branch-only evidence for
+  tests.
+- Never configure Pages or another production host to publish a test branch.
+- Verify the official path/bytes remained unchanged during nonproduction tests.
+
+## Consumer compatibility
+
+**Implemented**
+
+- Private BRIM consumes paths through a central base URL registry.
+- Wind consumers are manifest-driven except ASOS, which consumes the latest
+  GeoJSON with summary/manifest metadata.
+- GFS/HRRR compatibility latest files remain tracked.
+
+**Recommended**
+
+- Follow the rollout in [BRIM_CONSUMER_CONTRACT.md](BRIM_CONSUMER_CONTRACT.md).
+- Maintain compatibility outputs only with explicit owner and retirement plan.
+- Exercise stale, missing, malformed and old/new cases before a breaking
+  switch.
+
+## Performance and cost
+
+Current pressure comes from:
+
+- large groundwater/streamflow and CONUS precipitation payloads;
+- rolling GFS/HRRR/NBM snapshots;
+- high-frequency generated commits;
+- repeated R/system dependency setup;
+- Pages build and artifact storage.
+
+Recommended measurement:
+
+- retrieval and total run time;
+- row/feature/entry count;
+- individual and total payload bytes;
+- artifact bytes and retention;
+- Git history growth;
+- browser parse/render cost in private BRIM.
+
+Payload budgets must be evidence-based and product-specific. None is declared
+by this document.
+
+## Validation for workflow or producer changes
+
+At minimum:
+
+1. Parse changed YAML and R.
+2. Run `git diff --check`.
+3. Confirm trigger, permission, concurrency and publication ref.
+4. Enumerate exact staged product paths.
+5. Validate empty/partial/retry behavior.
+6. Validate output JSON/CSV and manifest references.
+7. Inspect secret/log/artifact exposure.
+8. Use an artifact, sandbox or feature branch for nonproduction evidence.
+9. Prove official `main` and hosted paths were not changed by the test.
+10. Test private BRIM when path/schema/time/unit/fallback behavior changed.
+11. Record remaining uncertainty and obtain explicit publication approval.

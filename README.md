@@ -1,45 +1,110 @@
-# BRIM live reservoir feed prototype
+# BRIM Live Data Feeds
 
-This small repository builds a near-live/static GeoJSON feed for BRIM reservoir storage.
+This repository builds and publishes the public, static live-data feeds consumed by
+BRIM. Scheduled GitHub Actions retrieve public observations and forecasts, run
+product-specific R builders, validate accepted outputs, and commit them under
+`docs/data/`. GitHub Pages serves the `docs/` directory from `main`.
 
-The intended workflow is:
+The repository is a producer and publication boundary. It is intentionally
+separate from the private BRIM application so feed refreshes can be operated,
+reviewed, and rolled back without coupling them to the interface code.
 
-1. Export the BRIM CDEC reservoir station index to `data/input/cdec_reservoir_station_index.csv`.
-2. Run `scripts/build_cdec_reservoir_latest.R` locally and confirm it creates:
-   - `docs/data/cdec_reservoir_latest.geojson`
-   - `docs/data/cdec_reservoir_latest_summary.json`
-3. Push the repository to GitHub.
-4. Enable GitHub Pages from the `docs/` folder on the `main` branch.
-5. Enable the included GitHub Actions workflow so the GeoJSON is refreshed on a schedule.
+## Production products
 
-This repository is intentionally separate from the full BRIM project so live-feed testing does not risk the main standalone Leaflet build.
+The current production system contains eleven product families:
 
-## Current feed
+1. CDEC reservoir storage
+2. CoCoRaHS daily precipitation
+3. Delta operations daily summary
+4. GFS surface wind forecast
+5. HRRR surface wind forecast
+6. NBM wind guidance
+7. ASOS/AWOS observed wind
+8. SCAN soil moisture
+9. Snow pillow snow-water equivalent
+10. USGS California groundwater
+11. USGS California streamflow
 
-`docs/data/cdec_reservoir_latest.geojson`
+The authoritative paths, workflows, scripts, formats, schedules, time/unit
+semantics, QA gates, and known gaps are in
+[docs/PRODUCTS.md](docs/PRODUCTS.md).
 
-Near-live/provisional CDEC reservoir storage, joined to the BRIM CDEC reservoir station index. File names use `latest`, not `live`, because the feed is scheduled/static and each feature carries observation/build timestamps for staleness checks.
+The HRRR sandbox, wind watchdog, and groundwater candidate preview support
+operations but are not separate production products.
 
-## Static input
+## How publication works
 
-`data/input/cdec_reservoir_station_index.csv`
+Each production writer:
 
-This file is exported from BRIM and should be committed to the repository so GitHub Actions can build the feed without access to the full local BRIM project.
+- Checks out the selected Git reference.
+- Runs one product-specific builder.
+- Allows only its declared output paths.
+- Commits accepted artifacts with a product-specific generated-data message.
+- Pushes normally, without force, back to the selected reference.
+- Shares a reference-scoped, non-cancelling concurrency group with other writers.
 
-## Future compatible feed names
+The official Pages source is `main/docs`. A manual writer run on a feature branch
+changes that branch's ordinary product paths; it does not publish the official
+feed. When a builder rejects a response before commit, the previous committed
+files remain the last-known-good publication.
 
-The same pattern can later support related BRIM feeds:
+See [docs/PUBLISHING_AND_OPERATIONS.md](docs/PUBLISHING_AND_OPERATIONS.md) for
+dispatch, incident, rollback, backup, and recovery procedures.
 
-- `docs/data/reservoirs/cdec_reservoir_storage_latest.geojson`
-- `docs/data/snow/snow_pillow_swe_latest.geojson`
-- `docs/data/soil/scan_soil_moisture_latest.geojson`
+## Use the feeds
 
-For now, the active output remains `docs/data/cdec_reservoir_latest.geojson` to avoid unnecessary path churn while the reservoir feed is being proven.
+Public consumers should use only documented paths and semantics. Rolling wind
+forecast sets must be selected through their manifests rather than by listing
+directories. Consumers should tolerate additive fields, enforce product-specific
+freshness, and preserve usable prior state where the contract defines a fallback.
 
-## Backlog notes
+Read [docs/BRIM_CONSUMER_CONTRACT.md](docs/BRIM_CONSUMER_CONTRACT.md) for the
+producer-to-consumer path crosswalk, compatibility policy, and change sequence.
 
-Possible later enrichment:
+## Develop safely
 
-- add static `capacity_af` and `pct_capacity` using a trusted static capacity lookup;
-- add a USACE California reservoir plots link for reservoirs represented on the USACE plots page;
-- compute `storage_change_24h_af`, and later possibly 3-day and 10-day change, once the latest-feed workflow is stable.
+Builders write tracked files, and several write final paths directly. Reproduce a
+build in an isolated working copy or on a deliberate feature branch, inspect every
+changed path, and never treat a successful process exit as sufficient product
+validation.
+
+- [BUILD.md](BUILD.md) — toolchains, builder entry points, local reproduction,
+  inspection, and failure evidence
+- [CONTRIBUTING.md](CONTRIBUTING.md) — change classes, planning, validation, and
+  review expectations
+- [SECURITY.md](SECURITY.md) — public-repository, workflow-permission, credential,
+  dependency, and incident rules
+- [CODEX_HANDOFF.md](CODEX_HANDOFF.md) — safe orientation and routing for a new
+  coding-agent session
+
+Read the nearest `AGENTS.md` before editing. Root instructions apply everywhere;
+`.github/workflows/AGENTS.md` and `scripts/AGENTS.md` add scoped requirements.
+
+## Documentation
+
+[docs/README.md](docs/README.md) is the documentation map and authority guide. The
+four technical sources of truth are:
+
+- [Product catalog](docs/PRODUCTS.md)
+- [BRIM consumer contract](docs/BRIM_CONSUMER_CONTRACT.md)
+- [Publishing and operations](docs/PUBLISHING_AND_OPERATIONS.md)
+- [Workflow and product standards](docs/WORKFLOW_AND_PRODUCT_STANDARDS.md)
+
+Architecture and the risk register interpret those sources without replacing
+them:
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development history and risks](docs/DEVELOPMENT_HISTORY_AND_RISKS.md)
+
+## Current limitations
+
+This repository does not yet have a common schema registry, uniform manifest
+envelope, cross-product completeness policy, or consistently atomic local output
+replacement. Product-specific checks remain authoritative. The streamflow
+minimum-latest-value configuration and implementation also require alignment
+before its count gate can be relied on as a live-data completeness guarantee.
+
+At the documentation baseline, `main` had no observed branch protection or
+ruleset, and the repository had no license file. These are documented risks, not
+implicit permissions or assurances. See the
+[risk register](docs/DEVELOPMENT_HISTORY_AND_RISKS.md).
