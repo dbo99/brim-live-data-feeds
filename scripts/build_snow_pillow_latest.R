@@ -1,4 +1,10 @@
 # ==== build_snow_pillow_latest.R ============================================
+## SWE027:
+##   - Preserve required GeoJSON property keys that serialize as null for every
+##     feature, using the prospective in-memory column types during validation.
+##   - Keep prior carry-forward validation distinct from staged-output
+##     serialization and combined-QA validation.
+##
 ## SWE026:
 ##   - Attempt AWDB/SNOTEL and CDEC independently.
 ##   - When exactly one provider fails retrieval or provider QA, validate the
@@ -1946,7 +1952,8 @@ if (identical(initial_refresh_decision$mode, "partial")) {
     current_water_year = CURRENT_WY,
     max_valid_swe_in = MAX_VALID_SWE_IN,
     required_latest_columns = required_latest_columns,
-    required_trace_columns = required_trace_columns
+    required_trace_columns = required_trace_columns,
+    latest_prototype = latest
   )
 
   if (!isTRUE(prior_outputs$valid)) {
@@ -2193,13 +2200,16 @@ snow_stage_and_promote_outputs(
     )
   },
   validate_staged = function(staged_paths) {
-    snow_validate_prior_outputs(
+    snow_validate_staged_outputs(
       paths = staged_paths,
       stations = stations,
       current_water_year = CURRENT_WY,
       max_valid_swe_in = MAX_VALID_SWE_IN,
+      min_trace_rows = qa_min_trace_rows,
+      min_latest_swe_rows = qa_min_latest_swe_rows,
       required_latest_columns = required_latest_columns,
-      required_trace_columns = required_trace_columns
+      required_trace_columns = required_trace_columns,
+      latest_prototype = latest
     )
   }
 )

@@ -418,33 +418,178 @@ snow_decide_refresh <- function(provider_results) {
   )
 }
 
-snow_read_geojson_properties <- function(path) {
+snow_serialized_column_kind <- function(x) {
+  if (inherits(x, c("Date", "POSIXct", "POSIXlt")) || is.factor(x) || is.character(x)) {
+    return("character")
+  }
+  if (is.logical(x)) {
+    return("logical")
+  }
+  if (is.integer(x)) {
+    return("integer")
+  }
+  if (is.numeric(x)) {
+    return("numeric")
+  }
+  typeof(x)
+}
+
+snow_typed_missing_value <- function(prototype = NULL) {
+  if (is.null(prototype)) {
+    return(NA)
+  }
+
+  switch(
+    snow_serialized_column_kind(prototype),
+    character = NA_character_,
+    logical = NA,
+    integer = NA_integer_,
+    numeric = NA_real_,
+    NA
+  )
+}
+
+snow_serialized_type_is_compatible <- function(value, prototype) {
+  expected_kind <- snow_serialized_column_kind(prototype)
+
+  switch(
+    expected_kind,
+    character = is.character(value),
+    logical = is.logical(value),
+    integer = is.integer(value) || (
+      is.numeric(value) &&
+        all(is.na(value) | (is.finite(value) & value == floor(value)))
+    ),
+    numeric = is.numeric(value),
+    identical(typeof(value), typeof(prototype))
+  )
+}
+
+snow_read_geojson_properties <- function(path,
+                                         required_property_names = NULL,
+                                         property_prototype = NULL,
+                                         label = "Latest GeoJSON") {
   obj <- jsonlite::fromJSON(path, simplifyVector = FALSE)
   if (!is.list(obj) || !identical(obj$type, "FeatureCollection") || !is.list(obj$features)) {
-    stop("Latest GeoJSON is not a FeatureCollection: ", path)
+    stop(label, " is not a FeatureCollection: ", path)
   }
 
   if (length(obj$features) == 0L) {
-    stop("Latest GeoJSON has no features: ", path)
+    stop(label, " has no features: ", path)
   }
 
-  rows <- lapply(obj$features, function(feature) {
+  if (!is.null(property_prototype) && !is.data.frame(property_prototype)) {
+    stop(label, " property prototype is not a data frame.")
+  }
+
+  if (is.null(required_property_names)) {
+    required_property_names <- if (!is.null(property_prototype)) {
+      names(property_prototype)
+    } else {
+      unique(unlist(lapply(obj$features, function(feature) names(feature$properties))))
+    }
+  }
+  required_property_names <- unique(as.character(required_property_names))
+  required_property_names <- required_property_names[
+    !is.na(required_property_names) & nzchar(required_property_names)
+  ]
+
+  rows <- lapply(seq_along(obj$features), function(feature_index) {
+    feature <- obj$features[[feature_index]]
     if (!is.list(feature) ||
         !identical(feature$type, "Feature") ||
         !is.list(feature$properties) ||
         !is.list(feature$geometry) ||
         !identical(feature$geometry$type, "Point") ||
         length(feature$geometry$coordinates) != 2L) {
-      stop("Latest GeoJSON contains an invalid point feature: ", path)
+      stop(label, " contains an invalid point feature at index ", feature_index, ": ", path)
     }
 
     props <- feature$properties
+    missing_properties <- setdiff(required_property_names, names(props))
+    if (length(missing_properties) > 0L) {
+      station_uid <- props$station_uid
+      station_label <- if (is.null(station_uid) ||
+          length(station_uid) == 0L ||
+          is.na(station_uid[[1]]) ||
+          !nzchar(as.character(station_uid[[1]]))) {
+        ""
+      } else {
+        paste0(" (station_uid=", as.character(station_uid[[1]]), ")")
+      }
+      stop(
+        label,
+        " feature ",
+        feature_index,
+        station_label,
+        " is missing required properties: ",
+        paste(missing_properties, collapse = ", ")
+      )
+    }
+
+    for (property_name in required_property_names) {
+      if (is.null(props[[property_name]])) {
+        prototype <- if (!is.null(property_prototype) &&
+            property_name %in% names(property_prototype)) {
+          property_prototype[[property_name]]
+        } else {
+          NULL
+        }
+        props[property_name] <- list(snow_typed_missing_value(prototype))
+      }
+    }
+
     props$.geometry_longitude <- suppressWarnings(as.numeric(feature$geometry$coordinates[[1]]))
     props$.geometry_latitude <- suppressWarnings(as.numeric(feature$geometry$coordinates[[2]]))
     props
   })
 
-  dplyr::bind_rows(rows)
+  out <- dplyr::bind_rows(rows)
+
+  if (!is.null(property_prototype)) {
+    prototype_names <- intersect(required_property_names, names(property_prototype))
+    incompatible <- prototype_names[
+      !vapply(
+        prototype_names,
+        function(property_name) {
+          snow_serialized_type_is_compatible(
+            out[[property_name]],
+            property_prototype[[property_name]]
+          )
+        },
+        logical(1)
+      )
+    ]
+    if (length(incompatible) > 0L) {
+      type_details <- vapply(
+        incompatible,
+        function(property_name) {
+          paste0(
+            property_name,
+            " expected ",
+            snow_serialized_column_kind(property_prototype[[property_name]]),
+            " but parsed ",
+            snow_serialized_column_kind(out[[property_name]])
+          )
+        },
+        character(1)
+      )
+      stop(
+        label,
+        " has incompatible property types: ",
+        paste(type_details, collapse = "; ")
+      )
+    }
+  }
+
+  geometry_names <- c(".geometry_longitude", ".geometry_latitude")
+  extra_names <- setdiff(names(out), c(required_property_names, geometry_names))
+  out |>
+    dplyr::select(dplyr::all_of(c(
+      required_property_names,
+      extra_names,
+      geometry_names
+    )))
 }
 
 snow_read_json_object <- function(path, label) {
@@ -455,12 +600,17 @@ snow_read_json_object <- function(path, label) {
   obj
 }
 
-snow_validate_prior_outputs <- function(paths,
-                                        stations,
-                                        current_water_year,
-                                        max_valid_swe_in,
-                                        required_latest_columns,
-                                        required_trace_columns) {
+# Shared parsing and structural checks for the two validation purposes below.
+snow_validate_serialized_output_set <- function(paths,
+                                                stations,
+                                                current_water_year,
+                                                max_valid_swe_in,
+                                                required_latest_columns,
+                                                required_trace_columns,
+                                                latest_prototype = NULL,
+                                                purpose = c("prior", "staged")) {
+  purpose <- match.arg(purpose)
+  purpose_title <- if (identical(purpose, "prior")) "Prior" else "Staged"
   required_path_names <- c("latest_geojson", "latest_summary", "trace_csv", "trace_summary")
   problems <- character()
 
@@ -468,7 +618,8 @@ snow_validate_prior_outputs <- function(paths,
     return(list(
       valid = FALSE,
       problems = paste0(
-        "prior output path map is missing: ",
+        purpose,
+        " output path map is missing: ",
         paste(setdiff(required_path_names, names(paths)), collapse = ", ")
       )
     ))
@@ -478,16 +629,32 @@ snow_validate_prior_outputs <- function(paths,
   if (length(missing_files) > 0L) {
     return(list(
       valid = FALSE,
-      problems = paste0("required prior output is missing: ", paste(missing_files, collapse = ", "))
+      problems = paste0(
+        "required ",
+        purpose,
+        " output is missing: ",
+        paste(missing_files, collapse = ", ")
+      )
     ))
   }
 
   parsed <- tryCatch(
     list(
-      latest = snow_read_geojson_properties(paths[["latest_geojson"]]),
-      latest_summary = snow_read_json_object(paths[["latest_summary"]], "Latest summary"),
+      latest = snow_read_geojson_properties(
+        paths[["latest_geojson"]],
+        required_property_names = required_latest_columns,
+        property_prototype = latest_prototype,
+        label = paste0(purpose_title, " latest GeoJSON")
+      ),
+      latest_summary = snow_read_json_object(
+        paths[["latest_summary"]],
+        paste0(purpose_title, " latest summary")
+      ),
       trace = readr::read_csv(paths[["trace_csv"]], show_col_types = FALSE),
-      trace_summary = snow_read_json_object(paths[["trace_summary"]], "Trace summary")
+      trace_summary = snow_read_json_object(
+        paths[["trace_summary"]],
+        paste0(purpose_title, " trace summary")
+      )
     ),
     error = function(e) e
   )
@@ -495,7 +662,11 @@ snow_validate_prior_outputs <- function(paths,
   if (inherits(parsed, "error")) {
     return(list(
       valid = FALSE,
-      problems = snow_safe_failure_reason(paste0("prior output parsing failed: ", conditionMessage(parsed)))
+      problems = snow_safe_failure_reason(paste0(
+        purpose,
+        " output parsing failed: ",
+        conditionMessage(parsed)
+      ))
     ))
   }
 
@@ -507,13 +678,21 @@ snow_validate_prior_outputs <- function(paths,
   if (length(missing_latest) > 0L) {
     problems <- c(
       problems,
-      paste0("prior latest rows are missing fields: ", paste(missing_latest, collapse = ", "))
+      paste0(
+        purpose,
+        " latest rows are missing fields: ",
+        paste(missing_latest, collapse = ", ")
+      )
     )
   }
   if (length(missing_trace) > 0L) {
     problems <- c(
       problems,
-      paste0("prior trace rows are missing fields: ", paste(missing_trace, collapse = ", "))
+      paste0(
+        purpose,
+        " trace rows are missing fields: ",
+        paste(missing_trace, collapse = ", ")
+      )
     )
   }
 
@@ -526,19 +705,31 @@ snow_validate_prior_outputs <- function(paths,
     if (nrow(latest) != nrow(stations) ||
         anyDuplicated(latest_station_uid) ||
         !setequal(latest_station_uid, as.character(stations$station_uid))) {
-      problems <- c(problems, "prior latest rows do not exactly match the current station index")
+      problems <- c(
+        problems,
+        paste0(purpose, " latest rows do not exactly match the current station index")
+      )
     }
     if (any(is.na(station_match))) {
-      problems <- c(problems, "prior latest rows contain unknown station_uid values")
+      problems <- c(problems, paste0(purpose, " latest rows contain unknown station_uid values"))
     } else {
       if (any(latest_provider_key != as.character(stations$live_provider_key[station_match]))) {
-        problems <- c(problems, "prior latest provider identity does not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " latest provider identity does not match the station index")
+        )
       }
       if (any(as.character(latest$provider) != as.character(stations$provider[station_match]))) {
-        problems <- c(problems, "prior latest provider labels do not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " latest provider labels do not match the station index")
+        )
       }
       if (any(latest_provider_station_id != as.character(stations$provider_station_id[station_match]))) {
-        problems <- c(problems, "prior latest provider station IDs do not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " latest provider station IDs do not match the station index")
+        )
       }
     }
 
@@ -548,25 +739,34 @@ snow_validate_prior_outputs <- function(paths,
     geom_lat <- suppressWarnings(as.numeric(latest$.geometry_latitude))
     if (any(!is.finite(lon)) || any(!is.finite(lat)) ||
         any(lon < -180 | lon > 180) || any(lat < -90 | lat > 90)) {
-      problems <- c(problems, "prior latest coordinates are missing, non-finite, or out of bounds")
+      problems <- c(
+        problems,
+        paste0(purpose, " latest coordinates are missing, non-finite, or out of bounds")
+      )
     }
     if (any(abs(lon - geom_lon) > 1e-7) || any(abs(lat - geom_lat) > 1e-7)) {
-      problems <- c(problems, "prior latest geometry does not match coordinate properties")
+      problems <- c(
+        problems,
+        paste0(purpose, " latest geometry does not match coordinate properties")
+      )
     }
 
     swe <- suppressWarnings(as.numeric(latest$latest_swe_in))
     if (any(!is.finite(swe[!is.na(swe)])) ||
         any(!is.na(swe) & (swe < 0 | swe > max_valid_swe_in))) {
-      problems <- c(problems, "prior latest SWE values are invalid")
+      problems <- c(problems, paste0(purpose, " latest SWE values are invalid"))
     }
 
     latest_dates <- as.character(latest$latest_swe_date_local)
     latest_dates <- latest_dates[!is.na(latest_dates) & latest_dates != ""]
     if (length(latest_dates) > 0L && any(is.na(suppressWarnings(as.Date(latest_dates))))) {
-      problems <- c(problems, "prior latest SWE dates are invalid")
+      problems <- c(problems, paste0(purpose, " latest SWE dates are invalid"))
     }
     if (any(suppressWarnings(as.integer(latest$current_water_year)) != current_water_year)) {
-      problems <- c(problems, "prior latest rows are not for the current water year")
+      problems <- c(
+        problems,
+        paste0(purpose, " latest rows are not for the current water year")
+      )
     }
   }
 
@@ -583,19 +783,28 @@ snow_validate_prior_outputs <- function(paths,
     expected_water_day <- as.integer(trace_date - expected_wy_start + 1L)
 
     if (nrow(trace) == 0L) {
-      problems <- c(problems, "prior trace has no rows")
+      problems <- c(problems, paste0(purpose, " trace has no rows"))
     }
     if (any(is.na(trace_match))) {
-      problems <- c(problems, "prior trace contains unknown station_uid values")
+      problems <- c(problems, paste0(purpose, " trace contains unknown station_uid values"))
     } else {
       if (any(trace_provider_key != as.character(stations$live_provider_key[trace_match]))) {
-        problems <- c(problems, "prior trace provider identity does not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " trace provider identity does not match the station index")
+        )
       }
       if (any(as.character(trace$provider) != as.character(stations$provider[trace_match]))) {
-        problems <- c(problems, "prior trace provider labels do not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " trace provider labels do not match the station index")
+        )
       }
       if (any(trace_provider_station_id != as.character(stations$provider_station_id[trace_match]))) {
-        problems <- c(problems, "prior trace provider station IDs do not match the station index")
+        problems <- c(
+          problems,
+          paste0(purpose, " trace provider station IDs do not match the station index")
+        )
       }
     }
     if (any(is.na(trace_date)) ||
@@ -603,12 +812,15 @@ snow_validate_prior_outputs <- function(paths,
         any(trace_wy != current_water_year) ||
         any(is.na(trace_water_day)) ||
         any(trace_water_day != expected_water_day)) {
-      problems <- c(problems, "prior trace dates, water year, or water day are invalid")
+      problems <- c(
+        problems,
+        paste0(purpose, " trace dates, water year, or water day are invalid")
+      )
     }
     if (any(!is.finite(trace_swe[!is.na(trace_swe)])) ||
         any(is.na(trace_swe)) ||
         any(trace_swe < 0 | trace_swe > max_valid_swe_in)) {
-      problems <- c(problems, "prior trace SWE values are invalid")
+      problems <- c(problems, paste0(purpose, " trace SWE values are invalid"))
     }
     required_trace_text <- c(
       "station_uid",
@@ -625,7 +837,10 @@ snow_validate_prior_outputs <- function(paths,
     for (field in required_trace_text) {
       value <- trimws(as.character(trace[[field]]))
       if (any(is.na(value) | value == "")) {
-        problems <- c(problems, paste0("prior trace has missing ", field, " values"))
+        problems <- c(
+          problems,
+          paste0(purpose, " trace has missing ", field, " values")
+        )
       }
     }
 
@@ -637,7 +852,10 @@ snow_validate_prior_outputs <- function(paths,
       stringsAsFactors = FALSE
     )
     if (anyDuplicated(trace_key)) {
-      problems <- c(problems, "prior trace has duplicate provider/station/water-day keys")
+      problems <- c(
+        problems,
+        paste0(purpose, " trace has duplicate provider/station/water-day keys")
+      )
     }
   }
 
@@ -660,23 +878,45 @@ snow_validate_prior_outputs <- function(paths,
   )
 
   if (!all(latest_summary_required %in% names(parsed$latest_summary))) {
-    problems <- c(problems, "prior latest summary is missing required fields")
+    problems <- c(
+      problems,
+      paste0(purpose, " latest summary is missing required fields")
+    )
   } else {
     if (as.integer(parsed$latest_summary$current_water_year) != current_water_year ||
         as.integer(parsed$latest_summary$latest_geojson_rows) != nrow(latest) ||
         as.integer(parsed$latest_summary$current_wy_trace_rows) != nrow(trace)) {
-      problems <- c(problems, "prior latest summary counts or water year do not match prior row products")
+      problems <- c(
+        problems,
+        paste0(
+          purpose,
+          " latest summary counts or water year do not match ",
+          purpose,
+          " row products"
+        )
+      )
     }
   }
 
   if (!all(trace_summary_required %in% names(parsed$trace_summary))) {
-    problems <- c(problems, "prior trace summary is missing required fields")
+    problems <- c(
+      problems,
+      paste0(purpose, " trace summary is missing required fields")
+    )
   } else {
     if (as.integer(parsed$trace_summary$current_water_year) != current_water_year ||
         as.integer(parsed$trace_summary$current_wy_trace_rows) != nrow(trace) ||
         as.integer(parsed$trace_summary$stations_with_trace_rows) !=
           dplyr::n_distinct(trace$station_uid)) {
-      problems <- c(problems, "prior trace summary counts or water year do not match prior trace")
+      problems <- c(
+        problems,
+        paste0(
+          purpose,
+          " trace summary counts or water year do not match ",
+          purpose,
+          " trace"
+        )
+      )
     }
   }
 
@@ -691,6 +931,78 @@ snow_validate_prior_outputs <- function(paths,
     trace = trace,
     trace_summary = parsed$trace_summary
   )
+}
+
+# Prior outputs supply last-known-good rows during a partial refresh.
+snow_validate_prior_outputs <- function(paths,
+                                        stations,
+                                        current_water_year,
+                                        max_valid_swe_in,
+                                        required_latest_columns,
+                                        required_trace_columns,
+                                        latest_prototype = NULL) {
+  snow_validate_serialized_output_set(
+    paths = paths,
+    stations = stations,
+    current_water_year = current_water_year,
+    max_valid_swe_in = max_valid_swe_in,
+    required_latest_columns = required_latest_columns,
+    required_trace_columns = required_trace_columns,
+    latest_prototype = latest_prototype,
+    purpose = "prior"
+  )
+}
+
+# Staged outputs must also pass the combined prospective publication gates.
+snow_validate_staged_outputs <- function(paths,
+                                         stations,
+                                         current_water_year,
+                                         max_valid_swe_in,
+                                         min_trace_rows,
+                                         min_latest_swe_rows,
+                                         required_latest_columns,
+                                         required_trace_columns,
+                                         latest_prototype) {
+  validated <- snow_validate_serialized_output_set(
+    paths = paths,
+    stations = stations,
+    current_water_year = current_water_year,
+    max_valid_swe_in = max_valid_swe_in,
+    required_latest_columns = required_latest_columns,
+    required_trace_columns = required_trace_columns,
+    latest_prototype = latest_prototype,
+    purpose = "staged"
+  )
+
+  if (!isTRUE(validated$valid)) {
+    return(validated)
+  }
+
+  combined_qa <- snow_validate_combined_outputs(
+    latest = validated$latest,
+    trace = validated$trace,
+    stations = stations,
+    current_water_year = current_water_year,
+    max_valid_swe_in = max_valid_swe_in,
+    min_trace_rows = min_trace_rows,
+    min_latest_swe_rows = min_latest_swe_rows,
+    required_latest_columns = required_latest_columns,
+    required_trace_columns = required_trace_columns
+  )
+
+  validated$combined_qa <- combined_qa
+  if (!isTRUE(combined_qa$passed)) {
+    validated$valid <- FALSE
+    validated$problems <- unique(c(
+      validated$problems,
+      paste0(
+        "staged serialized combined QA failed: ",
+        paste(combined_qa$problems, collapse = "; ")
+      )
+    ))
+  }
+
+  validated
 }
 
 snow_validate_combined_outputs <- function(latest,

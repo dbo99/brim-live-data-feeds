@@ -77,6 +77,7 @@ make_latest <- function(provider_id, date, build_time, value_offset = 0) {
   source |>
     dplyr::mutate(
       station_name = paste("Station", .data$station_uid),
+      river_basin = NA_character_,
       latitude = ifelse(.data$live_provider_key == "cdec_snow_sensor", 39, 41),
       longitude = ifelse(.data$live_provider_key == "cdec_snow_sensor", -121, -120),
       latest_swe_in = seq_len(dplyr::n()) + value_offset,
@@ -86,6 +87,8 @@ make_latest <- function(provider_id, date, build_time, value_offset = 0) {
         "cdec_sno_adj_82",
         "nrcs_wteq"
       ),
+      normal_fixed_pct_median_swe = NA_real_,
+      normal_rolling_pct_median_swe = NA_real_,
       current_water_year = current_water_year,
       feed_build_time_local = build_time
     )
@@ -1077,9 +1080,262 @@ write_fixture_geojson <- function(rows, path) {
     list(type = "FeatureCollection", features = features),
     path,
     auto_unbox = TRUE,
-    na = "null"
+    na = "null",
+    null = "null"
   )
 }
+
+write_fixture_output_set <- function(paths, latest_rows, trace_rows) {
+  write_fixture_geojson(latest_rows, paths[["latest_geojson"]])
+  readr::write_csv(trace_rows, paths[["trace_csv"]])
+  jsonlite::write_json(
+    list(
+      layer = "Snow pillows / SWE latest",
+      build_time_local = "fixture-build",
+      build_date_local = "2025-10-05",
+      current_water_year = current_water_year,
+      latest_geojson_rows = nrow(latest_rows),
+      current_wy_trace_rows = nrow(trace_rows)
+    ),
+    paths[["latest_summary"]],
+    auto_unbox = TRUE,
+    na = "null",
+    null = "null"
+  )
+  jsonlite::write_json(
+    list(
+      layer = "Snow pillows / SWE current water-year trace",
+      build_time_local = "fixture-build",
+      build_date_local = "2025-10-05",
+      current_water_year = current_water_year,
+      current_wy_trace_rows = nrow(trace_rows),
+      stations_with_trace_rows = dplyr::n_distinct(trace_rows$station_uid),
+      providers = sort(unique(trace_rows$live_provider_key))
+    ),
+    paths[["trace_summary"]],
+    auto_unbox = TRUE,
+    na = "null",
+    null = "null"
+  )
+}
+
+scenario("All-null serialized properties retain keys and prototype types", {
+  path <- file.path(test_root, "all-null-properties.geojson")
+  write_fixture_geojson(prior_latest, path)
+
+  raw <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  raw_properties <- lapply(raw$features, function(feature) feature$properties)
+  old_bound <- dplyr::bind_rows(raw_properties)
+  all_null_fields <- c(
+    "river_basin",
+    "normal_fixed_pct_median_swe",
+    "normal_rolling_pct_median_swe"
+  )
+
+  assert_true(
+    all(vapply(
+      raw_properties,
+      function(properties) all(all_null_fields %in% names(properties)),
+      logical(1)
+    )),
+    "The fixture writer omitted a required all-null property key."
+  )
+  assert_true(
+    !any(all_null_fields %in% names(old_bound)),
+    "The deterministic old parse/bind reproduction did not lose all-null columns."
+  )
+
+  parsed <- snow_read_geojson_properties(
+    path,
+    required_property_names = names(prior_latest),
+    property_prototype = prior_latest,
+    label = "Fixture latest GeoJSON"
+  )
+
+  assert_true(
+    all(all_null_fields %in% names(parsed)),
+    "The corrected parser did not preserve all-null property columns."
+  )
+  assert_true(
+    is.character(parsed$river_basin) && all(is.na(parsed$river_basin)),
+    "The all-null character property did not retain character-compatible typing."
+  )
+  assert_true(
+    is.double(parsed$normal_fixed_pct_median_swe) &&
+      all(is.na(parsed$normal_fixed_pct_median_swe)) &&
+      is.double(parsed$normal_rolling_pct_median_swe) &&
+      all(is.na(parsed$normal_rolling_pct_median_swe)),
+    "The all-null percentage properties did not retain numeric-compatible typing."
+  )
+  assert_equal(
+    names(parsed)[seq_along(names(prior_latest))],
+    names(prior_latest),
+    "Expected latest-property column order was not preserved."
+  )
+})
+
+scenario("Healthy full refresh with all-null properties validates and promotes", {
+  results <- list(
+    nrcs_snotel = make_result(
+      "nrcs_snotel",
+      TRUE,
+      fresh_nrcs_latest,
+      fresh_nrcs_trace
+    ),
+    cdec_snow_sensor = make_result(
+      "cdec_snow_sensor",
+      TRUE,
+      fresh_cdec_latest,
+      fresh_cdec_trace
+    )
+  )
+  resolved <- resolve(results)
+  assert_true(resolved$publish, "Healthy providers should produce a publishable refresh.")
+  assert_equal(resolved$decision$mode, "full", "Healthy providers should select full mode.")
+  assert_true(
+    all(is.na(resolved$latest$river_basin)) &&
+      all(is.na(resolved$latest$normal_fixed_pct_median_swe)) &&
+      all(is.na(resolved$latest$normal_rolling_pct_median_swe)),
+    "Full-refresh fixture does not exercise the all-null property condition."
+  )
+
+  output_dir <- file.path(test_root, "all-null-stage-success")
+  dir.create(output_dir)
+  final_paths <- c(
+    latest_geojson = file.path(output_dir, "latest.geojson"),
+    latest_summary = file.path(output_dir, "latest.json"),
+    trace_csv = file.path(output_dir, "trace.csv"),
+    trace_summary = file.path(output_dir, "trace.json")
+  )
+  for (name in names(final_paths)) {
+    writeLines(paste0("official-", name), final_paths[[name]])
+  }
+  before <- unname(tools::md5sum(final_paths))
+
+  promoted <- snow_stage_and_promote_outputs(
+    final_paths = final_paths,
+    write_staged = function(staged_paths) {
+      write_fixture_output_set(staged_paths, resolved$latest, resolved$trace)
+    },
+    validate_staged = function(staged_paths) {
+      snow_validate_staged_outputs(
+        paths = staged_paths,
+        stations = stations,
+        current_water_year = current_water_year,
+        max_valid_swe_in = max_valid_swe_in,
+        min_trace_rows = 1L,
+        min_latest_swe_rows = 1L,
+        required_latest_columns = required_latest_columns,
+        required_trace_columns = required_trace_columns,
+        latest_prototype = resolved$latest
+      )
+    }
+  )
+  after <- unname(tools::md5sum(final_paths))
+
+  assert_true(
+    !identical(before, after),
+    "A valid full-refresh fixture was not promoted."
+  )
+  assert_true(
+    isTRUE(promoted$validation$valid) &&
+      isTRUE(promoted$validation$combined_qa$passed),
+    "The promoted full-refresh fixture did not pass serialized combined QA."
+  )
+  assert_true(
+    is.character(promoted$validation$latest$river_basin) &&
+      is.double(promoted$validation$latest$normal_fixed_pct_median_swe) &&
+      is.double(promoted$validation$latest$normal_rolling_pct_median_swe),
+    "Promoted all-null properties did not retain expected types."
+  )
+})
+
+scenario("A truly omitted staged property is rejected without replacement", {
+  results <- list(
+    nrcs_snotel = make_result(
+      "nrcs_snotel",
+      TRUE,
+      fresh_nrcs_latest,
+      fresh_nrcs_trace
+    ),
+    cdec_snow_sensor = make_result(
+      "cdec_snow_sensor",
+      TRUE,
+      fresh_cdec_latest,
+      fresh_cdec_trace
+    )
+  )
+  resolved <- resolve(results)
+  output_dir <- file.path(test_root, "missing-staged-key")
+  dir.create(output_dir)
+  final_paths <- c(
+    latest_geojson = file.path(output_dir, "latest.geojson"),
+    latest_summary = file.path(output_dir, "latest.json"),
+    trace_csv = file.path(output_dir, "trace.csv"),
+    trace_summary = file.path(output_dir, "trace.json")
+  )
+  for (name in names(final_paths)) {
+    writeLines(paste0("official-", name), final_paths[[name]])
+  }
+  before <- unname(tools::md5sum(final_paths))
+
+  error <- tryCatch(
+    {
+      snow_stage_and_promote_outputs(
+        final_paths = final_paths,
+        write_staged = function(staged_paths) {
+          write_fixture_output_set(staged_paths, resolved$latest, resolved$trace)
+          malformed <- jsonlite::fromJSON(
+            staged_paths[["latest_geojson"]],
+            simplifyVector = FALSE
+          )
+          malformed$features[[1]]$properties <-
+            malformed$features[[1]]$properties[
+              setdiff(names(malformed$features[[1]]$properties), "river_basin")
+            ]
+          jsonlite::write_json(
+            malformed,
+            staged_paths[["latest_geojson"]],
+            auto_unbox = TRUE,
+            na = "null",
+            null = "null"
+          )
+        },
+        validate_staged = function(staged_paths) {
+          snow_validate_staged_outputs(
+            paths = staged_paths,
+            stations = stations,
+            current_water_year = current_water_year,
+            max_valid_swe_in = max_valid_swe_in,
+            min_trace_rows = 1L,
+            min_latest_swe_rows = 1L,
+            required_latest_columns = required_latest_columns,
+            required_trace_columns = required_trace_columns,
+            latest_prototype = resolved$latest
+          )
+        }
+      )
+      NULL
+    },
+    error = function(e) e
+  )
+  after <- unname(tools::md5sum(final_paths))
+
+  assert_true(inherits(error, "error"), "A truly omitted staged property was accepted.")
+  assert_true(
+    grepl(
+      "Staged latest GeoJSON feature 1 (station_uid=CDEC_A) is missing required properties: river_basin",
+      conditionMessage(error),
+      fixed = TRUE
+    ),
+    paste("Missing-key error did not identify the feature:", conditionMessage(error))
+  )
+  assert_equal(
+    before,
+    after,
+    "Missing staged property rejection changed existing output bytes."
+  )
+})
 
 scenario("Prior latest, summary, trace, and trace-summary validation", {
   output_dir <- file.path(test_root, "prior-validation")
@@ -1124,12 +1380,51 @@ scenario("Prior latest, summary, trace, and trace-summary validation", {
     current_water_year = current_water_year,
     max_valid_swe_in = max_valid_swe_in,
     required_latest_columns = required_latest_columns,
-    required_trace_columns = required_trace_columns
+    required_trace_columns = required_trace_columns,
+    latest_prototype = prior_latest
   )
 
   assert_true(
     validation$valid,
     paste("Valid four-file prior fixture was rejected:", paste(validation$problems, collapse = "; "))
+  )
+  assert_true(
+    is.character(validation$latest$river_basin) &&
+      is.double(validation$latest$normal_fixed_pct_median_swe) &&
+      is.double(validation$latest$normal_rolling_pct_median_swe),
+    "Valid prior all-null properties did not retain expected types."
+  )
+
+  malformed <- jsonlite::fromJSON(paths[["latest_geojson"]], simplifyVector = FALSE)
+  malformed$features[[1]]$properties <-
+    malformed$features[[1]]$properties[
+      setdiff(names(malformed$features[[1]]$properties), "river_basin")
+    ]
+  jsonlite::write_json(
+    malformed,
+    paths[["latest_geojson"]],
+    auto_unbox = TRUE,
+    na = "null",
+    null = "null"
+  )
+  invalid <- snow_validate_prior_outputs(
+    paths = paths,
+    stations = stations,
+    current_water_year = current_water_year,
+    max_valid_swe_in = max_valid_swe_in,
+    required_latest_columns = required_latest_columns,
+    required_trace_columns = required_trace_columns,
+    latest_prototype = prior_latest
+  )
+
+  assert_true(!invalid$valid, "Prior GeoJSON with a truly missing key was accepted.")
+  assert_true(
+    any(grepl(
+      "Prior latest GeoJSON feature 1 (station_uid=CDEC_A) is missing required properties: river_basin",
+      invalid$problems,
+      fixed = TRUE
+    )),
+    paste("Prior missing-key error was not specific:", paste(invalid$problems, collapse = "; "))
   )
 })
 

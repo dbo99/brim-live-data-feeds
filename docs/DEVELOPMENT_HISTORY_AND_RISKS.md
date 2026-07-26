@@ -53,6 +53,16 @@ Historical runs exposed two recurring classes of failure:
   overrides now fail closed. The incident was an upstream
   availability/timeout event; it is not evidence by itself of general
   workflow-runtime exhaustion.
+- Snow run `30177980668`, the first scheduled run after pull request #6, passed
+  both provider and completeness checks and selected a full refresh, then
+  falsely rejected three required GeoJSON properties during staged validation.
+  All three keys were serialized but null for every feature; `jsonlite` retained
+  the keys as null list members, while the subsequent `dplyr::bind_rows()` call
+  dropped the resulting all-null columns. The commit step was skipped, so the
+  official four-file product remained unchanged. The correction gives prior
+  carry-forward and prospective staged outputs distinct validation entry points,
+  preserves typed all-null properties during parsing, and continues to reject a
+  truly omitted required key.
 
 Run identifiers are operational evidence, not stable documentation links. Retain
 them in the relevant incident record when an event is investigated.
