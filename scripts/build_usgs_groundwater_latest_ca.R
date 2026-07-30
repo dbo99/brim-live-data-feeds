@@ -77,6 +77,8 @@ suppressPackageStartupMessages({
   library(curl)
 })
 
+source("scripts/usgs_groundwater_diagnostics_helpers.R")
+
 # ---- 2. Paths, constants, and switches -------------------------------------
 
 station_index_csv <- Sys.getenv(
@@ -128,6 +130,66 @@ request_pause_sec <- suppressWarnings(as.numeric(Sys.getenv(
   unset = "0.20"
 )))
 if (is.na(request_pause_sec) || request_pause_sec < 0) request_pause_sec <- 0.20
+
+request_max_attempts <- suppressWarnings(as.integer(Sys.getenv(
+  "USGS_GW_REQUEST_MAX_ATTEMPTS",
+  unset = "3"
+)))
+if (is.na(request_max_attempts) ||
+    request_max_attempts < 1 ||
+    request_max_attempts > 3) {
+  request_max_attempts <- 3L
+}
+
+request_base_backoff_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "USGS_GW_REQUEST_BASE_BACKOFF_SEC",
+  unset = "1"
+)))
+if (is.na(request_base_backoff_sec) ||
+    request_base_backoff_sec < 0 ||
+    request_base_backoff_sec > 8) {
+  request_base_backoff_sec <- 1
+}
+
+request_max_backoff_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "USGS_GW_REQUEST_MAX_BACKOFF_SEC",
+  unset = "8"
+)))
+if (is.na(request_max_backoff_sec) ||
+    request_max_backoff_sec < request_base_backoff_sec ||
+    request_max_backoff_sec > 8) {
+  request_max_backoff_sec <- 8
+}
+
+request_max_retry_after_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "USGS_GW_REQUEST_MAX_RETRY_AFTER_SEC",
+  unset = "30"
+)))
+if (is.na(request_max_retry_after_sec) ||
+    request_max_retry_after_sec < 0 ||
+    request_max_retry_after_sec > 30) {
+  request_max_retry_after_sec <- 30
+}
+
+request_jitter_sec <- suppressWarnings(as.numeric(Sys.getenv(
+  "USGS_GW_REQUEST_JITTER_SEC",
+  unset = "0.25"
+)))
+if (is.na(request_jitter_sec) ||
+    request_jitter_sec < 0 ||
+    request_jitter_sec > 0.25) {
+  request_jitter_sec <- 0.25
+}
+
+max_consecutive_chunk_failures <- suppressWarnings(as.integer(Sys.getenv(
+  "USGS_GW_MAX_CONSECUTIVE_CHUNK_FAILURES",
+  unset = "3"
+)))
+if (is.na(max_consecutive_chunk_failures) ||
+    max_consecutive_chunk_failures < 1 ||
+    max_consecutive_chunk_failures > 3) {
+  max_consecutive_chunk_failures <- 3L
+}
 
 min_api_sites_to_publish <- suppressWarnings(as.integer(Sys.getenv(
   "USGS_GW_MIN_API_SITES_TO_PUBLISH",
@@ -189,38 +251,6 @@ pt_ensure_cols <- function(df, cols) {
   df
 }
 
-pt_chunks <- function(x, n) {
-  x <- unique(as.character(x))
-  x <- x[!is.na(x) & x != ""]
-  split(x, ceiling(seq_along(x) / n))
-}
-
-pt_usgs_monitoring_location_id <- function(site_ids) {
-  site_ids <- pt_site_no(site_ids)
-  out <- ifelse(!is.na(site_ids) & site_ids != "", paste0("USGS-", site_ids), NA_character_)
-  out[!is.na(out)]
-}
-
-pt_waterdata_time_interval <- function(start_date, end_date) {
-  paste0(as.character(start_date), "/", as.character(end_date))
-}
-
-pt_has_cols <- function(df, cols) {
-  all(cols %in% names(df))
-}
-
-pt_compact_code <- function(qualifier, approval_status) {
-  qualifier <- pt_chr(qualifier)
-  approval_status <- pt_chr(approval_status)
-
-  dplyr::case_when(
-    !is.na(qualifier) & !is.na(approval_status) ~ paste0(qualifier, "; ", approval_status),
-    !is.na(qualifier) ~ qualifier,
-    !is.na(approval_status) ~ approval_status,
-    TRUE ~ NA_character_
-  )
-}
-
 pt_depth_class <- function(x) {
   x <- pt_num(x)
 
@@ -234,320 +264,6 @@ pt_depth_class <- function(x) {
     x <= 500 ~ "250-500 ft bgs",
     TRUE ~ ">500 ft bgs"
   )
-}
-
-pt_ogc_query_url <- function(collection, params) {
-  base <- paste0(
-    "https://api.waterdata.usgs.gov/ogcapi/v0/collections/",
-    collection,
-    "/items"
-  )
-
-  params <- params[!vapply(params, function(x) is.null(x) || length(x) == 0, logical(1))]
-  params <- lapply(params, function(x) paste(as.character(x), collapse = ","))
-
-  query <- paste(
-    paste0(
-      names(params),
-      "=",
-      vapply(params, utils::URLencode, character(1), reserved = TRUE)
-    ),
-    collapse = "&"
-  )
-
-  paste0(base, "?", query)
-}
-
-pt_fetch_ogc_properties <- function(url, label = url) {
-  message("Requesting direct Water Data API fallback: ", label)
-
-  h <- curl::new_handle(
-    timeout = 45,
-    connecttimeout = 15,
-    useragent = "BRIM live groundwater feed"
-  )
-
-  api_key <- Sys.getenv("API_USGS_PAT")
-  if (nzchar(api_key)) {
-    curl::handle_setheaders(h, "X-Api-Key" = api_key)
-  }
-
-  resp <- tryCatch(
-    curl::curl_fetch_memory(url, handle = h),
-    error = function(e) e
-  )
-
-  if (inherits(resp, "error")) {
-    warning("Direct Water Data API fallback failed for ", label, ": ", conditionMessage(resp))
-    return(tibble::tibble())
-  }
-
-  if (!is.null(resp$status_code) && resp$status_code >= 400) {
-    warning("Direct Water Data API fallback returned HTTP ", resp$status_code, " for ", label)
-    return(tibble::tibble())
-  }
-
-  x <- tryCatch(
-    jsonlite::fromJSON(rawToChar(resp$content), simplifyVector = TRUE),
-    error = function(e) e
-  )
-
-  if (inherits(x, "error")) {
-    warning("Could not parse direct Water Data API fallback JSON for ", label, ": ", conditionMessage(x))
-    return(tibble::tibble())
-  }
-
-  if (!"features" %in% names(x) || is.null(x$features) || length(x$features) == 0) {
-    return(tibble::tibble())
-  }
-
-  props <- NULL
-
-  if (is.data.frame(x$features) && "properties" %in% names(x$features)) {
-    props <- x$features$properties
-  } else if (is.list(x$features) && !is.null(x$features$properties)) {
-    props <- x$features$properties
-  }
-
-  if (is.null(props)) return(tibble::tibble())
-
-  tibble::as_tibble(props)
-}
-
-pt_fetch_field_measurements_chunk_direct <- function(site_ids, start_date, end_date, label) {
-  url <- pt_ogc_query_url(
-    collection = "field-measurements",
-    params = list(
-      f = "json",
-      lang = "en-US",
-      skipGeometry = "TRUE",
-      properties = paste(
-        c(
-          "monitoring_location_id",
-          "parameter_code",
-          "time",
-          "value",
-          "unit_of_measure",
-          "qualifier",
-          "approval_status",
-          "observing_procedure",
-          "vertical_datum",
-          "measuring_agency",
-          "field_visit_id",
-          "last_modified"
-        ),
-        collapse = ","
-      ),
-      monitoring_location_id = paste(pt_usgs_monitoring_location_id(site_ids), collapse = ","),
-      parameter_code = gw_parameter_code,
-      time = pt_waterdata_time_interval(start_date, end_date),
-      limit = "50000"
-    )
-  )
-
-  pt_fetch_ogc_properties(url, label = paste0("groundwater field-measurements chunk ", label))
-}
-
-pt_fetch_field_measurements_chunk <- function(site_ids, start_date, end_date, label) {
-  tryCatch({
-    dataRetrieval::read_waterdata_field_measurements(
-      monitoring_location_id = pt_usgs_monitoring_location_id(site_ids),
-      parameter_code = gw_parameter_code,
-      time = pt_waterdata_time_interval(start_date, end_date),
-      properties = c(
-        "monitoring_location_id",
-        "parameter_code",
-        "time",
-        "value",
-        "unit_of_measure",
-        "qualifier",
-        "approval_status",
-        "observing_procedure",
-        "vertical_datum",
-        "measuring_agency",
-        "field_visit_id",
-        "last_modified"
-      ),
-      skipGeometry = TRUE
-    )
-  }, error = function(e) {
-    warning(
-      "USGS groundwater field-measurements chunk failed through dataRetrieval for ",
-      label,
-      ": ",
-      conditionMessage(e),
-      ". Trying direct OGC API fallback."
-    )
-    pt_fetch_field_measurements_chunk_direct(
-      site_ids = site_ids,
-      start_date = start_date,
-      end_date = end_date,
-      label = label
-    )
-  })
-}
-
-pt_normalize_field_measurements_raw <- function(x) {
-  ## GW_FEED_001:
-  ##   dataRetrieval commonly returns Water Data API time fields as POSIXct,
-  ##   while the direct OGC fallback returns JSON properties as character
-  ##   strings. Normalize chunk outputs before bind_rows() so a temporary
-  ##   dataRetrieval HTTP failure in one chunk cannot fail the whole feed with
-  ##   a vctrs datetime/character type conflict.
-  if (is.null(x) || nrow(x) == 0) {
-    return(tibble::tibble())
-  }
-
-  x <- tibble::as_tibble(x)
-
-  char_cols <- intersect(
-    c(
-      "monitoring_location_id",
-      "parameter_code",
-      "time",
-      "unit_of_measure",
-      "qualifier",
-      "approval_status",
-      "observing_procedure",
-      "vertical_datum",
-      "measuring_agency",
-      "field_visit_id",
-      "last_modified"
-    ),
-    names(x)
-  )
-
-  if (length(char_cols) > 0) {
-    x <- x |>
-      dplyr::mutate(dplyr::across(dplyr::all_of(char_cols), as.character))
-  }
-
-  if ("value" %in% names(x)) {
-    x <- x |>
-      dplyr::mutate(value = pt_num(.data$value))
-  }
-
-  x
-}
-
-pt_empty_gw_latest <- function() {
-  tibble::tibble(
-    site_no = character(),
-    api_latest_wl_ft_bgs = numeric(),
-    api_latest_wl_datetime_utc = character(),
-    api_latest_wl_date = as.Date(character()),
-    api_latest_wl_status = character(),
-    api_latest_wl_procedure = character(),
-    api_latest_wl_qualifier = character(),
-    api_latest_wl_units = character(),
-    api_latest_wl_vertical_datum = character(),
-    api_latest_wl_measuring_agency = character(),
-    api_latest_wl_field_visit_id = character(),
-    api_latest_wl_last_modified_utc = character()
-  )
-}
-
-pt_fetch_latest_groundwater <- function(site_ids, start_date, end_date) {
-  chunks <- pt_chunks(site_ids, chunk_size)
-
-  message("Fetching USGS groundwater field measurements in ", length(chunks), " chunk(s).")
-  message("USGS field-measurements time interval: ", pt_waterdata_time_interval(start_date, end_date))
-  message("USGS groundwater parameter code: ", gw_parameter_code)
-
-  out <- vector("list", length(chunks))
-
-  for (i in seq_along(chunks)) {
-    message("  field-measurements chunk ", i, " of ", length(chunks), " | sites: ", length(chunks[[i]]))
-    out[[i]] <- pt_fetch_field_measurements_chunk(
-      site_ids = chunks[[i]],
-      start_date = start_date,
-      end_date = end_date,
-      label = paste0(i, "/", length(chunks))
-    )
-
-    if (i < length(chunks) && request_pause_sec > 0) Sys.sleep(request_pause_sec)
-  }
-
-  raw <- dplyr::bind_rows(lapply(out, pt_normalize_field_measurements_raw))
-  message("USGS groundwater field-measurements raw rows fetched: ", nrow(raw))
-
-  if (nrow(raw) == 0) {
-    return(list(raw = raw, latest = pt_empty_gw_latest()))
-  }
-
-  needed <- c("monitoring_location_id", "parameter_code", "time", "value")
-  if (!pt_has_cols(raw, needed)) {
-    warning(
-      "USGS field-measurements output did not include expected columns: ",
-      paste(setdiff(needed, names(raw)), collapse = ", "),
-      ". Skipping API latest groundwater values."
-    )
-    return(list(raw = raw, latest = pt_empty_gw_latest()))
-  }
-
-  raw2 <- raw |>
-    dplyr::mutate(
-      site_no = pt_site_no(.data$monitoring_location_id),
-      parameter_code = as.character(.data$parameter_code),
-      obs_datetime = suppressWarnings(lubridate::as_datetime(.data$time, tz = "UTC")),
-      obs_value = pt_num(.data$value),
-      obs_code = pt_compact_code(
-        if ("qualifier" %in% names(raw)) .data$qualifier else NA_character_,
-        if ("approval_status" %in% names(raw)) .data$approval_status else NA_character_
-      ),
-      unit_of_measure = if ("unit_of_measure" %in% names(raw)) pt_chr(.data$unit_of_measure) else NA_character_,
-      observing_procedure = if ("observing_procedure" %in% names(raw)) pt_chr(.data$observing_procedure) else NA_character_,
-      vertical_datum = if ("vertical_datum" %in% names(raw)) pt_chr(.data$vertical_datum) else NA_character_,
-      measuring_agency = if ("measuring_agency" %in% names(raw)) pt_chr(.data$measuring_agency) else NA_character_,
-      field_visit_id = if ("field_visit_id" %in% names(raw)) pt_chr(.data$field_visit_id) else NA_character_,
-      last_modified = if ("last_modified" %in% names(raw)) pt_chr(.data$last_modified) else NA_character_,
-      last_modified_utc = suppressWarnings(lubridate::as_datetime(.data$last_modified, tz = "UTC"))
-    ) |>
-    dplyr::filter(
-      !is.na(.data$site_no),
-      .data$parameter_code == gw_parameter_code,
-      !is.na(.data$obs_datetime),
-      !is.na(.data$obs_value)
-    )
-
-  if (nrow(raw2) == 0) {
-    return(list(raw = raw, latest = pt_empty_gw_latest()))
-  }
-
-  latest <- raw2 |>
-    dplyr::arrange(.data$site_no, .data$obs_datetime) |>
-    dplyr::group_by(.data$site_no) |>
-    dplyr::slice_tail(n = 1) |>
-    dplyr::ungroup() |>
-    dplyr::mutate(
-      api_latest_wl_datetime_utc = format(lubridate::with_tz(.data$obs_datetime, "UTC"), "%Y-%m-%dT%H:%M:%SZ"),
-      api_latest_wl_date = as.Date(.data$obs_datetime),
-      api_latest_wl_last_modified_utc = dplyr::if_else(
-        is.na(.data$last_modified_utc),
-        NA_character_,
-        format(lubridate::with_tz(.data$last_modified_utc, "UTC"), "%Y-%m-%dT%H:%M:%SZ")
-      )
-    ) |>
-    dplyr::transmute(
-      site_no = .data$site_no,
-      api_latest_wl_ft_bgs = .data$obs_value,
-      api_latest_wl_datetime_utc = .data$api_latest_wl_datetime_utc,
-      api_latest_wl_date = .data$api_latest_wl_date,
-      api_latest_wl_status = if ("approval_status" %in% names(raw2)) pt_chr(.data$approval_status) else NA_character_,
-      api_latest_wl_procedure = .data$observing_procedure,
-      api_latest_wl_qualifier = if ("qualifier" %in% names(raw2)) pt_chr(.data$qualifier) else NA_character_,
-      api_latest_wl_units = .data$unit_of_measure,
-      api_latest_wl_vertical_datum = .data$vertical_datum,
-      api_latest_wl_measuring_agency = .data$measuring_agency,
-      api_latest_wl_field_visit_id = .data$field_visit_id,
-      api_latest_wl_last_modified_utc = .data$api_latest_wl_last_modified_utc
-    )
-
-  list(raw = raw, latest = latest)
-}
-
-pt_template_url <- function(template, id) {
-  ifelse(!is.na(id) & id != "", paste0(template, id), NA_character_)
 }
 
 pt_make_feature <- function(row) {
@@ -678,24 +394,60 @@ if (file.exists(history_summary_csv)) {
 
 # ---- 6. Fetch latest groundwater field measurements ------------------------
 
-fetch_result <- pt_fetch_latest_groundwater(
+message(
+  "Fetching USGS groundwater field measurements in ",
+  length(gw_chunks(station_index$site_no, chunk_size)),
+  " chunk(s)."
+)
+message(
+  "USGS field-measurements time interval: ",
+  gw_time_interval(query_start_date, query_end_date)
+)
+message("USGS groundwater parameter code: ", gw_parameter_code)
+
+retrieval_result <- gw_retrieve_chunks(
   site_ids = station_index$site_no,
   start_date = query_start_date,
-  end_date = query_end_date
+  end_date = query_end_date,
+  parameter_code = gw_parameter_code,
+  chunk_size = chunk_size,
+  request_pause_sec = request_pause_sec,
+  max_consecutive_failures = max_consecutive_chunk_failures,
+  primary_fetch_fun = dataRetrieval::read_waterdata_field_measurements,
+  max_attempts = request_max_attempts,
+  base_backoff_sec = request_base_backoff_sec,
+  max_backoff_sec = request_max_backoff_sec,
+  max_retry_after_sec = request_max_retry_after_sec,
+  jitter_sec = request_jitter_sec
 )
 
-api_latest <- fetch_result$latest
+parsed_result <- gw_parse_latest(
+  raw = retrieval_result$raw,
+  parameter_code = gw_parameter_code,
+  station_index_site_ids = station_index$site_no
+)
+retrieval_diagnostics <- gw_retrieval_summary(
+  retrieval = retrieval_result,
+  parser_accounting = parsed_result$accounting
+)
+gw_log_retrieval_summary(retrieval_diagnostics)
+gw_enforce_publication(
+  summary = retrieval_diagnostics,
+  min_api_sites = min_api_sites_to_publish
+)
+
+api_latest <- parsed_result$latest |>
+  dplyr::filter(.data$site_no %in% station_index$site_no)
 api_latest_count <- nrow(api_latest)
+fetch_result <- list(
+  raw = parsed_result$raw,
+  latest = api_latest,
+  accounting = parsed_result$accounting,
+  retrieval = retrieval_result,
+  diagnostics = retrieval_diagnostics
+)
 
 message("USGS groundwater API latest site count: ", api_latest_count)
-
-if (api_latest_count < min_api_sites_to_publish) {
-  stop(
-    "USGS groundwater API returned latest values for only ", api_latest_count,
-    " site(s), below minimum ", min_api_sites_to_publish,
-    ". Refusing to publish a degraded feed."
-  )
-}
 
 # ---- 7. Join and create feed table -----------------------------------------
 
@@ -817,19 +569,6 @@ geojson <- list(
   features = features
 )
 
-dir.create(dirname(out_geojson), recursive = TRUE, showWarnings = FALSE)
-dir.create(dirname(out_summary), recursive = TRUE, showWarnings = FALSE)
-
-jsonlite::write_json(
-  geojson,
-  out_geojson,
-  auto_unbox = TRUE,
-  null = "null",
-  na = "null",
-  digits = 8,
-  pretty = FALSE
-)
-
 summary <- list(
   feed_build_time_utc = feed_build_time_utc,
   scope = "CA",
@@ -886,14 +625,13 @@ if (!is.finite(summary$mean_latest_wl_ft_bgs)) summary$mean_latest_wl_ft_bgs <- 
 if (!is.finite(summary$min_latest_age_days)) summary$min_latest_age_days <- NA_real_
 if (!is.finite(summary$max_latest_age_days)) summary$max_latest_age_days <- NA_real_
 
-jsonlite::write_json(
-  summary,
-  out_summary,
-  auto_unbox = TRUE,
-  null = "null",
-  na = "null",
-  digits = 8,
-  pretty = TRUE
+gw_write_staged_outputs(
+  geojson = geojson,
+  summary = summary,
+  out_geojson = out_geojson,
+  out_summary = out_summary,
+  min_features = min_features_to_publish,
+  min_api_sites = min_api_sites_to_publish
 )
 
 message("Saved GeoJSON: ", out_geojson)

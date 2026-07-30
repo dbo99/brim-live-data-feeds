@@ -170,6 +170,9 @@ is no separate least-privilege build job.
 
 - Scripts declare upstream endpoints and request timeouts.
 - Most station/API producers implement bounded retries or chunking.
+- Groundwater classifies primary and direct-request outcomes per outer chunk,
+  retries only transport errors and designated transient HTTP statuses with
+  bounded backoff, and stops after three consecutive terminal chunk failures.
 - Wind model scripts use model-cycle/lead selection.
 - Source-specific index/lookup CSVs are tracked under `data/input`.
 
@@ -192,6 +195,8 @@ is no separate least-privilege build job.
   a same-directory staging area before replacement, keeps backups during
   promotion, and restores already-promoted members after a later promotion
   failure.
+- The groundwater producer applies the same staged-validation and rollback
+  pattern to its GeoJSON and summary pair.
 
 **Gap**
 
@@ -234,6 +239,9 @@ directory and atomically promoted locally.
   response near 20% coverage fails rather than being labeled refreshed.
   Both-provider failure, invalid prior files, unavailable failed-provider rows,
   or failed combined QA retains the complete prior output set.
+- Groundwater requires every outer request chunk to complete as usable data or a
+  valid empty response and still requires at least 300 API-latest sites and 300
+  output features. Candidate-index fallback cannot bypass either retrieval gate.
 
 **Gaps**
 
@@ -338,6 +346,9 @@ directory and atomically promoted locally.
 - HRRR/NBM and HRRR sandbox use 14 days.
 - Groundwater preview uses 30 days.
 - Artifacts may contain QA packages and debug logs.
+- The groundwater writer emits bounded, sanitized request summaries and
+  parser/filter counts, including aggregated warning classes instead of
+  repeated full request URLs or payloads.
 
 **Recommended**
 
