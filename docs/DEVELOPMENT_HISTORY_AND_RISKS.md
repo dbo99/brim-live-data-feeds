@@ -63,6 +63,19 @@ Historical runs exposed two recurring classes of failure:
   carry-forward and prospective staged outputs distinct validation entry points,
   preserves typed all-null properties during parsing, and continues to reject a
   truly omitted required key.
+- Groundwater run `30206927617` on July 26, 2026 routed all 38 outer chunks from
+  the primary client to its direct-request fallback, retrieved zero raw rows and
+  zero API-latest sites, and ended with 50 or more unexpanded warnings. The
+  source and dependency versions matched successful July 25 and July 27 runs;
+  July 29 independently exposed one primary HTTP 502 that the direct path
+  recovered. The evidence supports a transient upstream response failure,
+  likely widespread 5xx behavior, rather than downstream parsing, although the
+  exact failed statuses and bodies are unrecoverable from the retained log. The
+  300-site gate retained the prior official product and the next three
+  scheduled runs recovered. The producer now uses bounded retry classification,
+  concise per-chunk diagnostics, parser/filter accounting, a
+  three-consecutive-failure circuit breaker, all-chunk completeness, and staged
+  two-file promotion.
 
 Run identifiers are operational evidence, not stable documentation links. Retain
 them in the relevant incident record when an event is investigated.
@@ -89,6 +102,9 @@ boundary until the producer, consumer, and public contract are changed together.
 - Snow has deterministic provider-failure tests, provider-level partial-refresh
   status, provider-specific completeness and override tests, validated
   last-known-good carry-forward, and staged four-file local replacement.
+- Groundwater has deterministic offline tests for retry classification,
+  circuit breaking, parser/filter accounting, all-chunk completeness, its
+  unchanged 300-site minimum, and rollback-capable two-file replacement.
 
 ## Risk register
 
@@ -104,7 +120,7 @@ corruption or outage would require immediate P0 reclassification.
 |---|---|---|---|
 | P1 (highest current latent defect) | Streamflow workflow defines `USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH`, while the builder reads a differently scoped site-count gate and can join an empty latest-value result to the static site set. | A successful publication may contain many features but effectively no current discharge values. | Align the configuration name and implementation; gate on non-null live observations and test empty-upstream behavior before publishing. |
 | P1 | `main` had no observed branch protection or ruleset at the baseline. | A direct push or insufficiently reviewed merge can immediately change the official Pages source. | Require pull requests, successful checks, and restricted direct pushes for `main`. |
-| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow now stages, validates, backs up and promotes its four-file set, but the control is not repository-wide and four separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback where one multi-path atomic primitive is unavailable. |
+| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow and groundwater now stage, validate, back up and promote their respective multi-file sets, but the control is not repository-wide and separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback where one multi-path atomic primitive is unavailable. |
 | P1 | There is no common machine-readable schema or compatibility test for public feeds. | A syntactically valid producer change can silently break a consumer. | Add versioned schemas or contract fixtures and run producer/consumer compatibility checks for changed products. |
 | P2 | CoCoRaHS retrieval lacks a strong repository-wide minimum-completeness or pagination gate. | A partial upstream response can look like a valid low-count day. | Record expected coverage signals and classify partial responses as degraded or failed. |
 | P2 | GFS and HRRR can publish useful but incomplete target sets under product-specific rules. | Target-time choices available to consumers may shrink unexpectedly. | Declare completeness/degraded status in manifests and alert on missing required targets. |
@@ -113,7 +129,7 @@ corruption or outage would require immediate P0 reclassification.
 | P2 | Product-specific QA has no shared checksum, provenance, or build metadata standard. | It is harder to prove which upstream response and builder version created a file. | Add non-sensitive provenance and checksums to summaries/manifests or retained build reports. |
 | P2 | Scheduled data commits and code changes share `main`. | High-volume automated history can obscure review and complicate code rollbacks. | Preserve clear commit messages and consider a controlled publication branch only after evaluating Pages and consumer impact. |
 | P2 | Feature-branch manual writers use ordinary product paths on that branch. | A reviewer may mistake branch artifacts for official data or accidentally merge generated changes. | Label evidence clearly, review the changed-file set, and do not merge test-generated feed files unless that is the intended release. |
-| P2 | Upstream rate limits, latency, format drift, and transient outages are external dependencies. | Builds can time out, partially populate, or fail repeatedly without a source-code defect. | Bound retries, retain concise diagnostics, distinguish outage from schema change, and alert on sustained staleness. |
+| P2 | Upstream rate limits, latency, format drift, and transient outages are external dependencies. Groundwater now has product-specific retry classification, a circuit breaker, parser accounting and all-chunk completeness, but these controls are not uniform. | Builds can time out, partially populate, or fail repeatedly without a source-code defect. | Extend bounded retries and concise diagnostics product by product, distinguish outage from schema change, and alert on sustained staleness. |
 | P2 | No repository license file exists at the baseline. | Contributors and data reusers do not have an explicit repository-wide grant. | Have the owner select and add appropriate code and data licensing; do not infer terms in the meantime. |
 | P3 | Workflow setup and Git publication blocks are repeated. | Safety fixes must be applied consistently across many files. | Introduce reuse only if it keeps product paths, permissions, and validation legible. |
 | P3 | Documentation can drift from schedules, actions, scripts, and public paths. | Operators may follow obsolete instructions. | Run the documentation audit in [README.md](README.md) after workflow or contract changes. |

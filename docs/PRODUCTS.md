@@ -334,8 +334,12 @@ ownership.
   California-centered candidate index, with optional compact history context.
 - **Workflow:** [`.github/workflows/build-usgs-groundwater-latest-ca.yml`](../.github/workflows/build-usgs-groundwater-latest-ca.yml).
 - **Producer:** [`scripts/build_usgs_groundwater_latest_ca.R`](../scripts/build_usgs_groundwater_latest_ca.R).
-- **Source:** USGS Water Data API field measurements; optional index fallback
-  and locally prepared history summary.
+- **Source:** USGS Water Data API field measurements, normally through
+  `dataRetrieval` with a direct OGC request as the per-chunk transport fallback;
+  optional candidate-index value fallback and locally prepared history summary.
+  `USGS_GW_ALLOW_INDEX_FALLBACK=true` controls only the later value fallback for
+  sites without a usable API measurement. It does not enable the direct request
+  path and cannot bypass API retrieval QA.
 - **Canonical outputs:**
   [`docs/data/usgs_groundwater_latest_ca.geojson`](data/usgs_groundwater_latest_ca.geojson)
   and
@@ -349,8 +353,22 @@ ownership.
   two years. These are display/selection bands, not a claim that groundwater
   changes on an hourly cadence.
 - **QA/empty policy:** The station index, API result and final feature set each
-  have minimum count checks. Optional index fallback does not remove the API
-  minimum gate.
+  have minimum count checks; the API and output thresholds remain 300 sites.
+  Every 60-site outer chunk must finish as usable data or a valid empty response,
+  and valid-empty chunks still fail publication when the aggregate API minimum
+  is not met. Comparable healthy July 25, July 27 and July 29, 2026 runs
+  completed all 38 outer chunks, supporting the 100% chunk-completeness rule.
+  After one primary client attempt, the direct fallback retries only transport
+  errors and HTTP 408, 429, 500, 502, 503 and 504, using at most three direct
+  attempts with bounded exponential backoff, jitter and capped `Retry-After`.
+  HTTP 4xx responses other than 408 and 429, malformed payloads and schema
+  mismatches are not retried. Three
+  consecutive terminal chunk failures stop further requests and record the
+  remaining chunks as not attempted. Logs aggregate structured, sanitized
+  request outcomes and parser/filter counts. Optional index fallback does not
+  remove the API minimum or all-chunk-completeness gates. The GeoJSON and summary
+  are staged, validated as one prospective product set, and promoted with
+  rollback if either replacement fails.
 - **Attribution:** USGS Water Data; values are measurements, not storage
   calculations.
 - **Known gaps:** No manifest/schema version; candidate-index and optional

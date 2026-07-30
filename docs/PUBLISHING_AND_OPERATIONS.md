@@ -161,7 +161,12 @@ The repository has product-specific, not universal, QA:
   A response near 20% station or row coverage is a provider failure. Environment
   overrides may tighten these gates but invalid, impossible, or weaker values
   stop the build.
-- Groundwater validates index, API and output counts.
+- Groundwater validates index, API and output counts, requires every request
+  chunk to complete as usable data or a valid empty response, aggregates
+  structured request/parser diagnostics, and stages and validates the GeoJSON
+  and summary before rollback-capable promotion. Its API and output minimums
+  remain 300 sites; candidate-index value fallback cannot satisfy or bypass the
+  API gate.
 - Streamflow validates only its static station index; the workflow's declared
   minimum current-discharge threshold is not implemented by the script.
 
@@ -182,7 +187,7 @@ The final two gaps mean "workflow success" is not universally equivalent to
 | Branch advances before push | Non-force push is rejected | Remains |
 | Product commit succeeds, Pages fails | Git has new product; hosted site may remain older | Git and hosted states diverge temporarily |
 | Script produces a degraded result that passes its checks | Commit may succeed | Prior product is replaced |
-| Local script fails after direct writes | Local checkout may contain partial files | Remote remains until a later push |
+| Local script fails after direct writes | Local checkout may contain partial files; snow and groundwater are product-specific staged-replacement exceptions | Remote remains until a later push |
 
 Last-known-good protection is therefore partial, not universal.
 
@@ -192,12 +197,12 @@ At the remote Git-ref boundary, one successful commit updates all staged paths
 together. A rejected push updates none of them.
 
 The scripts do not universally construct complete product sets in a separate
-staging directory and atomically rename them into place. The snow producer is a
-product-specific exception: it constructs and validates all four prospective
-outputs in a same-directory staging area, preserves backups, and restores
-already-promoted members if a later replacement fails. The filesystem still
-does not provide one atomic four-path rename. Other local manual runs can alter
-final `docs/data` paths before later processing fails.
+staging directory and atomically rename them into place. Snow and groundwater
+are product-specific exceptions: each constructs and validates its complete
+prospective output set in a same-directory staging area, preserves backups, and
+restores already-promoted members if a later replacement fails. The filesystem
+still does not provide one atomic multi-path rename. Other local manual runs can
+alter final `docs/data` paths before later processing fails.
 
 Safe local reproduction uses:
 
@@ -262,6 +267,19 @@ Cause classifications:
   source `actions/upload-artifact` reference to `@v7`. Scheduled ASOS/GFS runs
   have since exercised the updated action; preview and HRRR sandbox still need
   a future nonproduction post-change run for runtime evidence.
+- Groundwater run `30206927617` on July 26, 2026 sent all 38 outer chunks from
+  the primary client into its direct-request fallback, produced zero raw rows
+  and zero API-latest sites, then reported 50 or more warnings without exposing
+  their individual classifications. The source and dependency versions matched
+  successful July 25 and July 27 runs, while a July 29 run exposed one primary
+  HTTP 502 that the direct path recovered. This supports a transient upstream
+  response failure, likely widespread 5xx behavior, rather than a parser/filter
+  rejection; the exact failed statuses and bodies cannot be recovered from the
+  retained log. The unchanged 300-site gate prevented publication, the prior
+  official product remained, and the next three scheduled runs succeeded.
+  Groundwater now uses bounded retry classification, a three-consecutive-chunk
+  circuit breaker, concise structured diagnostics, parser/filter accounting,
+  all-chunk completeness, and staged two-file promotion.
 
 ## Incident playbooks
 
