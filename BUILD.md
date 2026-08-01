@@ -61,6 +61,8 @@ package or operating system is equivalent to the hosted runner.
 | Snow-pillow SWE | `scripts/build_snow_pillow_latest.R` |
 | USGS groundwater | `scripts/build_usgs_groundwater_latest_ca.R` |
 | USGS streamflow | `scripts/build_usgs_streamflow_latest_ca.R` |
+| CNRFC major water-supply basin forecasts | `scripts/build_major_water_supply_basin_forecasts.R` |
+| CBRFC Colorado River water-supply forecasts | `scripts/build_cbrfc_major_water_supply_forecasts.R` |
 
 Run exactly one intended builder. Do not paste or execute the complete
 entry-point inventory as a batch.
@@ -106,6 +108,33 @@ For a faithful reproduction:
 Do not reproduce a secret-bearing request by printing configuration. The
 groundwater builder's workflow can supply `API_USGS_PAT`; local reproduction
 should use a securely injected value only if the upstream service requires it.
+
+The CNRFC and CBRFC major water-supply parsers have complete offline fixture
+suites. Run them without touching `docs/data/`:
+
+```sh
+cd "$HOME/Documents/brim-live-data-feeds_source_repo"
+Rscript tests/test_major_water_supply_basin_forecasts.R
+python3 -m unittest -v tests/test_cnrfc_workflow_safety.py
+Rscript tests/test_cbrfc_major_water_supply_forecasts.R
+python3 -m unittest -v tests/test_cbrfc_workflow_safety.py
+```
+
+Do not run the CNRFC production entry point merely to test parsing. It retrieves
+18 official product-9 pages, 15 official product-2 pages, and headline/tabular
+product-7 pages for 18 identities, and may replace its canonical output after
+bootstrap or steady-state structural validation passes.
+For live inspection, set both `CNRFC_FORECAST_OUTPUT_JSON` and
+`CNRFC_FORECAST_QA_JSON` to paths under `/tmp`.
+
+The CBRFC production entry point independently retrieves the official GLDA3
+April-July point response, secondary list CSV and Lake Powell dashboard
+cross-check; the same official dashboard is the water-year primary and
+human-facing summary. It also retrieves the Lake Mead Local monthly
+special-product text and, only for the reviewed July 1, 2026 January-label
+defect, the exact June 1 archived confirmation. For isolated live inspection, set both
+`CBRFC_FORECAST_OUTPUT_JSON` and
+`CBRFC_FORECAST_QA_JSON` to paths under `/tmp`.
 
 ## Inspect changes
 

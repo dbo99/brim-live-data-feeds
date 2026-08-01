@@ -1,0 +1,140 @@
+name: Build CBRFC major water-supply forecasts
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the validated CBRFC feed (main branch only)
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "14 8 * * *"
+      timezone: "America/Los_Angeles"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-data-feed-writes-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out selected branch tip
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Resolve publication mode
+        id: run-mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH_INPUT: ${{ inputs.publish || false }}
+        run: |
+          set -euo pipefail
+
+          publish=false
+          if [[ "${EVENT_NAME}" == "schedule" ]]; then
+            if [[ "${REF_NAME}" != "main" ]]; then
+              echo "Scheduled publication is restricted to main." >&2
+              exit 1
+            fi
+            publish=true
+          elif [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" == "main" ]]; then
+            publish=true
+          fi
+
+          if [[ "${publish}" == "true" ]]; then
+            output_path="docs/data/cbrfc_major_water_supply_forecasts.json"
+          else
+            output_path="${RUNNER_TEMP}/cbrfc_major_water_supply_forecasts_dry_run.json"
+          fi
+
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "output_path=${output_path}" >> "${GITHUB_OUTPUT}"
+          echo "Publication enabled: ${publish}"
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Install Linux system libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcurl4-openssl-dev \
+            libxml2-dev \
+            libssl-dev
+
+      - name: Install R package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: cbrfc-major-water-supply-v1
+          packages: |
+            any::curl
+            any::digest
+            any::jsonlite
+            any::xml2
+
+      - name: Build and validate CBRFC major water-supply forecast feed
+        shell: Rscript {0}
+        env:
+          CBRFC_FORECAST_OUTPUT_JSON: ${{ steps.run-mode.outputs.output_path }}
+          CBRFC_FORECAST_PRIOR_JSON: docs/data/cbrfc_major_water_supply_forecasts.json
+          CBRFC_FORECAST_QA_JSON: ${{ runner.temp }}/cbrfc_major_water_supply_forecasts_run.json
+          CBRFC_FORECAST_STALE_AFTER_DAYS: "40"
+          CBRFC_FORECAST_WATER_YEAR_STALE_AFTER_DAYS: "40"
+          CBRFC_FORECAST_LOCAL_MONTHLY_STALE_AFTER_DAYS: "40"
+        run: |
+          source("scripts/build_cbrfc_major_water_supply_forecasts.R")
+
+      - name: Upload CBRFC dry-run and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cbrfc-major-water-supply-forecasts-qa
+          path: |
+            ${{ runner.temp }}/cbrfc_major_water_supply_forecasts_run.json
+            ${{ runner.temp }}/cbrfc_major_water_supply_forecasts_dry_run.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Commit updated CBRFC feed file
+        if: steps.run-mode.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_REF_TYPE}" != "branch" ]]; then
+            echo "Refusing to publish outside the main branch: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/cbrfc_major_water_supply_forecasts.json
+
+          if git diff --cached --quiet; then
+            echo "No substantive CBRFC forecast changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update CBRFC major water-supply forecast feed"
+
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
+          fi
