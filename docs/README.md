@@ -104,7 +104,7 @@ wc -c AGENTS.md .github/workflows/AGENTS.md scripts/AGENTS.md
 Audit the BRIM live-data-feed documentation against the current checked-out
 repository without changing source, generated products, private source, settings,
 or publication state. Preserve unrelated work and read root/nested AGENTS.md.
-Record branch and commit; inventory workflows, workflow-invoked scripts, all 11
+Record branch and commit; inventory workflows, workflow-invoked scripts, all 12
 product families, declared/staged outputs, manifests, artifacts, schedules,
 permissions, concurrency, selected-ref publication, current QA, and known gaps.
 Parse current JSON/GeoJSON and the four wind manifests; inspect CSV headers and

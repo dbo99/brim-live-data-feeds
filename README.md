@@ -11,7 +11,7 @@ reviewed, and rolled back without coupling them to the interface code.
 
 ## Production products
 
-The current production system contains eleven product families:
+The current production system contains thirteen product families:
 
 1. CDEC reservoir storage
 2. CoCoRaHS daily precipitation
@@ -24,6 +24,8 @@ The current production system contains eleven product families:
 9. Snow pillow snow-water equivalent
 10. USGS California groundwater
 11. USGS California streamflow
+12. CNRFC major water-supply basin forecasts
+13. CBRFC Colorado River water-supply forecasts
 
 The authoritative paths, workflows, scripts, formats, schedules, time/unit
 semantics, QA gates, and known gaps are in
@@ -34,18 +36,23 @@ operations but are not separate production products.
 
 ## How publication works
 
-Each production writer:
+Each production writer, subject to documented product-specific branch controls:
 
 - Checks out the selected Git reference.
 - Runs one product-specific builder.
 - Allows only its declared output paths.
 - Commits accepted artifacts with a product-specific generated-data message.
-- Pushes normally, without force, back to the selected reference.
+- Pushes normally, without force, back to its authorized selected reference.
 - Shares a reference-scoped, non-cancelling concurrency group with other writers.
 
-The official Pages source is `main/docs`. A manual writer run on a feature branch
-changes that branch's ordinary product paths; it does not publish the official
-feed. When a builder rejects a response before commit, the previous committed
+The CNRFC and CBRFC forecast writers are the current stricter exceptions: manual
+runs default to runner-temporary dry-run output, feature branches cannot publish,
+and scheduled or explicitly requested publication is restricted to `main`.
+
+The official Pages source is `main/docs`. Except for the CNRFC and CBRFC
+dry-run-only feature-branch behavior, a manual writer run on a feature branch changes that
+branch's ordinary product paths; it does not publish the official feed. When a
+builder rejects a response before commit, the previous committed
 files remain the last-known-good publication.
 
 See [docs/PUBLISHING_AND_OPERATIONS.md](docs/PUBLISHING_AND_OPERATIONS.md) for

@@ -70,12 +70,13 @@ data. Every writer therefore needs two independent kinds of evidence:
 
 ## Product architecture
 
-The eleven production families fall into four broad shapes:
+The thirteen production families fall into five broad shapes:
 
 | Shape | Product families | Publication pattern |
 |---|---|---|
 | Current geospatial snapshot | CDEC reservoirs, CoCoRaHS precipitation, ASOS/AWOS wind, USGS streamflow, USGS groundwater | GeoJSON plus a summary; ASOS/AWOS also has a manifest |
 | Current operational snapshot | Delta operations | JSON summary, GeoJSON features, compact summary, and X2 reference |
+| Geometry-free forecast snapshot | CNRFC major water-supply basin forecasts; CBRFC Colorado River water-supply forecasts | One 51-record CNRFC JSON payload of direct product-9 water-year, product-7 April-July and major-basin-only product-2 accumulated-volume values; one separate three-record CBRFC JSON payload with two direct GLDA3 scalar periods and one direct LKSA3 monthly local-intervening series. CNRFC and CBRFC have separate schemas and publication transactions; all three CBRFC source families reconcile independently. Browser geometry remains outside this repository. |
 | Snapshot with historical/context tables | SCAN soil moisture, snow pillow SWE | GeoJSON and summaries plus trace/context CSV files |
 | Rolling forecast set | GFS, HRRR, NBM wind | Manifest/index plus target-time files; GFS and HRRR also expose latest/summary compatibility views |
 
@@ -87,9 +88,10 @@ details remain authoritative in [PRODUCTS.md](PRODUCTS.md).
 
 Production writer workflows use a concurrency group derived from the selected Git
 reference, wait rather than cancel an in-progress writer, check out that reference,
-and push a normal non-force commit back to it. A manual run on a feature branch
-therefore writes ordinary product paths on that feature branch; it does not update
-the official Pages feed.
+and push a normal non-force commit back to it. Most manual writers on a feature
+branch therefore write ordinary product paths on that branch; CNRFC and CBRFC
+forecast dispatches instead default to temporary dry runs and cannot publish
+from a feature branch. Neither behavior updates the official Pages feed.
 
 The official public site is served from `main/docs`. A successful branch build is
 only branch-level evidence until reviewed and merged. Pages deployment is a

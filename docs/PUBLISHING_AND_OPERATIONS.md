@@ -28,14 +28,14 @@ newer product than the hosted site.
 
 ## Branch-safe writer behavior
 
-All eleven scheduled writers currently:
+All thirteen scheduled production writers currently:
 
 - support schedules and manual dispatch;
 - request `contents: write`;
 - use the shared concurrency group
   `live-data-feed-writes-${{ github.ref }}`;
 - set `cancel-in-progress: false` and `queue: max`;
-- check out `ref: ${{ github.ref }}` with full history;
+- follow their documented checkout/ref contract with full history;
 - reject non-branch publication refs;
 - stage declared product paths;
 - commit only when those paths changed;
@@ -43,6 +43,12 @@ All eleven scheduled writers currently:
 - fail if the branch advanced unexpectedly.
 
 They do not pull, merge or rebase generated-product commits.
+
+The established writers retain their existing documented checkout behavior.
+The two major-basin forecast workflows select the current `main` branch tip for
+scheduled runs and the explicitly dispatched branch tip for manual dry runs.
+Manual publication for either major-basin feed remains permitted only from
+`main`; a feature-branch dispatch remains nonpublishing.
 
 Consequences:
 
@@ -132,6 +138,8 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `nbm-wind-guidance-qa` | NBM production workflow | Build QA evidence | Explicit 14 days |
 | `hrrr-wind-sandbox` | HRRR sandbox workflow | Nonproduction review output | Explicit 14 days |
 | `usgs-groundwater-candidate-discovery-preview` | Groundwater preview workflow | Nonproduction candidate-discovery review | Explicit 30 days |
+| `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
+| `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -169,15 +177,62 @@ The repository has product-specific, not universal, QA:
   API gate.
 - Streamflow validates only its static station index; the workflow's declared
   minimum current-discharge threshold is not implemented by the script.
+- Major water-supply basin forecasts validate the exact reviewed 51-record
+  roster: 18 product-9 identities, 15 major-basin-only product-2 identities and
+  18 product-7 April-July identities.
+  Checks cover official LID/product identity, unique semantic labels, source
+  units and times, ordered product-2 dates, finite/plausible values, cumulative
+  nondecrease, source-time monotonicity, per-metric freshness/expiry, null
+  sentinels, reconciled family health, deterministic payload ordering and a
+  geometry-free schema. Product-7 checks also require unique headline/tabular
+  semantics, direct-source fields and a matching 50%-exceedance volume.
+  Bootstrap requires all 15 FNF, all three indices, all 14
+  expected-available product-2 median series and explicit source-confirmed MHBC1
+  product-2 unavailability, plus all 18 product-7 identities while active or
+  explicit source-unavailable records out of season. Once a valid prior exists, current-success counts are
+  health/alerting signals rather than publication gates: the writer publishes a
+  complete degraded 51-record snapshot unless structural or staged validation
+  fails.
+- The separate CBRFC writer validates exactly three ordered GLDA3/LKSA3
+  structural records and separate family health for April-July, water year and
+  Lake Mead Local monthly outlooks. April-July
+  accepts public values only from official `off*` fields with a valid
+  date-precision issue; its point endpoint remains authoritative when the
+  secondary list omits a newer valid issue. The server-rendered Lake Powell
+  dashboard cross-checks same-issue Apr-Jul volume and percent average at its
+  displayed precision; omission, maintenance or lag creates an operational
+  notice, while material current disagreement fails validation. Water year
+  accepts only direct `Full
+  Fcst` and `%Avg` values from the unique semantic `Water Year` row on the
+  official situational-awareness page, and never infers percent median. Both
+  adapters reject malformed/oversized/error responses, identity/year/unit/type/
+  period drift, negative/nonfinite values, backward dates and ambiguous source
+  structures. The local adapter requires exact source labels, one LKSA3 identity
+  and 12 source months, and never sums them. Its sole reviewed date correction
+  changes raw `January 2026` to `2027-01` only for the exact July 1, 2026 issue
+  after the official June 1 archive confirms January 2027; the payload preserves
+  complete override provenance and an operational notice. Future monthly items
+  are popup-only `not_yet_valid`; only the valid current month is map eligible
+  while source freshness holds. Bootstrap may establish
+  one valid family while others remain explicit failed/unavailable structural
+  records; it fails if no active family establishes official data.
 
-The final two gaps mean "workflow success" is not universally equivalent to
-"complete current product."
+The CoCoRaHS completeness gap and streamflow current-value gap mean "workflow
+success" is not universally equivalent to "complete current product."
 
 ## Last-known-good matrix
 
 | Failure point | Current remote behavior | Prior official product |
 |---|---|---|
 | Upstream retrieval stops the script | No commit step | Remains in Git and Pages |
+| One or more CNRFC pages fail after a valid prior exists | Successful families/records advance; failed metrics become unexpired `stale_last_known_good`, `expired`, explicit source `unavailable`, or `failed_no_data` | A complete, honestly degraded 51-record snapshot may replace the prior; values retain their original source and successful-retrieval provenance |
+| All CNRFC families fail after a valid prior exists | Complete 51-record degraded snapshot is constructed; family health becomes `outage_using_last_known_good` where provenance values remain, otherwise `unusable` | Prior values may remain as non-map LKG/expired provenance; the prior payload is not left online falsely marked current |
+| First CNRFC bootstrap lacks any required 15 FNF, three index, 14 expected-available product-2 median series, MHBC1 source-unavailable confirmation, or 18 valid/seasonally unavailable product-7 identities | No canonical replacement or commit step | No canonical seed is created |
+| CNRFC roster/schema/serialization/staged validation fails | No canonical replacement or commit step | Prior canonical bytes remain unchanged |
+| One CBRFC family attempt fails after a valid prior exists | Only that family becomes unexpired `stale_last_known_good`, `expired`, explicit source `unavailable`, or `failed_no_data` as evidence permits; independently successful families advance | A complete, honestly degraded three-record snapshot may replace the prior; no family erases another's validated provenance |
+| First CBRFC bootstrap establishes at least one valid family, including expired period provenance or the year-round monthly series | The valid family is accepted and the others remain explicit `failed_no_data` or source-unavailable structural records; CNRFC is unaffected | A complete, honestly partial three-record CBRFC seed can be created year-round |
+| First CBRFC bootstrap establishes no official family and an active family has an unexplained fetch/parse/validation failure | No CBRFC canonical replacement or commit step; CNRFC is unaffected; the failure is not relabeled out of season | No CBRFC canonical seed is created |
+| CBRFC roster/schema/serialization/staged validation fails | No CBRFC canonical replacement or commit step; CNRFC is unaffected | Prior CBRFC canonical bytes remain unchanged |
 | Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
 | Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |
 | Transformation error stops the script | No commit step | Remains |

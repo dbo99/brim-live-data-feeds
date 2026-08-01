@@ -20,6 +20,8 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 |---|---|---|---|---|
 | `.github/workflows/build-asos-awos-wind-latest.yml` | Build ASOS/METAR observed wind latest | Manual; :17/:42 hourly | `scripts/build_asos_awos_wind_latest.R` | Three ASOS wind files |
 | `.github/workflows/build-cdec-reservoir-feed.yml` | Build CDEC reservoir latest GeoJSON | Manual; :29 every 3h | `scripts/build_cdec_reservoir_latest.R` | CDEC GeoJSON/summary |
+| `.github/workflows/build-major-water-supply-basin-forecasts.yml` | Build major water-supply basin forecasts | Manual dry run by default; native-IANA 10:56/16:56 Pacific | `scripts/build_major_water_supply_basin_forecasts.R` | One geometry-free CNRFC JSON payload; scheduled/explicit manual publication on `main` only |
+| `.github/workflows/build-cbrfc-major-water-supply-forecasts.yml` | Build CBRFC major water-supply forecasts | Manual dry run by default; native-IANA 08:14 Pacific daily | `scripts/build_cbrfc_major_water_supply_forecasts.R` | Separate three-record GLDA3/LKSA3 JSON payload; scheduled/explicit manual publication on `main` only |
 | `.github/workflows/build-cocorahs-daily-precip-feed.yml` | Build CoCoRaHS daily precip GeoJSON | Manual; 00:37/08:37/16:37 | `scripts/build_cocorahs_daily_precip_latest.R` | CA/CONUS products |
 | `.github/workflows/build-delta-ops-daily-summary.yml` | Build Delta Ops daily summary GeoJSON | Manual; five daily attempts | `scripts/build_delta_ops_daily_summary.R` | Four Delta files |
 | `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
@@ -33,7 +35,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
 
-GitHub's dynamic `pages build and deployment` workflow is a fifteenth active
+GitHub's dynamic `pages build and deployment` workflow is a seventeenth active
 workflow but is not source-controlled in `.github/workflows`.
 
 ## Names and entry points
@@ -60,7 +62,16 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Eleven writers have schedules and `workflow_dispatch`.
+- Thirteen writers have schedules and `workflow_dispatch`.
+- The CNRFC forecast writer uses GitHub Actions' native
+  `America/Los_Angeles` timezone at 10:56 and 16:56. It has no runtime
+  exact-minute guard, records a stable Pacific AM/PM logical slot, defaults
+  manual dispatch to runner-temporary dry-run output, and permits scheduled or
+  explicitly requested publication only from the selected `main` branch tip.
+- The CBRFC forecast writer independently uses the native
+  `America/Los_Angeles` timezone once daily at 08:14. It defaults manual
+  dispatch to runner-temporary dry-run output and permits scheduled or explicitly
+  requested publication only from the selected `main` branch tip.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
@@ -68,9 +79,11 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Gaps**
 
-- Production manual dispatch has no confirmation/production-target input.
-- Writers can be manually targeted at a feature branch and write ordinary
-  product paths on that branch.
+- Most production manual dispatches have no confirmation/production-target
+  input; the CNRFC and CBRFC forecast writers are product-specific exceptions.
+- Most writers can be manually targeted at a feature branch and write ordinary
+  product paths on that branch; the CNRFC and CBRFC forecast writers are
+  product-specific dry-run exceptions.
 - There is no GitHub Environment approval for official publication.
 
 **Recommended**
@@ -197,6 +210,11 @@ is no separate least-privilege build job.
   failure.
 - The groundwater producer applies the same staged-validation and rollback
   pattern to its GeoJSON and summary pair.
+- The CNRFC major water-supply producer writes and validates its one canonical
+  JSON path in the destination directory, then renames it into place only when
+  substantive source/status fields changed.
+- The CBRFC producer applies the same staged validation and semantic no-op rule
+  to its separate exact three-record canonical JSON path.
 
 **Gap**
 
@@ -242,6 +260,27 @@ directory and atomically promoted locally.
 - Groundwater requires every outer request chunk to complete as usable data or a
   valid empty response and still requires at least 300 API-latest sites and 300
   output features. Candidate-index fallback cannot bypass either retrieval gate.
+- CNRFC major water-supply basin forecast bootstrap requires all 15 FNF and all
+  three direct-index product-9 identities, 14 expected-available product-2 median
+  series plus explicit MHBC1 source unavailability, and all 18 product-7
+  identities while active or explicit source-unavailable records out of season.
+  Product 2 and product 7 run in the same workflow and schedule as product 9.
+  After bootstrap, per-record failures retain only matching validated prior
+  values with explicit state and families advance independently in the complete
+  51-record payload.
+- The separate three-record CBRFC payload keeps the GLDA3 April-July official
+  `off*` source and semantic water-year situational-page source in independent
+  families, and adds a third independent LKSA3 Lake Mead Local 12-month series
+  from the official special-product text. Bootstrap may establish any valid
+  family while another remains explicitly failed/unavailable, but rejects a run
+  where no active family establishes official data. Each family can advance or
+  retain only its own validated prior provenance. The local adapter applies one
+  reviewed, provenance-preserving January label correction to the exact July 1,
+  2026 issue only after the immediately preceding official archive confirms the
+  year; all other rollover errors fail. Future monthly items are not map
+  eligible before their month. Controlled-date tests cover July 31, August 1,
+  September 1, October 1, January 1 and future pre-issuance bootstrap. CBRFC source
+  failures and its publication transaction cannot block or alter CNRFC.
 
 **Gaps**
 
@@ -325,7 +364,7 @@ directory and atomically promoted locally.
 
 **Gaps**
 
-- Seven families lack formal manifests.
+- Eight families lack formal manifests.
 - Manifest envelopes and versions differ.
 - No JSON Schemas or product checksums exist.
 - Producer workflow/commit and publication time are absent.
@@ -345,6 +384,8 @@ directory and atomically promoted locally.
 - ASOS/GFS use default artifact retention.
 - HRRR/NBM and HRRR sandbox use 14 days.
 - Groundwater preview uses 30 days.
+- CNRFC and CBRFC major water-supply forecast run diagnostics use 14 days and
+  exclude full source bodies.
 - Artifacts may contain QA packages and debug logs.
 - The groundwater writer emits bounded, sanitized request summaries and
   parser/filter counts, including aggregated warning classes instead of

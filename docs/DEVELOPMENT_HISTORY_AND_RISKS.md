@@ -8,7 +8,7 @@ release changelog and does not replace Git history.
 
 ### Product expansion
 
-The repository grew from individual uploaded datasets into eleven independently
+The repository grew from individual uploaded datasets into thirteen independently
 scheduled product families. The resulting architecture deliberately keeps
 product-specific scripts, schedules, outputs, and validation because the upstream
 services and consumer semantics differ substantially.
@@ -89,7 +89,7 @@ boundary until the producer, consumer, and public contract are changed together.
 
 ## Current strengths
 
-- Eleven product families have explicit workflow and builder ownership.
+- Thirteen product families have explicit workflow and builder ownership.
 - Production writers use bounded timeouts and reference-scoped non-cancelling
   concurrency.
 - Git commits retain prior published states and support normal rollback.
@@ -105,6 +105,24 @@ boundary until the producer, consumer, and public contract are changed together.
 - Groundwater has deterministic offline tests for retry classification,
   circuit breaking, parser/filter accounting, all-chunk completeness, its
   unchanged 300-site minimum, and rollback-capable two-file replacement.
+- CNRFC major water-supply basin forecasts have a reviewed 51-record
+  RFC/LID/product roster, semantic-label fixtures for products 9, 2 and 7,
+  direct-index and ordered accumulation-horizon tests, strict bootstrap gates,
+  independent steady-state family degradation, metric-level freshness/expiry,
+  explicit attempt taxonomy, no-op canonical comparison and native Pacific
+  scheduling. A July 31, 2026 design probe found the official MHBC1 product-2
+  control disabled and its page explicitly unavailable; the other 14 reviewed
+  product-2 pages and all 18 product-7 identities used the expected direct-value
+  structures. The separate CBRFC product has two reviewed GLDA3 period
+  identities and one LKSA3 Lake Mead Local monthly-series identity, structured
+  official-field, semantic-page and special-product fixtures,
+  date-precision period-specific freshness/expiry, raw-guidance exclusion,
+  display-precision dashboard cross-checking, explicit popup-link roles, one
+  archive-confirmed January label correction, controlled-date year-round
+  bootstrap, independent family degradation and its own daily workflow/
+  publication transaction. A direct total-Lake-Mead product remains deferred
+  after the special-products pages, Upper and Lower dashboards, reservoir
+  listings and official structured request exposed no complete direct record.
 
 ## Risk register
 
@@ -128,8 +146,12 @@ corruption or outage would require immediate P0 reclassification.
 | P2 | SCAN and snow combine generated live outputs with static/reference context tables. | An algorithm change can make live and context files semantically inconsistent. | Document per-file ownership and validate compatible water-year/date and unit assumptions together. |
 | P2 | Product-specific QA has no shared checksum, provenance, or build metadata standard. | It is harder to prove which upstream response and builder version created a file. | Add non-sensitive provenance and checksums to summaries/manifests or retained build reports. |
 | P2 | Scheduled data commits and code changes share `main`. | High-volume automated history can obscure review and complicate code rollbacks. | Preserve clear commit messages and consider a controlled publication branch only after evaluating Pages and consumer impact. |
-| P2 | Feature-branch manual writers use ordinary product paths on that branch. | A reviewer may mistake branch artifacts for official data or accidentally merge generated changes. | Label evidence clearly, review the changed-file set, and do not merge test-generated feed files unless that is the intended release. |
+| P2 | Most feature-branch manual writers use ordinary product paths on that branch; the CNRFC and CBRFC forecast writers are dry-run-only exceptions. | A reviewer may mistake branch artifacts for official data or accidentally merge generated changes. | Label evidence clearly, review the changed-file set, and do not merge test-generated feed files unless that is the intended release. |
 | P2 | Upstream rate limits, latency, format drift, and transient outages are external dependencies. Groundwater now has product-specific retry classification, a circuit breaker, parser accounting and all-chunk completeness, but these controls are not uniform. | Builds can time out, partially populate, or fail repeatedly without a source-code defect. | Extend bounded retries and concise diagnostics product by product, distinguish outage from schema change, and alert on sustained staleness. |
+| P2 | The CNRFC major water-supply product depends on labeled server-rendered HTML and inline chart-title/table text because the reviewed official bulk products omit percent-of-median, product 2 is a page table and product 7 requires headline/tabular cross-checking. MHBC1 currently has no official product-2 table. | A CNRFC presentation or per-location availability change can degrade records even when other hydrologic products still exist upstream. | Retain focused and fuller sanitized fixtures, fail ambiguous labels and table conflicts, alert from independent family/metric health, treat new MHBC1 availability as a roster notice, and review an official structured source if CNRFC publishes one with the complete direct-value contract. |
+| P2 | The CBRFC GLDA3 point endpoint is structured but currently served with a non-JSON content type; its official list may omit a newer point issue, and blank-date zero fields are source sentinels. | Loose content-type, sentinel or list-fallback handling could reject valid official data or publish raw guidance/false zeros. | Keep the point `off*` fields authoritative, require a valid official issue date for numeric values, bound and parse the response strictly, treat the list as secondary QA, and retain adversarial fixtures. |
+| P2 | The CBRFC Lake Powell dashboard is server-rendered with no reviewed separate public backend; it is the water-year primary and only a second official representation, not proven independent evidence, for April-July. It supplies `%Avg` but no water-year percent median. | Presentation drift, lag or loose row selection could swap periods, infer a missing statistic, or silently publish the wrong value. | Require the exact Lake Powell heading, ordered headers and semantic rows; compare current Apr-Jul representations at source-displayed precision, notice omission/lag, fail material conflict, bind direct water-year values into the signature, omit percent median, and isolate period failures. |
+| P2 | The CBRFC Lake Mead Local special product is a sectioned text/CSV file; the July 1, 2026 issue regresses January to 2026 within an otherwise July 2026-June 2027 series, while the direct total-Lake-Mead structured request returns `false`. | A broad repair could hide a future source defect, publish a duplicate/backward month, sum a monthly series, or invent total Lake Mead inflow from Powell plus local flow. | Keep the correction keyed to `CBRFC_LKSA3_LOCAL_JANUARY_ROLLOVER_2026`, the exact issue/row and the June 1 archived confirmation; publish raw/corrected provenance and an operational notice; reject every other ambiguity, publish no aggregate, and defer total Lake Mead until CBRFC exposes a direct dated product. |
 | P2 | No repository license file exists at the baseline. | Contributors and data reusers do not have an explicit repository-wide grant. | Have the owner select and add appropriate code and data licensing; do not infer terms in the meantime. |
 | P3 | Workflow setup and Git publication blocks are repeated. | Safety fixes must be applied consistently across many files. | Introduce reuse only if it keeps product paths, permissions, and validation legible. |
 | P3 | Documentation can drift from schedules, actions, scripts, and public paths. | Operators may follow obsolete instructions. | Run the documentation audit in [README.md](README.md) after workflow or contract changes. |
