@@ -610,19 +610,36 @@ scenario("bootstrap accepts exact established roster and reports independent fam
 })
 
 scenario("bootstrap rejects missing required families or missing MHBC source confirmation", {
+  bootstrap_generated_at <- "2026-07-31T19:00:00Z"
   fnf_failed <- successful_attempts()
   fnf_failed[["CNRFC:SCSC1:WY_FNF"]] <- cnrfc_failure_result("parse_failed", "changed page", retrieved_at)
-  assert_error(cnrfc_build_payload(roster, fnf_failed), "14/15 water_year_fnf", "Incomplete FNF bootstrap was accepted.")
+  assert_error(
+    cnrfc_build_payload(roster, fnf_failed, generated_at = bootstrap_generated_at),
+    "14/15 water_year_fnf",
+    "Incomplete FNF bootstrap was accepted."
+  )
   median_failed <- successful_attempts()
   median_failed[["CNRFC:SCSC1:10D_VOLUME_ACCUM"]] <- cnrfc_failure_result("validation_failed", "bad median", retrieved_at)
-  assert_error(cnrfc_build_payload(roster, median_failed), "13/14 expected-available accumulation", "Incomplete median bootstrap was accepted.")
+  assert_error(
+    cnrfc_build_payload(roster, median_failed, generated_at = bootstrap_generated_at),
+    "13/14 expected-available accumulation",
+    "Incomplete median bootstrap was accepted."
+  )
   product7_failed <- successful_attempts()
   product7_failed[["CNRFC:SCSC1:APR_JUL_VOLUME"]] <- cnrfc_failure_result("parse_failed", "changed page", retrieved_at)
-  assert_error(cnrfc_build_payload(roster, product7_failed), "17/18 April-July", "Incomplete product-7 bootstrap was accepted.")
+  assert_error(
+    cnrfc_build_payload(roster, product7_failed, generated_at = bootstrap_generated_at),
+    "17/18 April-July",
+    "Incomplete product-7 bootstrap was accepted."
+  )
   mhbc_current <- successful_attempts()
   mhbc_row <- accum_row_for("MHBC1")
   mhbc_current[["CNRFC:MHBC1:10D_VOLUME_ACCUM"]] <- cnrfc_success_result(synthetic_record(mhbc_row, 20))
-  assert_error(cnrfc_build_payload(roster, mhbc_current), "MHBC1 source-unavailable=false", "Changed MHBC availability bypassed review.")
+  assert_error(
+    cnrfc_build_payload(roster, mhbc_current, generated_at = bootstrap_generated_at),
+    "MHBC1 source-unavailable=false",
+    "Changed MHBC availability bypassed review."
+  )
 })
 
 scenario("deterministic coverage is reported but does not gate bootstrap", {
