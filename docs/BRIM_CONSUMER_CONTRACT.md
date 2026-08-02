@@ -145,7 +145,7 @@ defines a formal limit.
 | Family and canonical path | Root/geometry | Minimum identity/location | Minimum values and units | Time, status, source, and missing behavior | Companion/compatibility status |
 |---|---|---|---|---|---|
 | CDEC reservoir<br>`docs/data/cdec_reservoir_latest.geojson` | GeoJSON `FeatureCollection`; Point coordinates `[longitude, latitude]` numbers | `cdec_id:string`, `reservoir_name:string` | `display_storage_af:number|null` acre-feet, `display_storage_maf:number|null`, `display_storage_source:string`; optional `capacity_af:number|null`, `pct_capacity:number|null` | `display_obs_datetime_utc:string|null` is selected observation time; `display_obs_age_hours:number|null`; `feed_build_time_utc:string`; `obs_stale_12h:boolean`, `obs_stale_24h:boolean`; `has_storage_value:boolean`; `source_url:string`. Null storage is missing, not zero. | `docs/data/cdec_reservoir_latest_summary.json` is a canonical JSON status/coverage object; no compatibility path is classified. |
-| Major water-supply basin forecasts<br>`docs/data/major_water_supply_basin_forecasts.json` | Geometry-free JSON object; `schema_version:string`, `product_id:string`, `roster_version:string`, `generated_at:string`, `publication_mode:string`, exact expected/actual counts, `source_summary:object`, `family_health:object`, `operational_notices:array`, `records:array` | `forecast_key:string` is the RFC/LID/product identity; `rfc:string`, `nws_lid:string`, `product_type:string`, `display_name:string`. Join only by `forecast_key`. | Water-year variant: `forecast_statistic:"median"`, `forecast_volume:number|null`, `forecast_volume_units:string|null`, `percent_mean:number|null`, `percent_median:number|null`. Ten-day variant: Day 3/5/10 median volume/date pairs, Day 3/5 deterministic volume/date pairs; no deterministic Day 10. April-July variant: `forecast_statistic:"50_percent_exceedance"`, direct `forecast_volume:number|null`, `percent_average:number|null`, `normal_average_volume:number|null`, `forecast_period:"April-July"`. Seasonal and ten-day records carry reviewed `normalized_units` and exact `source_units`. | All variants: source issue/update time as applicable, `last_successful_retrieval_at:string|null`, `last_attempt_at:string`, `attempt_outcome:string`, `failure_stage:string|null`, `stale_since:string|null`, `valid_through:string|null`, `value_origin:string`, `metric_state:object`, `status:string`, `missing_reason:string|null`, `source_url:string`, `source_page_signature:string|null`, `diagnostic:object`. Missing is null, never zero. | One canonical 51-record CNRFC payload; no compatibility geometry or manifest. Each metric state supplies source time, validity, eligibility and missing semantics. The browser joins consumer-owned reviewed polygons by `forecast_key`. |
+| Major water-supply basin forecasts<br>`docs/data/major_water_supply_basin_forecasts.json` | Geometry-free JSON object; `schema_version:string`, `product_id:string`, `roster_version:string`, `generated_at:string`, `publication_mode:string`, exact expected/actual counts, `source_summary:object`, `family_health:object`, `operational_notices:array`, `records:array` | `forecast_key:string` is the RFC/LID/product identity; `rfc:string`, `nws_lid:string`, `product_type:string`, `display_name:string`. Join only by `forecast_key`. | Water-year variant: `forecast_statistic:"median"`, `forecast_volume:number|null`, `forecast_volume_units:string|null`, `percent_mean:number|null`, `percent_median:number|null`. Ten-day variant: Day 3/5/10 median volume/date pairs, Day 3/5 deterministic volume/date pairs; no deterministic Day 10. April-July variant: `forecast_statistic:"50_percent_exceedance"`, direct `forecast_volume:number|null`, `percent_average:number|null`, `percent_median:number|null`, `normal_average_volume:number|null`, `forecast_period:"April-July"`. Seasonal and ten-day records carry reviewed `normalized_units` and exact `source_units`. | All variants: source issue/update time as applicable, `last_successful_retrieval_at:string|null`, `last_attempt_at:string`, `attempt_outcome:string`, `failure_stage:string|null`, `stale_since:string|null`, `valid_through:string|null`, `value_origin:string`, `metric_state:object`, `status:string`, `missing_reason:string|null`, `source_url:string`, `source_page_signature:string|null`, `diagnostic:object`. Missing is null, never zero. | One canonical 51-record CNRFC payload; no compatibility geometry or manifest. Each metric state supplies source time, validity, eligibility and missing semantics. The browser joins consumer-owned reviewed polygons by `forecast_key`. |
 | CBRFC Colorado River water-supply forecasts<br>`docs/data/cbrfc_major_water_supply_forecasts.json` | Separate geometry-free JSON object; schema/product/roster/generation/publication metadata, exact three-record count, aggregate `source_summary:object`, three independent `family_health` entries, `operational_notices:array`, `records:array` | Ordered keys `CBRFC:GLDA3:APR_JUL_WSUP`, `CBRFC:GLDA3:WATER_YEAR_INFLOW`, `CBRFC:LKSA3:LOCAL_INTERVENING_MONTHLY`; product types are `april_july_water_supply_forecast`, `water_year_unregulated_inflow_forecast`, `lake_mead_local_intervening_monthly_forecast` | GLDA3 records retain their direct scalar contracts. LKSA3 has no aggregate volume: `monthly_forecasts:array` contains 12 ordered items with raw/corrected month and override provenance, direct `forecast_volume:number`, direct `percent_median:number`, exact `source_statistic:"ESP 50% EXCEEDANCE"`, `source_percentage_label:"%Med"`, monthly validity and metric state; record units are exact `source_units:"KAF"`, normalized `kaf`. | Every record independently carries attempt/failure, source-anchored freshness/expiry, LKG, exact `source_url`, `retrieval_url`, `summary_url`, `archive_url`, signature and diagnostics. GLDA3 expiry is period-specific. LKSA3 source freshness is independently configured at 40 calendar days; each item is `not_yet_valid`, current, stale or expired according to source age and its Pacific month boundaries. Zero is valid when directly dated/published; null is never zero. | No CNRFC coupling, geometry, coordinates, manifest, Reclamation operations link or compatibility path. The direct total-Lake-Mead endpoint currently publishes no record, so no total key or Powell-plus-local calculation exists. The reviewed July 2026 January-label correction is identified by `CBRFC_LKSA3_LOCAL_JANUARY_ROLLOVER_2026`. |
 | CoCoRaHS<br>`docs/data/cocorahs_daily_precip_ca_latest.geojson`<br>`docs/data/cocorahs_daily_precip_conus_latest.geojson` | GeoJSON `FeatureCollection`; Point geometry; properties also carry `latitude:number`, `longitude:number` | `stationNumber:string`, `stationName:string` | `precip:number`, `gaugeCatch:number`, `precipIsTrace:boolean`, `gaugeCatchIsTrace:boolean`, `units:string` (current producer uses English units) | `obsDateTime:string` is station observation time; `feedBuildTimeUtc:string`; `sourceWindowStartDate:string`, `sourceWindowEndDate:string`; `source:string`, `stationUrl:string`. Trace is represented by its boolean, not by treating zero as missing. | Paired CA/CONUS summary JSON objects are canonical. Optional snow/notes properties may be null; no manifest or compatibility path. |
 | Delta operations<br>`docs/data/delta_ops_daily_summary_features.geojson` | GeoJSON `FeatureCollection`; operational Point features; X2 reference is a separate Point FeatureCollection | `feature_key:string`, `display_name:string`, `feature_type:string`, `metric_name:string` | `value_raw:string`, `value_numeric:number|null`, `units:string`, `label_text:string`; current units include cfs, km, TAF, KAF/day, percent, and status text | `report_date:string` is the source report date; `feed_build_time_utc:string`; `source_name:string`, `source_url:string`, `preliminary_notice:string`; null numeric values retain their raw/status representation. | Compact summary and `docs/data/delta_ops_x2_reference.geojson` are canonical. `docs/data/delta_ops_daily_summary.json` is producer/QA metadata with unresolved consumer ownership. |
@@ -225,12 +225,16 @@ and producer scripts.
   missing values, calculate accumulated volume from flow, read ensemble members,
   derive percentages, sum basins, build indices from components, or infer a
   deterministic Day 10 value.
-- Product-7 `forecast_volume`, `percent_average` and `normal_average_volume` are
-  direct source values. `Median Forecast` is cross-checked against the matching
-  tabular `50% Exceed` value and published as
+- Product-7 `forecast_volume`, `percent_average`, `percent_median` and
+  `normal_average_volume` are direct source values. `Median Forecast` is
+  cross-checked against the matching tabular `50% Exceed` value and published as
   `forecast_statistic: "50_percent_exceedance"`. Consumers must preserve
-  `Percent of Average` as `percent_average`; they must not relabel it
-  percent-of-median, derive another percentage or reconstruct the volume.
+  the direct percent of mean under `percent_average`, the legacy wire key
+  representing percent of mean; preserve the distinct headline
+  `Percent of Median` as `percent_median`; and treat `normal_average_volume` as
+  the legacy wire key representing mean reference volume. Neither percentage
+  may be derived from volume or a reference denominator, and wire-key names must
+  not be exposed as human-facing labels.
 - `forecast_issued_at` and product-2 `source_data_updated_at` are source times;
   `last_successful_retrieval_at` is the retrieval that supplied current-source
   values, `last_attempt_at` is the last materially distinct canonical attempt,
@@ -293,16 +297,17 @@ and producer scripts.
   a retrieval success.
 - Bootstrap with no valid prior payload requires 15/15 FNF, 3/3 index, 14/14
   expected-available product-2 median series, explicit source-confirmed MHBC1
-  product-2 unavailability, all 18 product-7 identities while active or explicit
-  out-of-season source-unavailable states, and the exact validated 51-key
+  product-2 unavailability, all four direct metrics for all 18 product-7
+  identities while active or explicit out-of-season source-unavailable states,
+  and the exact validated 51-key
   schema/roster. Deterministic coverage is separate and not a bootstrap gate.
   With a valid prior payload, steady-state publication constructs all 51 records and lets
   families advance independently using current, partial, LKG, expired,
   unavailable or failed-no-data states. Ordinary outages publish degraded state;
   only unsafe structure/schema/serialization/staged validation preserves prior
   bytes without promotion.
-- The first accepted scheduled writer run creates the canonical path. Absence of
-  the file before that run is a product-unavailable state, not an empty 51-record
+- An accepted scheduled writer run creates the canonical path when absent.
+  Absence of the file is a product-unavailable state, not an empty 51-record
   success.
 - For individual major-basin polygons, the future browser contract may expose
   water-year percent of median/mean, median cumulative inflow through Day 3/5/10,
@@ -319,11 +324,12 @@ and producer scripts.
   percent-of-median modes retain fixed percentage classes; fixed absolute-volume
   classes are not part of this contract. A popup may use `source_url` for a link
   labeled `CNRFC 10-day accumulated-volume forecast` alongside the water-year
-  source link. Raw kaf must not be labeled percent normal or normalized storm
-  intensity. April-July modes may use the direct product-7 volume or percent of
-  average, including the three index records where the consumer owns an
-  applicable reviewed display polygon. Product-7 and the separate GLDA3 feed are
-  comparable seasonal-volume products, but exact source period/normal labels
+  source link. Raw kaf must not be labeled percent of mean or normalized storm
+  intensity. April-July modes may use the direct product-7 volume, percent of
+  mean or percent of median, including the three index records where the
+  consumer owns an applicable reviewed display polygon. Product-7 and the
+  separate GLDA3 feed are
+  comparable seasonal-volume products, but exact source period and mean/median labels
   must remain visible and neither consumer polygon may be described as exact RFC
   forecast-basin geometry.
 
@@ -349,13 +355,13 @@ and producer scripts.
   `esppmed`. The point endpoint is authoritative; an official list row, when
   present, is a secondary identity/period/value cross-check and may lag or omit
   a newer point issue. The Lake Powell dashboard is a second official
-  representation for direct `Full Fcst`/`%Avg` comparison. Same-issue values
-  must agree within half of the dashboard's displayed precision. Omission,
+  representation for direct forecast-volume/percent-of-mean comparison.
+  Same-issue values must agree within half of the dashboard's displayed precision. Omission,
   maintenance or an older dashboard produces an operational notice without
   replacing a complete newer point record; material current disagreement is a
   validation failure.
-- For water year, only the directly published `Full Fcst` and `%Avg` values from
-  the unique semantic `Water Year` row on the official Upper Colorado
+- For water year, only the directly published forecast volume and
+  percent-of-mean values from the unique semantic `Water Year` row on the official Upper Colorado
   situational-awareness page are public. They map to `forecast_volume` and
   `percent_average`. The source's `Obs to Date` value is structurally validated
   but is neither a public metric nor a semantic-publication trigger. It remains
