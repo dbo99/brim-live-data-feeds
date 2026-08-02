@@ -69,7 +69,9 @@ cnrfc_metric_fields <- function(product_type) {
     ))
   }
   if (identical(product_type, "april_july_streamflow_volume_forecast")) {
-    return(c("forecast_volume", "percent_average", "normal_average_volume"))
+    return(c(
+      "forecast_volume", "percent_average", "percent_median", "normal_average_volume"
+    ))
   }
   c("forecast_volume", "percent_mean", "percent_median")
 }
@@ -410,6 +412,7 @@ cnrfc_empty_record <- function(roster_row) {
       normalized_units = NULL,
       source_units = NULL,
       percent_average = NULL,
+      percent_median = NULL,
       normal_average_volume = NULL,
       water_year = NULL,
       forecast_period = "April-July",
@@ -529,7 +532,7 @@ cnrfc_failed_or_retained_record <- function(roster_row, failure, prior_record = 
     )) {
       "cnrfc_prod2_semantic_v1"
     } else if (is_april_july) {
-      "cnrfc_prod7_semantic_v1"
+      "cnrfc_prod7_semantic_v2"
     } else {
       "cnrfc_prod9_semantic_v1"
     },
@@ -567,7 +570,7 @@ cnrfc_required_record_fields <- function(product_type) {
     return(c(
       common[1:5],
       "forecast_statistic", "forecast_volume", "normalized_units", "source_units",
-      "percent_average", "normal_average_volume", "water_year", "forecast_period",
+      "percent_average", "percent_median", "normal_average_volume", "water_year", "forecast_period",
       "forecast_issued_at",
       common[6:length(common)]
     ))
@@ -728,8 +731,10 @@ cnrfc_validate_record <- function(record, roster_row) {
     if (!identical(record$forecast_period, "April-July")) {
       cnrfc_stop("Product-7 forecast_period must preserve the April-July source period.")
     }
-    if ("percent_median" %in% names(record) || "percent_mean" %in% names(record)) {
-      cnrfc_stop("Product-7 must publish percent_average without a substituted percent-normal field.")
+    if ("percent_mean" %in% names(record)) {
+      cnrfc_stop(
+        "Product-7 must not substitute percent_mean for the legacy percent_average wire field."
+      )
     }
     values <- Filter(Negate(is.null), record[fields])
     if (length(values) > 0L) {
@@ -794,7 +799,7 @@ cnrfc_record_primary_missing <- function(record) {
   )) {
     c("day_3_median_volume", "day_5_median_volume", "day_10_median_volume")
   } else if (identical(record$product_type, "april_july_streamflow_volume_forecast")) {
-    c("forecast_volume", "percent_average", "normal_average_volume")
+    c("forecast_volume", "percent_average", "percent_median", "normal_average_volume")
   } else {
     c("forecast_volume", "percent_mean", "percent_median")
   }
@@ -979,7 +984,9 @@ cnrfc_bootstrap_acceptance <- function(records, generated_at) {
   mhbc <- Filter(function(record) identical(record$nws_lid, "MHBC1"), accumulation)
   water_fields <- c("forecast_volume", "percent_mean", "percent_median")
   median_fields <- c("day_3_median_volume", "day_5_median_volume", "day_10_median_volume")
-  april_july_fields <- c("forecast_volume", "percent_average", "normal_average_volume")
+  april_july_fields <- c(
+    "forecast_volume", "percent_average", "percent_median", "normal_average_volume"
+  )
   april_july_acceptable <- function(record) {
     if (april_july_active) return(established(record, april_july_fields))
     established_expired <- identical(record$attempt_outcome, "success") &&
@@ -1049,7 +1056,10 @@ cnrfc_validate_payload <- function(payload, roster) {
     value = TRUE
   )
   if (length(forbidden) > 0L) {
-    cnrfc_stop("Geometry, derived arithmetic, normal, and ensemble fields are forbidden: ", paste(forbidden, collapse = ", "))
+    cnrfc_stop(paste0(
+      "Geometry, derived arithmetic/reference, and ensemble fields are forbidden: ",
+      paste(forbidden, collapse = ", ")
+    ))
   }
   family_names <- c(
     "water_year_fnf", "water_year_index", "ten_day_streamflow_volume_accumulation",
@@ -1142,9 +1152,72 @@ cnrfc_build_payload <- function(roster,
   payload
 }
 
+cnrfc_upgrade_legacy_product7_percent_median <- function(payload) {
+  if (!is.list(payload) || !is.list(payload$records)) return(payload)
+  upgraded <- FALSE
+  for (index in seq_along(payload$records)) {
+    record <- payload$records[[index]]
+    if (!identical(record$product_type, "april_july_streamflow_volume_forecast")) next
+    field_missing <- !"percent_median" %in% names(record)
+    state_missing <- is.list(record$metric_state) &&
+      !"percent_median" %in% names(record$metric_state)
+    if (!field_missing || !state_missing) next
+    field_position <- match("percent_average", names(record))
+    state_position <- match("percent_average", names(record$metric_state))
+    if (is.na(field_position) || is.na(state_position)) next
+
+    reason <- "percent_median_unavailable_in_prior_contract"
+    record <- append(record, list(percent_median = NULL), after = field_position)
+    legacy_state <- cnrfc_metric_state_value(
+      status = "unavailable",
+      value_origin = "none",
+      source_issue_at = record$forecast_issued_at,
+      source_data_updated_at = NULL,
+      valid_through = if (is.null(record$water_year)) {
+        NULL
+      } else {
+        cnrfc_april_july_valid_through(record$water_year)
+      },
+      missing_reason = reason,
+      has_value = FALSE
+    )
+    record$metric_state <- append(
+      record$metric_state,
+      list(percent_median = legacy_state),
+      after = state_position
+    )
+    record$status <- cnrfc_record_status_from_metrics(record$metric_state, record$attempt_outcome)
+    record$value_origin <- cnrfc_record_origin_from_metrics(record$metric_state)
+    record["valid_through"] <- list(
+      cnrfc_latest_timestamp(lapply(record$metric_state, `[[`, "valid_through"))
+    )
+    record["stale_since"] <- list(
+      cnrfc_earliest_timestamp(lapply(record$metric_state, `[[`, "stale_since"))
+    )
+    if (is.null(record$missing_reason)) record$missing_reason <- reason
+    payload$records[[index]] <- record
+    upgraded <- TRUE
+  }
+  if (!upgraded) return(payload)
+
+  family_names <- c(
+    "water_year_fnf", "water_year_index", "ten_day_streamflow_volume_accumulation",
+    "april_july_streamflow_volume_forecast"
+  )
+  payload$source_summary <- cnrfc_source_summary(payload$records)
+  payload$family_health <- stats::setNames(lapply(
+    family_names,
+    function(product_type) cnrfc_family_summary(
+      payload$records, product_type, payload$generated_at
+    )
+  ), family_names)
+  payload
+}
+
 cnrfc_read_payload <- function(path, roster) {
   if (!file.exists(path)) return(NULL)
   payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  payload <- cnrfc_upgrade_legacy_product7_percent_median(payload)
   cnrfc_validate_payload(payload, roster)
   payload
 }

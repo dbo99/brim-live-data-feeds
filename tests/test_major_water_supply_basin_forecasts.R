@@ -117,16 +117,46 @@ scenario("product-7 major-basin and index pages preserve direct 50-percent-excee
     tabular_html = fixture("prod7_normal_index_tabular.html")
   )
   assert_equal(basin$forecast_volume, 1160, "Product-7 basin forecast volume changed.")
-  assert_equal(basin$percent_average, 68, "Product-7 Percent of Average changed.")
-  assert_equal(basin$normal_average_volume, 1700, "Product-7 normal average changed.")
+  assert_equal(basin$percent_average, 68, "Product-7 Percent of mean changed.")
+  assert_equal(basin$percent_median, 83, "Product-7 direct Percent of Median changed.")
+  assert_equal(basin$normal_average_volume, 1700, "Product-7 mean reference volume changed.")
   assert_equal(basin$forecast_statistic, "50_percent_exceedance", "Product-7 statistic changed.")
   assert_equal(basin$forecast_period, "April-July", "Product-7 period changed.")
   assert_equal(basin$source_units, "kaf", "Product-7 exact source units changed.")
   assert_equal(basin$normalized_units, "kaf", "Product-7 normalized units changed.")
   assert_equal(index$forecast_volume, 3850, "Product-7 index volume changed.")
-  assert_equal(index$percent_average, 64, "Product-7 index Percent of Average changed.")
-  assert_true(!"percent_median" %in% names(basin), "Product-7 inferred or substituted percent_median.")
+  assert_equal(index$percent_average, 64, "Product-7 index Percent of mean changed.")
+  assert_equal(index$percent_median, 79, "Product-7 index direct Percent of Median changed.")
+  assert_equal(
+    names(basin$metric_state),
+    c("forecast_volume", "percent_average", "percent_median", "normal_average_volume"),
+    "Product-7 metric-state order changed."
+  )
+  assert_equal(basin$diagnostic$parser, "cnrfc_prod7_semantic_v2", "Product-7 parser identity changed.")
+  invalid <- basin
+  invalid$percent_mean <- invalid$percent_average
+  assert_error(
+    cnrfc_validate_record(invalid, april_july_row_for("SHDC1")),
+    "must not substitute percent_mean",
+    "Product-7 accepted a substituted percent_mean field."
+  )
   assert_true(!"geometry" %in% names(basin), "Product-7 published geometry.")
+})
+
+scenario("product-7 NDPC1 fixture preserves the reviewed direct 59 percent of median", {
+  record <- cnrfc_parse_page(
+    fixture("prod7_ndpc1_headline.html"),
+    april_july_row_for("NDPC1"),
+    "2026-08-01T16:00:00Z",
+    tabular_html = fixture("prod7_ndpc1_tabular.html")
+  )
+  assert_equal(record$forecast_volume, 599, "NDPC1 direct forecast volume changed.")
+  assert_equal(record$percent_average, 50, "NDPC1 direct Percent of Mean changed.")
+  assert_equal(record$percent_median, 59, "NDPC1 direct Percent of Median changed.")
+  assert_equal(record$normal_average_volume, 1210, "NDPC1 direct mean reference volume changed.")
+  assert_equal(record$status, "expired", "August 1 Product-7 state was not expired.")
+  assert_true(record$metric_state$percent_median$popup_eligible, "Expired median provenance was hidden.")
+  assert_true(!record$metric_state$percent_median$map_eligible, "Expired median remained map eligible.")
 })
 
 scenario("product-7 source staleness and August 1 expiration follow seasonal semantics", {
@@ -168,26 +198,26 @@ scenario("product-7 explicit out-of-season state is source-confirmed unavailabil
   )
 })
 
-scenario("product-7 zero, percent above 100, and missing metrics remain distinct", {
+scenario("product-7 direct zero, percent above 100, and missing metrics remain distinct", {
   headline <- fixture("prod7_normal_major_basin_headline.html")
   tabular <- fixture("prod7_normal_major_basin_tabular.html")
   zero <- cnrfc_parse_page(
-    gsub("1160", "0", headline, fixed = TRUE),
+    gsub("83% of Median", "0% of Median", headline, fixed = TRUE),
     april_july_row_for("SHDC1"),
     retrieved_at,
-    tabular_html = gsub("1160", "0", tabular, fixed = TRUE)
+    tabular_html = tabular
   )
   high <- cnrfc_parse_page(
-    gsub("68%", "168%", headline, fixed = TRUE),
+    gsub("83% of Median", "124% of Median", headline, fixed = TRUE),
     april_july_row_for("SHDC1"),
     retrieved_at,
-    tabular_html = gsub("68 %", "168 %", tabular, fixed = TRUE)
+    tabular_html = tabular
   )
-  missing_percent <- cnrfc_parse_page(
-    gsub("68%", "N/A%", headline, fixed = TRUE),
+  missing_median <- cnrfc_parse_page(
+    gsub("83% of Median", "N/A of Median", headline, fixed = TRUE),
     april_july_row_for("SHDC1"),
     retrieved_at,
-    tabular_html = gsub("68 %", "N/A %", tabular, fixed = TRUE)
+    tabular_html = tabular
   )
   missing_volume_headline <- gsub("1160", "N/A", headline, fixed = TRUE)
   missing_volume_headline <- gsub("68%", "N/A%", missing_volume_headline, fixed = TRUE)
@@ -199,12 +229,21 @@ scenario("product-7 zero, percent above 100, and missing metrics remain distinct
     retrieved_at,
     tabular_html = missing_volume_tabular
   )
-  assert_equal(zero$forecast_volume, 0, "Valid product-7 zero changed or became null.")
-  assert_equal(high$percent_average, 168, "Product-7 Percent of Average above 100 was rejected.")
-  assert_true(is.null(missing_percent$percent_average), "Missing Percent of Average became zero.")
-  assert_equal(missing_percent$status, "current_partial", "Missing Percent of Average did not remain metric-level partial.")
+  assert_equal(zero$percent_median, 0, "Valid direct Product-7 Percent of Median zero became null.")
+  assert_equal(high$percent_median, 124, "Direct Product-7 Percent of Median above 100 was rejected.")
+  assert_true(is.null(missing_median$percent_median), "Missing Percent of Median became zero.")
+  assert_equal(missing_median$status, "current_partial", "Missing Percent of Median was not metric-level partial.")
+  assert_equal(missing_median$metric_state$percent_median$status, "unavailable", "Missing median state changed.")
+  assert_true(
+    grepl("percent_median", missing_median$metric_state$percent_median$missing_reason, fixed = TRUE),
+    "Missing Percent of Median lacks a precise metric diagnostic."
+  )
   assert_true(is.null(missing_volume$forecast_volume), "Missing product-7 forecast volume became zero.")
-  assert_equal(missing_volume$normal_average_volume, 1700, "Direct normal average was discarded with a missing forecast.")
+  assert_equal(
+    missing_volume$normal_average_volume,
+    1700,
+    "Direct mean reference volume was discarded with a missing forecast."
+  )
 })
 
 scenario("product-7 ambiguity, unit drift, and headline/table conflict fail closed", {
@@ -216,7 +255,25 @@ scenario("product-7 ambiguity, unit drift, and headline/table conflict fail clos
   ), tabular, fixed = TRUE)
   assert_error(
     cnrfc_parse_page(duplicate_script, april_july_row_for("SHDC1"), retrieved_at, tabular_html = tabular),
-    "exactly one product-7 Median Forecast", "Duplicate product-7 headline was accepted."
+    "exactly one product-7 Median Forecast", "Duplicate product-7 headline was accepted.",
+    "cnrfc_validation_error"
+  )
+  assert_error(
+    cnrfc_parse_page(
+      gsub("83% of Median", "eighty-three% of Median", headline, fixed = TRUE),
+      april_july_row_for("SHDC1"), retrieved_at, tabular_html = tabular
+    ),
+    "Could not parse labeled headline_percent_median",
+    "Malformed Product-7 Percent of Median was silently ignored.",
+    "cnrfc_validation_error"
+  )
+  assert_error(
+    cnrfc_parse_page(
+      gsub("of Median", "of Typical", headline, fixed = TRUE),
+      april_july_row_for("SHDC1"), retrieved_at, tabular_html = tabular
+    ),
+    "Median Forecast headline changed",
+    "Changed Product-7 Percent of Median label was accepted."
   )
   assert_error(
     cnrfc_parse_page(headline, april_july_row_for("SHDC1"), retrieved_at, tabular_html = duplicate_pre),
@@ -250,6 +307,42 @@ scenario("product-7 ambiguity, unit drift, and headline/table conflict fail clos
       tabular_html = tabular
     ),
     "did not match expected NWS LID", "HTTP 200 maintenance page was accepted as product 7."
+  )
+})
+
+scenario("product-7 same-issue median revision is substantive and never calculated", {
+  headline <- fixture("prod7_normal_major_basin_headline.html")
+  tabular <- fixture("prod7_normal_major_basin_tabular.html")
+  original <- cnrfc_parse_page(
+    headline, april_july_row_for("SHDC1"), retrieved_at, tabular_html = tabular
+  )
+  revised <- cnrfc_parse_page(
+    gsub("83% of Median", "777% of Median", headline, fixed = TRUE),
+    april_july_row_for("SHDC1"), retrieved_at, tabular_html = tabular
+  )
+  rechecked <- cnrfc_parse_page(
+    headline, april_july_row_for("SHDC1"), "2026-07-31T18:05:00Z", tabular_html = tabular
+  )
+  assert_equal(revised$percent_median, 777, "Direct headline Percent of Median was recalculated.")
+  assert_equal(revised$forecast_volume, original$forecast_volume, "Median revision changed volume.")
+  assert_equal(revised$percent_average, original$percent_average, "Median revision changed Percent of mean.")
+  assert_equal(
+    revised$normal_average_volume,
+    original$normal_average_volume,
+    "Median revision changed mean reference volume."
+  )
+  assert_equal(revised$forecast_issued_at, original$forecast_issued_at, "Same-issue revision changed issue time.")
+  assert_true(
+    !identical(revised$source_page_signature, original$source_page_signature),
+    "Percent-of-median source material was omitted from the semantic signature."
+  )
+  assert_true(
+    !cnrfc_records_same_except_attempt_times(revised, original),
+    "Same-issue Percent of Median revision was treated as a semantic no-op."
+  )
+  assert_true(
+    cnrfc_records_same_except_attempt_times(rechecked, original),
+    "Retrieval time alone made Product 7 substantive."
   )
 })
 
@@ -533,13 +626,14 @@ synthetic_raw_record <- function(row,
       forecast_statistic = "50_percent_exceedance", forecast_volume = as.numeric(value),
       normalized_units = "kaf", source_units = "kaf",
       percent_average = as.numeric(60 + value %% 10),
+      percent_median = as.numeric(70 + value %% 10),
       normal_average_volume = as.numeric(value + 1000),
       water_year = 2026L, forecast_period = "April-July",
       forecast_issued_at = if (is.null(source_time)) "2026-07-31T07:00:00-07:00" else source_time,
       status = "current", missing_reason = NULL,
       source_url = row$source_url[[1L]], source_page_signature = paste0("signature-", row$nws_lid[[1L]], "-prod7"),
       diagnostic = list(
-        parser = "cnrfc_prod7_semantic_v1", source_page_title = paste0("CNRFC - Ensemble Products - ", row$nws_lid[[1L]]),
+        parser = "cnrfc_prod7_semantic_v2", source_page_title = paste0("CNRFC - Ensemble Products - ", row$nws_lid[[1L]]),
         source_product_label = "2026 Seasonal Trend Plot (Year View)", expected_product_label = row$expected_product_label[[1L]],
         headline_statistic_label = "Median Forecast", tabular_statistic_label = "50% Exceed",
         error_class = NULL, error_message = NULL
@@ -607,6 +701,23 @@ scenario("bootstrap accepts exact established roster and reports independent fam
   assert_equal(prior_payload$source_summary$april_july_success_count, 18L, "Product-7 success count changed.")
   assert_equal(prior_payload$source_summary$accumulation_median_success_count, 14L, "Median coverage changed.")
   assert_equal(prior_payload$source_summary$accumulation_deterministic_success_count, 14L, "Deterministic coverage changed.")
+  product7 <- Filter(function(record) {
+    identical(record$product_type, "april_july_streamflow_volume_forecast")
+  }, prior_payload$records)
+  expected_metrics <- c(
+    "forecast_volume", "percent_average", "percent_median", "normal_average_volume"
+  )
+  assert_equal(length(product7), 18L, "Product-7 structural count changed.")
+  assert_true(all(vapply(product7, function(record) {
+    all(expected_metrics %in% names(record)) &&
+      identical(names(record$metric_state), expected_metrics) &&
+      all(vapply(record[expected_metrics], function(value) {
+        is.numeric(value) && length(value) == 1L && is.finite(value)
+      }, logical(1)))
+  }, logical(1))), "A Product-7 bootstrap record omitted a complete direct metric contract.")
+  assert_true(all(vapply(product7, function(record) {
+    identical(names(record)[names(record) %in% expected_metrics], expected_metrics)
+  }, logical(1))), "Product-7 primary record-field order changed.")
 })
 
 scenario("bootstrap rejects missing required families or missing MHBC source confirmation", {
@@ -631,6 +742,22 @@ scenario("bootstrap rejects missing required families or missing MHBC source con
     cnrfc_build_payload(roster, product7_failed, generated_at = bootstrap_generated_at),
     "17/18 April-July",
     "Incomplete product-7 bootstrap was accepted."
+  )
+  product7_median_missing <- successful_attempts()
+  product7_row <- april_july_row_for("SHDC1")
+  product7_raw <- synthetic_raw_record(product7_row, 21)
+  product7_raw["percent_median"] <- list(NULL)
+  product7_median_missing[[product7_row$forecast_key[[1L]]]] <- cnrfc_success_result(
+    cnrfc_finalize_current_record(
+      product7_raw, retrieved_at, CNRFC_WATER_YEAR_STALE_AFTER_HOURS,
+      CNRFC_WATER_YEAR_EXPIRES_AFTER_HOURS, CNRFC_ACCUMULATION_STALE_AFTER_HOURS,
+      CNRFC_APRIL_JULY_STALE_AFTER_HOURS
+    )
+  )
+  assert_error(
+    cnrfc_build_payload(roster, product7_median_missing, generated_at = bootstrap_generated_at),
+    "17/18 April-July",
+    "Bootstrap accepted a Product-7 record without direct Percent of Median."
   )
   mhbc_current <- successful_attempts()
   mhbc_row <- accum_row_for("MHBC1")
@@ -710,6 +837,13 @@ scenario("FNF, index, and April-July families can each fail while other families
     assert_true(all(vapply(other_names, function(name) {
       payload$family_health[[name]]$health == "healthy"
     }, logical(1))), paste(family_name, "outage degraded another family."))
+    if (identical(family_name, "april_july_streamflow_volume_forecast")) {
+      retained <- record_for(payload, "CNRFC:SHDC1:APR_JUL_VOLUME")
+      assert_equal(retained$percent_median, record_for(prior_payload, retained$forecast_key)$percent_median,
+        "Product-7 Percent of Median LKG was not retained.")
+      assert_equal(retained$metric_state$percent_median$value_origin, "last_known_good",
+        "Product-7 Percent of Median LKG origin changed.")
+    }
   }
 })
 
@@ -806,6 +940,42 @@ scenario("new source issue, changed value, outcome, and expiry transitions are s
   assert_true(cnrfc_payload_changed(changed, steady), "New issue/value was treated as no-op.")
 })
 
+scenario("legacy schema-1 Product-7 priors are upgraded in memory without changing versions", {
+  legacy <- prior_payload
+  for (index in seq_along(legacy$records)) {
+    record <- legacy$records[[index]]
+    if (!identical(record$product_type, "april_july_streamflow_volume_forecast")) next
+    record$percent_median <- NULL
+    record$metric_state$percent_median <- NULL
+    record$diagnostic$parser <- "cnrfc_prod7_semantic_v1"
+    legacy$records[[index]] <- record
+  }
+  test_dir <- tempfile("cnrfc-legacy-prior-")
+  dir.create(test_dir)
+  on.exit(unlink(test_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  path <- file.path(test_dir, "legacy.json")
+  cnrfc_write_json(legacy, path)
+  upgraded <- cnrfc_read_payload(path, roster)
+  product7 <- Filter(function(record) {
+    identical(record$product_type, "april_july_streamflow_volume_forecast")
+  }, upgraded$records)
+  assert_equal(upgraded$schema_version, "1.0", "Legacy upgrade changed schema version.")
+  assert_equal(upgraded$roster_version, "cnrfc-major-water-supply-v1.1.0", "Legacy upgrade changed roster version.")
+  assert_true(all(vapply(product7, function(record) {
+    "percent_median" %in% names(record) && is.null(record$percent_median) &&
+      "percent_median" %in% names(record$metric_state) &&
+      identical(record$metric_state$percent_median$status, "unavailable") &&
+      identical(
+        record$metric_state$percent_median$missing_reason,
+        "percent_median_unavailable_in_prior_contract"
+      )
+  }, logical(1))), "Legacy Product-7 prior was not upgraded to the uniform four-metric shape.")
+  steady <- cnrfc_build_payload(
+    roster, successful_attempts("2026-07-31T19:00:00Z"), upgraded, "2026-07-31T19:01:00Z"
+  )
+  assert_equal(length(steady$records), 51L, "Legacy prior could not advance to a valid steady-state payload.")
+})
+
 scenario("payload validation is exact, deterministic, geometry-free, and null-safe", {
   reversed <- rev(successful_attempts())
   payload <- cnrfc_build_payload(roster, reversed, generated_at = "2026-07-31T18:10:00Z")
@@ -821,7 +991,33 @@ scenario("payload validation is exact, deterministic, geometry-free, and null-sa
   cnrfc_write_json(payload, output)
   roundtrip <- cnrfc_read_payload(output, roster)
   assert_true(is.null(record_for(roundtrip, "CNRFC:MHBC1:10D_VOLUME_ACCUM")$day_3_median_volume), "JSON null did not round trip.")
+  partial_attempts <- successful_attempts()
+  product7_row <- april_july_row_for("SHDC1")
+  product7_raw <- synthetic_raw_record(product7_row, 21)
+  product7_raw["percent_median"] <- list(NULL)
+  partial_attempts[[product7_row$forecast_key[[1L]]]] <- cnrfc_success_result(
+    cnrfc_finalize_current_record(
+      product7_raw, retrieved_at, CNRFC_WATER_YEAR_STALE_AFTER_HOURS,
+      CNRFC_WATER_YEAR_EXPIRES_AFTER_HOURS, CNRFC_ACCUMULATION_STALE_AFTER_HOURS,
+      CNRFC_APRIL_JULY_STALE_AFTER_HOURS
+    )
+  )
+  partial <- cnrfc_build_payload(
+    roster, partial_attempts, prior_payload, "2026-07-31T18:10:00Z"
+  )
+  partial_output <- file.path(test_dir, "partial.json")
+  cnrfc_write_json(partial, partial_output)
+  partial_roundtrip <- cnrfc_read_payload(partial_output, roster)
+  partial_record <- record_for(partial_roundtrip, product7_row$forecast_key[[1L]])
+  assert_true(is.null(partial_record$percent_median), "Product-7 JSON null became zero.")
+  assert_equal(
+    partial_record$metric_state$percent_median$status,
+    "unavailable",
+    "Product-7 null metric state changed on JSON round trip."
+  )
   text <- paste(readLines(output, warn = FALSE), collapse = "\n")
+  assert_true(grepl('"percent_median":', text, fixed = TRUE), "Product-7 Percent of Median was not serialized.")
+  assert_true(!grepl("NaN|Infinity|-Infinity", text), "Non-finite numeric token was serialized.")
   assert_true(!grepl("17.399999999", text, fixed = TRUE), "Binary floating-point tail was serialized.")
   exact <- jsonlite::toJSON(
     list(values = c(17.4, 28.8, 57.3, 16.9, 28.3)),

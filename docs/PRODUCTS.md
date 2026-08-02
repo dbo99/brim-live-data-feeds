@@ -525,19 +525,29 @@ ownership.
   Deterministic Forecast` cells. The producer does not derive daily or
   incremental values, accumulate flow rates, read ensemble members, or infer a
   deterministic Day 10. The three indices are requested from their own product-9
-  pages. Product-7 `forecast_volume`, `percent_average` and
-  `normal_average_volume` are copied from source labels. The producer does not
-  calculate a percentage, normal or volume, and it does not publish a product-7
-  percent-of-median field.
+  pages. Product-7 `forecast_volume`, `percent_average`, `percent_median` and
+  `normal_average_volume` are copied from source labels. `percent_average` is
+  the legacy wire key representing percent of mean; `normal_average_volume` is
+  the legacy wire key representing mean reference volume. The headline's direct
+  `Percent of Mean` value is cross-checked against the tabular percent-of-mean
+  value, while the separate headline `Percent of Median` value is retained as
+  `percent_median`. The producer does not calculate a percentage, mean reference
+  volume or forecast volume.
 - **Canonical output:**
-  `docs/data/major_water_supply_basin_forecasts.json`. The feature branch does
-  not include a generated seed file; the first accepted writer run creates it.
+  `docs/data/major_water_supply_basin_forecasts.json`. An accepted scheduled
+  writer run creates the path when absent and otherwise promotes only a complete
+  validated candidate.
 - **Format and schema:** Geometry-free JSON schema version `1.0` with
   `product_id: "major_water_supply_basin_forecasts"`, stable
   `roster_version: "cnrfc-major-water-supply-v1.1.0"`, `generated_at`,
   `publication_mode`, exact expected/actual record counts, a reconciled
   `source_summary`, independent `family_health`, operational notices, and 51
   deterministically ordered `records`.
+  Adding the direct Product-7 `percent_median` metric is an additive schema-1
+  change: forecast keys, record count and roster order are unchanged, so neither
+  version advances. The reader upgrades a legacy schema-1 prior that lacks only
+  this field to an explicit null/unavailable metric in memory before validation;
+  every newly built Product-7 record must use the complete four-metric shape.
   Product-9 records set `forecast_statistic: "median"` because the source label
   is `Median Forecast`; `forecast_volume` must not be reinterpreted as another
   ensemble statistic. Product-2 records carry
@@ -550,7 +560,10 @@ ownership.
   `forecast_statistic: "50_percent_exceedance"`,
   `forecast_period: "April-July"`, `normalized_units: "kaf"`, exact
   `source_units`, and direct
-  `forecast_volume`, `percent_average` and `normal_average_volume`. Records
+  `forecast_volume`, `percent_average`, `percent_median` and
+  `normal_average_volume`. Product-7 primary-metric order in records and exact
+  `metric_state` key order is `forecast_volume`, `percent_average`,
+  `percent_median`, `normal_average_volume`. Records
   preserve `last_successful_retrieval_at` separately
   from `last_attempt_at`; source issue/update times remain the forecast-time
   authority. Missing numerics use JSON null, never a substituted zero. Git
@@ -567,14 +580,20 @@ ownership.
   deterministic Day 3/Day 5 pair may not decrease by more than the 0.1-kaf
   source-display rounding tolerance. Numeric zero remains valid.
 - **Product-7 validation:** The semantic parser requires one matching product-7
-  identity, one headline `Median Forecast` with its directly published volume
-  and `Percent of Average`, one tabular seasonal-trend table, and one ordered
-  `50% Exceed` row. It associates the latest ordered forecast-date column with
-  the source issue, normal and volume, then cross-checks headline and tabular
-  50%-exceedance volumes within the 0.05-kaf source-display rounding tolerance.
-  Duplicate labels/tables, wrong identities, unrecognized units, malformed
-  numbers or material conflicts fail validation. A recognized unavailable page
-  produces an explicit unavailable structural record.
+  identity, one headline `Median Forecast` with its directly published volume,
+  `Percent of Mean` and `Percent of Median`, one tabular seasonal-trend table,
+  and one ordered `50% Exceed` row. It associates the latest ordered
+  forecast-date column with the source issue, mean reference volume and forecast
+  volume, then
+  cross-checks headline and tabular 50%-exceedance volumes within the 0.05-kaf
+  source-display rounding tolerance and headline `Percent of Mean` against
+  the tabular percent-of-mean value. The direct median percentage is not derived
+  or substituted for the mean reference volume. Parser/signature identity
+  `cnrfc_prod7_semantic_v2` binds all three headline values. Duplicate
+  labels/tables, wrong identities, unrecognized units, malformed numbers or
+  material conflicts fail validation. A recognized unavailable page produces
+  an explicit unavailable structural record; an explicitly missing median
+  percentage produces a null unavailable metric state without becoming zero.
 - **Metric and record state:** Every displayable number has a same-name entry in
   `metric_state` with `status`, `value_origin`, both source-time slots,
   `valid_through`, `stale_since`, `map_eligible`, `popup_eligible` and
@@ -611,9 +630,10 @@ ownership.
   for the 14 currently expected-available product-2 basins, and explicit
   source-confirmed product-2 unavailability for MHBC1. Missing deterministic
   rows reduce separately reported deterministic coverage but do not fail a
-  valid median bootstrap. Bootstrap also requires all 18 product-7 records to
-  be valid current/source-stale seasonal data while the family is active, or
-  explicit source-confirmed unavailability while it is out of season. With a
+  valid median bootstrap. Bootstrap also requires all four direct metrics for
+  all 18 product-7 records to be valid current/source-stale seasonal data while
+  the family is active, or explicit source-confirmed unavailability while it is
+  out of season. With a
   valid prior payload, every attempt constructs and validates all 51 structural
   records. Families merge independently and
   outages publish honest last-known-good, expired, unavailable or
@@ -667,10 +687,10 @@ ownership.
   polygons remain neutral/unavailable for the product-2 modes. Labels must say
   cumulative accumulated volume, show units and link to the record's product-2
   source as `CNRFC 10-day accumulated-volume forecast`; raw kaf must not be
-  described as percent normal or normalized storm intensity. Product-7 and the
+  described as percent of mean or normalized storm intensity. Product-7 and the
   separate CBRFC GLDA3 April-July record are comparable seasonal-volume sources
   for a California-Colorado supply comparison; the CBRFC water-year record is a
-  distinct period. Source-specific periods and normal terminology must remain
+  distinct period. Source-specific periods and mean/median terminology must remain
   visible. Consumer polygons are reviewed display
   geometry, not exact RFC model-basin geometry.
 
@@ -714,8 +734,8 @@ ownership.
   accepted when the newer point issue is valid, while duplicate or conflicting
   rows fail validation. The human graph page is retained as `source_url`. The
   server-rendered Lake Powell dashboard is also checked for direct Apr-Jul
-  `Full Fcst` and `%Avg` agreement. Comparison uses half of the dashboard's
-  displayed unit as rounding tolerance (for the current integer display, 0.5
+  forecast-volume and percent-of-mean agreement. Comparison uses half of the
+  dashboard's displayed unit as rounding tolerance (for the current integer display, 0.5
   kaf and 0.5 percentage point). A missing, unparseable or older dashboard is an
   operational notice and does not replace a newer complete point record; a
   material same-issue disagreement fails validation. The dashboard HTML exposes
@@ -725,8 +745,8 @@ ownership.
 - **Water-year official source strategy:** The authoritative CBRFC Upper
   Colorado situational-awareness page is parsed by exact Lake Powell heading,
   ordered table headers and the unique semantic row label `Water Year`. Only its
-  directly published `Full Fcst` and `%Avg` cells become public values. `Obs to
-  Date` is structurally validated but is neither published nor included in the
+  directly published forecast-volume and percent-of-mean cells become public
+  values. `Obs to Date` is structurally validated but is neither published nor included in the
   semantic signature. The dashboard is both the numerical retrieval and the
   human-facing summary for this record; therefore its summary relationship is
   explicitly non-independent.
@@ -741,7 +761,7 @@ ownership.
   each item has source `YYYY-MM`, direct volume, direct `%Med`, exact statistic
   and percentage labels, month validity and metric state. It publishes no annual
   or seasonal sum and does not treat the separate calculated-observation or
-  historical-normal sections as forecast values. The source identifies the
+  historical-mean sections as forecast values. The source identifies the
   first row as the issue month but provides no separate selected active-month
   flag, so consumers select an explicit `forecast_month`.
 - **Reviewed source-date correction:** The official July 1, 2026 product
@@ -845,7 +865,7 @@ ownership.
   water-year record is a directly published full-forecast volume, not a renamed
   April-July value. The LKSA3 monthly series is local flow below Glen Canyon Dam
   and is neither GLDA3 inflow nor total inflow above Lake Mead. BRIM may compare
-  these only with official period, statistic, issue precision and normal
+  these only with official period, statistic, issue precision and mean/median
   terminology visible. Suggested future context is HUC2 14 for Powell and an
   optional outline-only HUC2 14+15 view with no values. HUC2 15 is not a
   defensible local-intervening forecast polygon because it extends below Lake

@@ -1103,6 +1103,12 @@ cnrfc_parse_april_july_pages <- function(headline_html,
   headline_count <- sum(vapply(
     summary_scripts, cnrfc_fixed_count, integer(1), pattern = "Median Forecast:"
   ))
+  if (length(summary_scripts) > 1L || headline_count > 1L) {
+    cnrfc_validation_error(paste0(
+      "Expected exactly one product-7 Median Forecast headline; found ",
+      headline_count, "."
+    ))
+  }
   if (length(summary_scripts) != 1L || headline_count != 1L) {
     cnrfc_stop("Expected exactly one product-7 Median Forecast headline; found ", headline_count, ".")
   }
@@ -1121,8 +1127,11 @@ cnrfc_parse_april_july_pages <- function(headline_html,
   headline_volume <- cnrfc_parse_seasonal_volume_token(
     headline_parts[[2L]], "headline Median Forecast"
   )
-  headline_percent_average <- cnrfc_parse_percent_token(
-    headline_parts[[3L]], "headline_percent_average"
+  headline_percent_mean <- cnrfc_parse_percent_token(
+    headline_parts[[3L]], "headline_percent_mean"
+  )
+  headline_percent_median <- cnrfc_parse_percent_token(
+    headline_parts[[4L]], "headline_percent_median"
   )
 
   pre_nodes <- xml2::xml_find_all(tabular, ".//pre")
@@ -1164,7 +1173,7 @@ cnrfc_parse_april_july_pages <- function(headline_html,
     )
   )[[1L]]
   if (length(latest_parts) != 3L) {
-    cnrfc_stop("Product-7 Percent of Average summary changed.")
+    cnrfc_stop("Product-7 percent-of-mean source summary changed.")
   }
   percent_average <- cnrfc_parse_percent_token(latest_parts[[2L]], "percent_average")
   tabular_summary_volume <- cnrfc_parse_seasonal_volume_token(
@@ -1176,7 +1185,9 @@ cnrfc_parse_april_july_pages <- function(headline_html,
     mean_lines[[1L]],
     perl = TRUE
   )
-  normal_average <- cnrfc_parse_seasonal_volume_token(mean_token, "normal average")
+  mean_reference_volume <- cnrfc_parse_seasonal_volume_token(
+    mean_token, "mean reference volume"
+  )
 
   data_lines <- lines[grepl("^\\s*[0-9]{2}/[0-9]{2}/[0-9]{4}\\s+", lines, perl = TRUE)]
   if (length(data_lines) == 0L) {
@@ -1215,16 +1226,16 @@ cnrfc_parse_april_july_pages <- function(headline_html,
   if (length(available_volumes) > 0L && length(available_volumes) != 3L) {
     cnrfc_validation_error("Product-7 headline and tabular forecast-volume availability conflicted.")
   }
-  percent_values <- list(headline_percent_average$value, percent_average$value)
+  percent_values <- list(headline_percent_mean$value, percent_average$value)
   available_percents <- unlist(Filter(Negate(is.null), percent_values), use.names = FALSE)
   if (length(available_percents) == 1L ||
       (length(available_percents) == 2L && abs(diff(available_percents)) > 0.01)) {
-    cnrfc_validation_error("Product-7 headline Percent of Mean and tabular Percent of Average conflicted.")
+    cnrfc_validation_error("Product-7 headline and tabular percent-of-mean values conflicted.")
   }
 
   source_units <- Filter(
     function(value) !is.null(value) && nzchar(value),
-    list(headline_volume$units, tabular_summary_volume$units, normal_average$units)
+    list(headline_volume$units, tabular_summary_volume$units, mean_reference_volume$units)
   )
   if (length(source_units) > 0L && length(unique(tolower(unlist(source_units)))) != 1L) {
     cnrfc_validation_error("Product-7 source-unit labels did not match across direct values.")
@@ -1234,7 +1245,8 @@ cnrfc_parse_april_july_pages <- function(headline_html,
   missing_reasons <- c(
     if (is.null(headline_volume$value)) "forecast_volume_unavailable" else NULL,
     percent_average$missing_reason,
-    if (is.null(normal_average$value)) "normal_average_volume_unavailable" else NULL
+    headline_percent_median$missing_reason,
+    if (is.null(mean_reference_volume$value)) "normal_average_volume_unavailable" else NULL
   )
 
   signature_material <- paste(
@@ -1244,6 +1256,7 @@ cnrfc_parse_april_july_pages <- function(headline_html,
     headline_issue_text,
     headline_parts[[2L]],
     headline_parts[[3L]],
+    headline_parts[[4L]],
     percent_lines[[1L]],
     mean_lines[[1L]],
     last_tokens[[2L]],
@@ -1261,7 +1274,8 @@ cnrfc_parse_april_july_pages <- function(headline_html,
     normalized_units = normalized_units,
     source_units = source_units,
     percent_average = percent_average$value,
-    normal_average_volume = normal_average$value,
+    percent_median = headline_percent_median$value,
+    normal_average_volume = mean_reference_volume$value,
     water_year = water_year,
     forecast_period = "April-July",
     forecast_issued_at = issue$iso,
@@ -1270,7 +1284,7 @@ cnrfc_parse_april_july_pages <- function(headline_html,
     source_url = roster_row$source_url[[1L]],
     source_page_signature = digest::digest(signature_material, algo = "sha256", serialize = FALSE),
     diagnostic = list(
-      parser = "cnrfc_prod7_semantic_v1",
+      parser = "cnrfc_prod7_semantic_v2",
       source_page_title = expected_title,
       source_product_label = headline_matches[[1L]],
       expected_product_label = roster_row$expected_product_label[[1L]],
