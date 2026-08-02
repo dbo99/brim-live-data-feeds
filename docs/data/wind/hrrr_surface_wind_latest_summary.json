@@ -5,18 +5,18 @@
   "version": "RTW-HRRR002",
   "status": "success",
   "selection_strategy": "closest valid_time_utc to build time; BRIM targets Current, +6 hr, or +12 hr using browser time",
-  "source": "NOAA HRRR AWS public bucket byte-range fallback",
+  "source": "NOAA NOMADS GRIB filter",
   "model_cycle_utc": "2026-08-02T13:00:00Z",
   "model_cycle_local": "2026-08-02 06:00:00 AM PDT",
   "forecast_hour": 1,
   "forecast_hour_label": "f01",
   "valid_time_utc": "2026-08-02T14:00:00Z",
   "valid_time_local": "2026-08-02 07:00:00 AM PDT",
-  "build_time_utc": "2026-08-02T14:01:12Z",
-  "build_time_local": "2026-08-02 07:01:12 AM PDT",
+  "build_time_utc": "2026-08-02T14:13:41Z",
+  "build_time_local": "2026-08-02 07:13:41 AM PDT",
   "local_time_zone": "America/Los_Angeles",
-  "valid_lag_minutes_at_build": 1.203615,
-  "valid_time_age_hours": 0.02006,
+  "valid_lag_minutes_at_build": 13.698603,
+  "valid_time_age_hours": 0.22831,
   "stale_after_hours": 4,
   "is_stale": false,
   "supported_browser_lead_hours": [0, 6, 12],
@@ -24,17 +24,17 @@
   "target_build_results": [
     {
       "lead_hours": 0,
-      "nearest_distance_hours": 0.018913,
+      "nearest_distance_hours": 0.227188,
       "available_within_2_hours": true
     },
     {
       "lead_hours": 6,
-      "nearest_distance_hours": 0.018913,
+      "nearest_distance_hours": 0.227188,
       "available_within_2_hours": true
     },
     {
       "lead_hours": 12,
-      "nearest_distance_hours": 0.018913,
+      "nearest_distance_hours": 0.227188,
       "available_within_2_hours": true
     }
   ],
@@ -56,23 +56,23 @@
   "earth_relative_winds_confirmed": true,
   "vector_regrid_method": "wgrib2 -new_grid_winds earth; bilinear interpolation to regular lon/lat",
   "speed_ms": {
-    "min": 0.03222,
-    "p50": 2.985705,
-    "p75": 7.526583,
-    "p90": 11.712738,
-    "p95": 13.502452,
-    "max": 18.194287
+    "min": 0.032209,
+    "p50": 2.985669,
+    "p75": 7.526611,
+    "p90": 11.712755,
+    "p95": 13.502469,
+    "max": 18.194306
   },
   "speed_mph": {
-    "min": 0.072075,
-    "p50": 6.678843,
-    "p75": 16.836515,
-    "p90": 26.200693,
-    "p95": 30.204176,
-    "max": 40.699527
+    "min": 0.07205,
+    "p50": 6.678763,
+    "p75": 16.836577,
+    "p90": 26.200731,
+    "p95": 30.204214,
+    "max": 40.69957
   },
-  "recommended_velocity_scale_ms": 14.852697,
-  "recommended_velocity_scale_mph": 33.224593,
+  "recommended_velocity_scale_ms": 14.852716,
+  "recommended_velocity_scale_mph": 33.224635,
   "velocity_scale_reference": "p95 * 1.10, clamped to 8-35 m/s",
   "selected_entry": {
     "product_id": "hrrr_surface_wind",
@@ -90,14 +90,14 @@
     "forecast_hour_label": "f01",
     "valid_time_utc": "2026-08-02T14:00:00Z",
     "valid_time_local": "2026-08-02 07:00:00 AM PDT",
-    "valid_lag_minutes_at_build": 1.134787,
+    "valid_lag_minutes_at_build": 13.631253,
     "relative_url": "hrrr/surface/hrrr_surface_wind_20260802T13Z_f01.json",
     "filename": "hrrr_surface_wind_20260802T13Z_f01.json",
-    "file_bytes": 1097554,
-    "source": "NOAA HRRR AWS public bucket byte-range fallback",
-    "source_request_url": "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260802/conus/hrrr.t13z.wrfsfcf01.grib2",
-    "source_index_url": "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260802/conus/hrrr.t13z.wrfsfcf01.grib2.idx",
-    "source_grib_bytes": 4763230,
+    "file_bytes": 1165575,
+    "source": "NOAA NOMADS GRIB filter",
+    "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_hrrr_2d.pl?file=hrrr.t13z.wrfsfcf01.grib2&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=-126.5&rightlon=-111&toplat=44.5&bottomlat=30&dir=%2Fhrrr.20260802%2Fconus",
+    "source_index_url": null,
+    "source_grib_bytes": 765004,
     "domain": {
       "id": "hydrologic_ca_adjacent",
       "label": "Hydrologic California + adjacent basins",
@@ -115,29 +115,29 @@
     "earth_relative_winds_confirmed": true,
     "vector_regrid_method": "wgrib2 -new_grid_winds earth; bilinear interpolation to regular lon/lat",
     "speed_ms": {
-      "min": 0.03222,
-      "p50": 2.985705,
-      "p75": 7.526583,
-      "p90": 11.712738,
-      "p95": 13.502452,
-      "max": 18.194287
+      "min": 0.032209,
+      "p50": 2.985669,
+      "p75": 7.526611,
+      "p90": 11.712755,
+      "p95": 13.502469,
+      "max": 18.194306
     },
     "speed_mph": {
-      "min": 0.072075,
-      "p50": 6.678843,
-      "p75": 16.836515,
-      "p90": 26.200693,
-      "p95": 30.204176,
-      "max": 40.699527
+      "min": 0.07205,
+      "p50": 6.678763,
+      "p75": 16.836577,
+      "p90": 26.200731,
+      "p95": 30.204214,
+      "max": 40.69957
     },
-    "recommended_velocity_scale_ms": 14.852697,
-    "recommended_velocity_scale_mph": 33.224593,
+    "recommended_velocity_scale_ms": 14.852716,
+    "recommended_velocity_scale_mph": 33.224635,
     "velocity_scale_reference": "p95 * 1.10, clamped to 8-35 m/s"
   },
   "available_entry_count": 14,
   "retain_past_hours": 4,
   "retain_future_hours": 14,
-  "output_json_bytes": 1097554,
+  "output_json_bytes": 1165575,
   "output_files": {
     "wind_json": "docs/data/wind/hrrr_surface_wind_latest.json",
     "summary_json": "docs/data/wind/hrrr_surface_wind_latest_summary.json",
