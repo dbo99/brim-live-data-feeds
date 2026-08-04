@@ -1,0 +1,177 @@
+name: Build Winter Storm Levels
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the validated Winter Storm Levels bundle (main branch only)
+        required: false
+        default: false
+        type: boolean
+
+# The first production schedule is intentionally deferred until the maintainer
+# approves an official first publication. The proposed four-cycle cadence is
+# documented in docs/PUBLISHING_AND_OPERATIONS.md.
+permissions:
+  contents: write
+
+concurrency:
+  group: live-data-feed-writes-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out selected branch tip
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Resolve publication mode
+        id: run-mode
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH_INPUT: ${{ inputs.publish || false }}
+        run: |
+          set -euo pipefail
+
+          publish=false
+          if [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" == "main" ]]; then
+            publish=true
+          fi
+          if [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" != "main" ]]; then
+            echo "Feature branches are dry-run only." >&2
+          fi
+
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "output_root=${RUNNER_TEMP}/winter-storm-levels-bundle" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Install geospatial system libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcurl4-openssl-dev \
+            libgdal-dev \
+            libgeos-dev \
+            libproj-dev \
+            libssl-dev \
+            libudunits2-dev
+
+      - name: Install R package dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: winter-storm-levels-v1
+          packages: |
+            any::digest
+            any::httr2
+            any::jsonlite
+            any::sf
+            any::terra
+
+      - name: Run Winter Storm Levels unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          Rscript tests/test_winter_storm_levels.R
+          python3 tests/test_winter_storm_levels_workflow_safety.py
+
+      - name: Build and validate Winter Storm Levels bundle
+        shell: bash
+        env:
+          BRIM_WSL_PUBLISH: ${{ steps.run-mode.outputs.publish }}
+          BRIM_WSL_OUTPUT_ROOT: ${{ steps.run-mode.outputs.output_root }}
+          BRIM_WSL_QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
+        run: |
+          set -euo pipefail
+          Rscript scripts/build_winter_storm_levels.R
+
+      - name: Prepare standalone browser QA artifact
+        if: always()
+        shell: bash
+        env:
+          OUTPUT_ROOT: ${{ steps.run-mode.outputs.output_root }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUTPUT_ROOT}"
+          cp qa/winter_storm_levels/index.html "${OUTPUT_ROOT}/qa.html"
+
+      - name: Write build summary
+        if: always()
+        shell: bash
+        env:
+          QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
+        run: |
+          if [[ ! -f "${QA_JSON}" ]]; then
+            echo "## Winter Storm Levels" >> "${GITHUB_STEP_SUMMARY}"
+            echo "No attempt diagnostics were produced." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          {
+            echo "## Winter Storm Levels"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Publication outcome | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload dry-run bundle and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: winter-storm-levels-qa
+          path: |
+            ${{ steps.run-mode.outputs.output_root }}/
+            ${{ runner.temp }}/winter-storm-levels-attempt.json
+            docs/data/winter-storm-levels/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Commit updated Winter Storm Levels bundle
+        if: steps.run-mode.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_REF_TYPE}" != "branch" ]]; then
+            echo "Refusing to publish outside the main branch: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- docs/data/winter-storm-levels
+
+          while IFS= read -r staged_path; do
+            case "${staged_path}" in
+              docs/data/winter-storm-levels/*) ;;
+              *)
+                echo "Unexpected staged path: ${staged_path}" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --cached --name-only)
+
+          if git diff --cached --quiet; then
+            echo "No substantive Winter Storm Levels changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update Winter Storm Levels feed"
+          if ! git push origin "HEAD:${GITHUB_REF}"; then
+            echo "The selected branch advanced unexpectedly; nothing was published." >&2
+            echo "Rerun this workflow from the latest branch tip." >&2
+            exit 1
+          fi

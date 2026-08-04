@@ -1,0 +1,76 @@
+{
+  "product_id": "winter_storm_levels",
+  "schema_version": "1.0.0",
+  "contract_version": "1.0.0",
+  "status": "expired",
+  "source": {
+    "id": "nbm_snow_level",
+    "name": "NOAA/NWS National Blend of Models deterministic snow level",
+    "agency": "NOAA/NWS/NCEP Meteorological Development Laboratory",
+    "parameter": "SNOWLVL",
+    "definition": "Elevation where wet-bulb temperature reaches 0.5 degrees C",
+    "source_unit": "m above mean sea level",
+    "output_unit": "ft above mean sea level",
+    "product_url": "https://www.nco.ncep.noaa.gov/pmb/products/blend/",
+    "retrieval_base_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/",
+    "alternate_retrieval_base_url": "https://nomads.ncep.noaa.gov/pub/data/nccf/com/blend/prod/"
+  },
+  "domain": {
+    "id": "winter_storm_levels_west_v1",
+    "label": "Deterministic expired-state QA fixture",
+    "bbox_wgs84": [-130, 30, -112, 44.5]
+  },
+  "contour": {
+    "geometry": "LineString",
+    "datum": "mean_sea_level",
+    "unit": "ft_msl",
+    "minimum_ft": 0,
+    "maximum_ft": 20000,
+    "interval_ft": 1000,
+    "simplify_tolerance_m": 750
+  },
+  "freshness": {
+    "current_after_hours": 9,
+    "delayed_after_hours": 15,
+    "expire_after_hours": 24,
+    "valid_tolerance_hours": 3
+  },
+  "cycle_time_utc": "2025-01-15T06:00:00Z",
+  "retrieval_time_utc": "2025-01-15T08:00:00Z",
+  "publication_time_utc": null,
+  "target_count": 1,
+  "diagnostics": {
+    "expected_current_cycle_target_count": 1,
+    "actual_current_cycle_target_count": 1,
+    "retained_cycle_count": 1,
+    "complete_bundle_validated": true
+  },
+  "targets": [
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2025-01-15T06:00:00Z",
+      "valid_time_utc": "2025-01-15T12:00:00Z",
+      "valid_from_utc": "2025-01-15T09:00:00Z",
+      "valid_through_utc": "2025-01-15T15:00:00Z",
+      "lead_hours": 6,
+      "retrieval_url": "https://example.invalid/fixture.grib2",
+      "inventory_url": "https://example.invalid/fixture.grib2.idx",
+      "inventory_record": "1:0:d=2025011506:SNOWLVL:0 m above mean sea level:6 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2025011506_f006_0c778a17a82a.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "0c778a17a82af16f7e08c7624dd3d2b6430c293a798a858377d562b4590cda2a",
+      "bytes": 808,
+      "feature_count": 1,
+      "contour_levels_ft_msl": [3000],
+      "source_grid": {
+        "rows": 2,
+        "columns": 4,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 914.4,
+        "max_m": 914.4
+      },
+      "output_bbox_wgs84": [-124, 36, -118, 42]
+    }
+  ]
+}

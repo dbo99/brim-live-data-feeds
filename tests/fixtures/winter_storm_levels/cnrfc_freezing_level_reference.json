@@ -1,0 +1,35 @@
+{
+  "reference_type": "freezing_level",
+  "canonical_field": "snow_level",
+  "comparable_to_canonical": false,
+  "comparison_rule": "numeric range smoke test only; do not assert equality with NBM snow level",
+  "agency": "NOAA/NWS California-Nevada River Forecast Center",
+  "source_model": "HRRR (N)",
+  "source_url": "https://www.cnrfc.noaa.gov/awipsProducts/RNOFSTFZL.php",
+  "issued_text": "805 AM PDT MON AUG 03 2026",
+  "unit": "thousands_ft_msl",
+  "forecast_columns_local": [
+    "05AM PDT",
+    "11AM PDT",
+    "05PM PDT",
+    "11PM PDT",
+    "05AM PDT"
+  ],
+  "basins": [
+    {
+      "id": "KWKC1",
+      "label": "SACRAMENTO - KESWICK",
+      "values_thousands_ft": [17.07, 16.99, 16.88, 16.93, 16.77]
+    },
+    {
+      "id": "NIMC1",
+      "label": "AMERICAN - NIMBUS",
+      "values_thousands_ft": [17.68, 17.67, 17.77, 17.95, 17.81]
+    },
+    {
+      "id": "ISAC1L",
+      "label": "KERN - ISABELLA",
+      "values_thousands_ft": [17.88, 17.91, 18.14, 18.18, 17.77]
+    }
+  ]
+}
