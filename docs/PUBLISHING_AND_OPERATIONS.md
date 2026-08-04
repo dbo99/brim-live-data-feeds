@@ -44,11 +44,19 @@ All thirteen scheduled production writers currently:
 
 They do not pull, merge or rebase generated-product commits.
 
+The Winter Storm Levels production candidate is an additional manual-only
+writer. It uses the same shared non-cancelling concurrency and normal-push
+contract, but dispatch defaults to runner-temporary dry-run output and explicit
+publication is accepted only from `main`. Its schedule is intentionally absent
+until the maintainer approves the first official publication.
+
 The established writers retain their existing documented checkout behavior.
 The two major-basin forecast workflows select the current `main` branch tip for
 scheduled runs and the explicitly dispatched branch tip for manual dry runs.
 Manual publication for either major-basin feed remains permitted only from
 `main`; a feature-branch dispatch remains nonpublishing.
+Winter Storm Levels likewise checks out the selected branch tip, but has no
+scheduled event and cannot publish from a feature branch.
 
 Consequences:
 
@@ -91,6 +99,10 @@ do not have:
 - a GitHub Environment approval;
 - a `main`-only manual condition;
 - an automatic nonproduction mode.
+
+The two major-basin forecast writers and Winter Storm Levels are documented
+exceptions: they expose a boolean publication input that defaults false, use
+temporary output for dry runs, and refuse feature-branch publication.
 
 Before any manual writer dispatch, the operator must record:
 
@@ -140,6 +152,7 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `usgs-groundwater-candidate-discovery-preview` | Groundwater preview workflow | Nonproduction candidate-discovery review | Explicit 30 days |
 | `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
+| `winter-storm-levels-qa` | Winter Storm Levels writer | Complete dry-run manifest/GeoJSON bundle, standalone browser QA page, and concise attempt diagnostics; no full GRIB files | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -216,6 +229,14 @@ The repository has product-specific, not universal, QA:
   while source freshness holds. Bootstrap may establish
   one valid family while others remain explicit failed/unavailable structural
   records; it fails if no active family establishes official data.
+- Winter Storm Levels requires one complete NBM cycle with all 11 configured
+  horizons. It validates exact deterministic `SNOWLVL` inventory identity and
+  byte ranges, metre units, decoded valid time/CRS, at least 95% finite grid
+  coverage, physical range, contour metadata/bounds, stable target structure,
+  manifest paths/checksums/sizes, and unique cycle/valid identities. Only
+  transport errors and HTTP 408/429/500/502/503/504 receive bounded retries.
+  Wrong field/level/unit/time, malformed content, partial horizon coverage, or
+  unsafe bundle structure fails and preserves the accepted set.
 
 The CoCoRaHS completeness gap and streamflow current-value gap mean "workflow
 success" is not universally equivalent to "complete current product."
@@ -233,6 +254,8 @@ success" is not universally equivalent to "complete current product."
 | First CBRFC bootstrap establishes at least one valid family, including expired period provenance or the year-round monthly series | The valid family is accepted and the others remain explicit `failed_no_data` or source-unavailable structural records; CNRFC is unaffected | A complete, honestly partial three-record CBRFC seed can be created year-round |
 | First CBRFC bootstrap establishes no official family and an active family has an unexplained fetch/parse/validation failure | No CBRFC canonical replacement or commit step; CNRFC is unaffected; the failure is not relabeled out of season | No CBRFC canonical seed is created |
 | CBRFC roster/schema/serialization/staged validation fails | No CBRFC canonical replacement or commit step; CNRFC is unaffected | Prior CBRFC canonical bytes remain unchanged |
+| Winter Storm Levels source is unavailable, its variable is missing, fetch/decode/validation/publication fails, or any of 11 horizons is missing | Attempt diagnostics preserve the distinct failure class; no manifest promotion or commit step | Prior manifest and referenced contours remain unchanged and age naturally into delayed, stale LKG, then expired states |
+| Winter Storm Levels candidate is unchanged except retrieval/publication time | Semantic no-op; no data commit | Prior accepted bytes remain authoritative |
 | Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
 | Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |
 | Transformation error stops the script | No commit step | Remains |
@@ -252,12 +275,15 @@ At the remote Git-ref boundary, one successful commit updates all staged paths
 together. A rejected push updates none of them.
 
 The scripts do not universally construct complete product sets in a separate
-staging directory and atomically rename them into place. Snow and groundwater
-are product-specific exceptions: each constructs and validates its complete
-prospective output set in a same-directory staging area, preserves backups, and
-restores already-promoted members if a later replacement fails. The filesystem
-still does not provide one atomic multi-path rename. Other local manual runs can
-alter final `docs/data` paths before later processing fails.
+staging directory and atomically rename them into place. Snow, groundwater, and
+Winter Storm Levels are product-specific exceptions: each constructs and
+validates its complete prospective output set before promotion. Snow and
+groundwater preserve backups and restore already-promoted members if a later
+replacement fails. Winter Storm Levels promotes immutable cycle targets first
+and atomically renames the validated manifest last; a pre-manifest failure
+removes new unreferenced targets and leaves the prior manifest bytes unchanged.
+The filesystem still does not provide one atomic multi-path rename. Other local
+manual runs can alter final `docs/data` paths before later processing fails.
 
 Safe local reproduction uses:
 

@@ -50,6 +50,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
 | Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
+| Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Manual-only dry run or approved `main` publication; proposed 01:11, 07:11, 13:11, 19:11 after first-release approval | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
 
 The absence of a declared product ID or manifest is a current contract gap,
 not permission to assign an identifier casually. A later versioned manifest
@@ -71,8 +72,9 @@ They are operational observations, not acceptance limits.
 | USGS groundwater | 2,263 well features | 11.9 MB |
 | SCAN | 28 station features | 0.29 MB, plus context CSVs |
 | Snow-pillow | 304 station features | 0.70 MB, plus context CSVs |
+| Winter Storm Levels live prototype | 11 NBM valid-time targets; 17-68 contour features per target | About 0.9 MB plus a 14-KB manifest |
 
-GFS, HRRR, and NBM are rolling multi-file products. Their total size changes
+GFS, HRRR, NBM wind, and Winter Storm Levels are rolling multi-file products. Their total size changes
 with retained model cycles and forecast entries. Do not infer a payload budget
 from one checkout.
 
@@ -100,6 +102,7 @@ It does not mean every such file is a canonical consumer product.
 | USGS groundwater | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | Both are canonical consumer products |
 | SCAN soil moisture | `docs/data/scan_soil_moisture_latest.geojson`<br>`docs/data/scan_soil_moisture_latest_summary.json`<br>`docs/data/scan_soil_moisture_current_wy_trace.csv`<br>`docs/data/scan_soil_moisture_current_wy_trace_summary.json`<br>`docs/data/scan_depth_style.csv` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata; depth style is consumer context. `docs/data/scan_sms_waterday_percentiles.csv`, `docs/data/scan_sms_monthly_context.csv`, and `docs/data/scan_sms_prior_wy_fallback_traces.csv` are separately managed consumer context |
 | Snow-pillow SWE | `docs/data/snow_pillow_latest.geojson`<br>`docs/data/snow_pillow_latest_summary.json`<br>`docs/data/snow_pillow_current_wy_trace.csv`<br>`docs/data/snow_pillow_current_wy_trace_summary.json` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata. `docs/data/snow_pillow_swe_waterday_percentiles.csv`, `docs/data/snow_pillow_swe_monthly_context.csv`, `docs/data/snow_pillow_swe_prior_wy_fallback_traces.csv`, and `docs/data/snow_pillow_swe_normal_medians.csv` are static/manual consumer context |
+| Winter Storm Levels | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json`<br>`docs/data/winter-storm-levels/nbm/snow-level/*.geojson` | Manifest and selected rolling target become canonical after the first approved publication. No live-test payload is seeded or committed by this implementation change. Attempt diagnostics and standalone QA remain workflow artifacts/nonproduction files. |
 
 Context files are part of consumer behavior even when the scheduled writer does
 not regenerate them. A file's presence in this table does not change its current
@@ -877,6 +880,89 @@ ownership.
   fills. Consumer geometry remains generalized display context, never exact RFC
   forecast-basin geometry.
 
+## 14. Winter Storm Levels
+
+- **Purpose:** Browser-ready modeled snow-level contours for winter-storm
+  operations across California, southern Oregon, Nevada, northwest Arizona, the
+  lower Colorado corridor, and adjacent Pacific waters.
+- **Workflow and producer:**
+  [`.github/workflows/build-winter-storm-levels.yml`](../.github/workflows/build-winter-storm-levels.yml)
+  calls [`scripts/build_winter_storm_levels.R`](../scripts/build_winter_storm_levels.R),
+  with pure retrieval, contour, manifest, validation, and promotion helpers in
+  [`scripts/winter_storm_levels_helpers.R`](../scripts/winter_storm_levels_helpers.R).
+  The config is
+  [`data/input/winter_storm_levels_config.csv`](../data/input/winter_storm_levels_config.csv).
+- **Source and definition:** Deterministic `SNOWLVL` from NOAA/NWS/NCEP NBM
+  CONUS Core. The controlling MDL/NWS definition is elevation where wet-bulb
+  temperature reaches 0.5 degrees C. Source values are metres MSL and are
+  converted to feet MSL. This is not the GFS/HRRR 0-degree-C freezing level.
+- **Retrieval:** Exact anonymous byte ranges from the NOAA NBM Open Data bucket,
+  identified through exact `.idx` records. NOMADS is recorded as the official
+  alternative. The publisher requires all configured horizons from one
+  00/06/12/18 UTC cycle.
+- **Canonical entry point and rolling set:**
+  `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` and its
+  relative targets beneath `docs/data/winter-storm-levels/nbm/snow-level/`.
+  The paths are intentionally absent until the first approved publication.
+  Target filenames include a short content-hash suffix so a same-cycle revision
+  cannot overwrite bytes still referenced by an older manifest. Consumers must
+  never select by directory listing or filename guessing.
+- **Forecast targets:** Hours 1, 6, 12, 18, 24, 30, 36, 42, 48, 60, and 72.
+  Two cycles are retained after successful advancement; newest-cycle entries
+  win when valid times overlap.
+- **Format/domain/CRS:** Each target is a WGS84 GeoJSON FeatureCollection of
+  LineStrings clipped exactly to `[-130, 30, -112, 44.5]`. The source is cropped
+  with a larger configured buffer. Published contours are 0-20,000 feet MSL at
+  1,000-foot intervals, with 750-m projected simplification and five-decimal
+  coordinates. Only levels actually crossing the domain appear.
+- **Feature contract:** Every feature carries stable product/source/parameter,
+  snow-level definition, `level_ft_msl`, label/unit, source cycle, valid time,
+  forecast lead, segment, and length properties. Retrieval/build/publication
+  timestamps are not repeated on features.
+- **Manifest contract:** Schema/contract version, accepted status, exact NOAA source
+  attribution/definition/units, domain, contour settings, freshness thresholds,
+  source cycle, retrieval/publication times, expected-versus-actual complete-set
+  diagnostics, and target entries. Every target
+  entry carries cycle/valid/validity-window/lead, exact retrieval and inventory
+  provenance, relative path, media type, SHA-256, bytes, feature count, emitted
+  levels, source-grid coverage/range, and output bounds.
+- **Freshness and expiry:** A target is active within three hours of its valid
+  time. Cycle age is current through nine hours, delayed-but-usable through 15,
+  stale-last-known-good through 24, and expired afterward. No active target also
+  means expired. Consumers recompute status from source/valid times; retrieval,
+  publication, commit, and Pages times do not extend validity.
+- **NoData and below-ground interpretation:** GRIB NoData `9999` becomes
+  missing. Finite zero and small negative source values remain valid input, but
+  only nonnegative configured contours are published. The publisher does not
+  terrain-mask or replace the NBM-derived field. Where terrain exceeds the
+  snow-level height, consumers should explain the transition as at/near the
+  surface rather than imply a useful below-ground level.
+- **QA/failure policy:** All 11 inventories, exact record identity, range
+  response, single-layer decode, metre unit, valid time, CRS, at least 95%
+  finite source coverage, physical range, contour metadata/bounds, manifest
+  paths/checksums/sizes, feature metadata, bounds, complete horizon set, and
+  unique cycle/valid identities must pass. Source unavailable, variable missing,
+  fetch, decode, validation, and publication failure remain distinct. Any failure
+  retains accepted bytes; new targets promote before a manifest-last atomic
+  rename. Transient retries use bounded exponential backoff with jitter and a
+  capped numeric `Retry-After`. Retrieval/publication-time-only changes are
+  semantic no-ops.
+- **Publication controls:** Manual dispatch defaults to a runner-temporary dry
+  run, and feature branches cannot publish. Explicit `publish: true` works only
+  on `main`. No schedule is active until the maintainer approves the first
+  official publication. The proposed collision-resistant cadence is 01:11,
+  07:11, 13:11, and 19:11 UTC.
+- **Browser QA:** [`qa/winter_storm_levels/index.html`](../qa/winter_storm_levels/index.html)
+  is a standalone nonproduction renderer with source/cycle/valid-time selection,
+  stale/error display, labeling, optional comparison/overlay loading, and render
+  timing. It is not private BRIM code or a canonical feed URL.
+- **Attribution and caveats:** NOAA/NWS/NCEP/MDL NBM. Snow level is a modeled
+  transition estimate, not surface precipitation type or accumulation. The
+  1,000-foot line interval is not model precision. GFS/HRRR multiple freezing
+  levels and CNRFC raster guidance remain research comparisons, not silent
+  fallbacks. Detailed source evidence is in
+  [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
+
 ## Nonproduction workflows
 
 The manual HRRR sandbox writes diagnostic files and an Actions artifact only.
@@ -885,7 +971,7 @@ only. The wind watchdog reads wind manifests/state and can dispatch ASOS/AWOS,
 GFS, HRRR, and NBM writers on the selected ref; it does not itself commit or
 publish repository data.
 
-These workflows must not be described as a fourteenth product family.
+These workflows must not be described as additional product families.
 
 ## Change triggers
 
