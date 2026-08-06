@@ -8,8 +8,8 @@
   "domain_id": "broad_npac_namerica",
   "domain_label": "Broad North Pacific / North America",
   "local_time_zone": "America/Los_Angeles",
-  "generated_utc": "2026-08-06T13:23:39Z",
-  "generated_local": "2026-08-06 06:23:39 AM PDT",
+  "generated_utc": "2026-08-06T13:27:53Z",
+  "generated_local": "2026-08-06 06:27:53 AM PDT",
   "browser_selection": {
     "recommended": true,
     "strategy": "fetch this manifest first; for Current choose valid_time_utc closest to Date.now(); for +24 hr choose closest to Date.now() + 24 hours; prefer recent past over future for equal-distance ties; then fetch entry.relative_url relative to this manifest directory",
@@ -39,7 +39,7 @@
       "forecast_hour_label": "f007",
       "valid_time_utc": "2026-08-06T13:00:00Z",
       "valid_time_local": "2026-08-06 06:00:00 AM PDT",
-      "valid_lag_minutes_at_build": 23.569044,
+      "valid_lag_minutes_at_build": 27.84651,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f007.json",
       "filename": "gfs_surface_wind_20260806T06Z_f007.json",
       "file_bytes": 2338266,
@@ -102,7 +102,7 @@
       "forecast_hour_label": "f004",
       "valid_time_utc": "2026-08-06T10:00:00Z",
       "valid_time_local": "2026-08-06 03:00:00 AM PDT",
-      "valid_lag_minutes_at_build": 203.569044,
+      "valid_lag_minutes_at_build": 207.84651,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f004.json",
       "filename": "gfs_surface_wind_20260806T06Z_f004.json",
       "file_bytes": 2337817,
@@ -156,7 +156,7 @@
       "forecast_hour_label": "f005",
       "valid_time_utc": "2026-08-06T11:00:00Z",
       "valid_time_local": "2026-08-06 04:00:00 AM PDT",
-      "valid_lag_minutes_at_build": 143.569044,
+      "valid_lag_minutes_at_build": 147.84651,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f005.json",
       "filename": "gfs_surface_wind_20260806T06Z_f005.json",
       "file_bytes": 2482585,
@@ -210,7 +210,7 @@
       "forecast_hour_label": "f006",
       "valid_time_utc": "2026-08-06T12:00:00Z",
       "valid_time_local": "2026-08-06 05:00:00 AM PDT",
-      "valid_lag_minutes_at_build": 83.569044,
+      "valid_lag_minutes_at_build": 87.84651,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f006.json",
       "filename": "gfs_surface_wind_20260806T06Z_f006.json",
       "file_bytes": 2338199,
@@ -264,7 +264,7 @@
       "forecast_hour_label": "f007",
       "valid_time_utc": "2026-08-06T13:00:00Z",
       "valid_time_local": "2026-08-06 06:00:00 AM PDT",
-      "valid_lag_minutes_at_build": 23.569044,
+      "valid_lag_minutes_at_build": 27.84651,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f007.json",
       "filename": "gfs_surface_wind_20260806T06Z_f007.json",
       "file_bytes": 2338266,
@@ -318,7 +318,7 @@
       "forecast_hour_label": "f008",
       "valid_time_utc": "2026-08-06T14:00:00Z",
       "valid_time_local": "2026-08-06 07:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -36.430956,
+      "valid_lag_minutes_at_build": -32.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f008.json",
       "filename": "gfs_surface_wind_20260806T06Z_f008.json",
       "file_bytes": 2483025,
@@ -372,13 +372,13 @@
       "forecast_hour_label": "f009",
       "valid_time_utc": "2026-08-06T15:00:00Z",
       "valid_time_local": "2026-08-06 08:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -96.430956,
+      "valid_lag_minutes_at_build": -92.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f009.json",
       "filename": "gfs_surface_wind_20260806T06Z_f009.json",
       "file_bytes": 2338203,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f009&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.004597,
         "p50": 4.415826,
@@ -411,19 +411,7 @@
       "speed_mph_p75": 13.989533,
       "speed_mph_p90": 17.361686,
       "speed_mph_p95": 19.152469,
-      "speed_mph_max": 38.105909,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 38.105909
     },
     {
       "product_id": "gfs_surface_wind",
@@ -438,13 +426,13 @@
       "forecast_hour_label": "f010",
       "valid_time_utc": "2026-08-06T16:00:00Z",
       "valid_time_local": "2026-08-06 09:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -156.430956,
+      "valid_lag_minutes_at_build": -152.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f010.json",
       "filename": "gfs_surface_wind_20260806T06Z_f010.json",
       "file_bytes": 2482975,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f010&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.008505,
         "p50": 4.46658,
@@ -477,19 +465,7 @@
       "speed_mph_p75": 14.103772,
       "speed_mph_p90": 17.37706,
       "speed_mph_p95": 19.143145,
-      "speed_mph_max": 37.450047,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 37.450047
     },
     {
       "product_id": "gfs_surface_wind",
@@ -504,13 +480,13 @@
       "forecast_hour_label": "f028",
       "valid_time_utc": "2026-08-07T10:00:00Z",
       "valid_time_local": "2026-08-07 03:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -1236.430956,
+      "valid_lag_minutes_at_build": -1232.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f028.json",
       "filename": "gfs_surface_wind_20260806T06Z_f028.json",
       "file_bytes": 2193292,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f028&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.010185,
         "p50": 3.934813,
@@ -543,19 +519,7 @@
       "speed_mph_p75": 13.235246,
       "speed_mph_p90": 16.917947,
       "speed_mph_p95": 18.81844,
-      "speed_mph_max": 32.127891,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 32.127891
     },
     {
       "product_id": "gfs_surface_wind",
@@ -570,13 +534,13 @@
       "forecast_hour_label": "f031",
       "valid_time_utc": "2026-08-07T13:00:00Z",
       "valid_time_local": "2026-08-07 06:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -1416.430956,
+      "valid_lag_minutes_at_build": -1412.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f031.json",
       "filename": "gfs_surface_wind_20260806T06Z_f031.json",
       "file_bytes": 2483042,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f031&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.012141,
         "p50": 4.018892,
@@ -609,19 +573,7 @@
       "speed_mph_p75": 13.180338,
       "speed_mph_p90": 16.961316,
       "speed_mph_p95": 18.907057,
-      "speed_mph_max": 32.453908,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 32.453908
     },
     {
       "product_id": "gfs_surface_wind",
@@ -636,13 +588,13 @@
       "forecast_hour_label": "f034",
       "valid_time_utc": "2026-08-07T16:00:00Z",
       "valid_time_local": "2026-08-07 09:00:00 AM PDT",
-      "valid_lag_minutes_at_build": -1596.430956,
+      "valid_lag_minutes_at_build": -1592.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f034.json",
       "filename": "gfs_surface_wind_20260806T06Z_f034.json",
       "file_bytes": 2339188,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f034&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.006884,
         "p50": 4.23966,
@@ -675,19 +627,7 @@
       "speed_mph_p75": 13.454512,
       "speed_mph_p90": 17.131427,
       "speed_mph_p95": 18.983258,
-      "speed_mph_max": 31.771058,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 31.771058
     },
     {
       "product_id": "gfs_surface_wind",
@@ -702,13 +642,13 @@
       "forecast_hour_label": "f037",
       "valid_time_utc": "2026-08-07T19:00:00Z",
       "valid_time_local": "2026-08-07 12:00:00 PM PDT",
-      "valid_lag_minutes_at_build": -1776.430956,
+      "valid_lag_minutes_at_build": -1772.15349,
       "relative_url": "gfs/surface/gfs_surface_wind_20260806T06Z_f037.json",
       "filename": "gfs_surface_wind_20260806T06Z_f037.json",
       "file_bytes": 2483036,
-      "status": "downloaded",
+      "status": "reused_existing",
       "source_request_url": "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t06z.pgrb2.0p25.f037&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&subregion=&leftlon=180&rightlon=300&toplat=75&bottomlat=0&dir=%2Fgfs.20260806%2F06%2Fatmos",
-      "source_grib_bytes": 434702,
+      "source_grib_bytes": "NA",
       "speed_ms": {
         "min": 0.004592,
         "p50": 4.347004,
@@ -741,19 +681,7 @@
       "speed_mph_p75": 13.627529,
       "speed_mph_p90": 16.984413,
       "speed_mph_p95": 18.869082,
-      "speed_mph_max": 33.95596,
-      "grid": {
-        "nx": 481,
-        "ny": 301,
-        "dx": 0.25,
-        "dy": 0.25
-      },
-      "domain": {
-        "west": -180.125,
-        "east": -59.875,
-        "south": -0.125,
-        "north": 75.125
-      }
+      "speed_mph_max": 33.95596
     }
   ]
 }
