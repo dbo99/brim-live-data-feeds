@@ -95,6 +95,7 @@ Production writer workflow and builder pairs:
 | Snow pillow SWE | `.github/workflows/build-snow-pillow-latest.yml` | `scripts/build_snow_pillow_latest.R` |
 | USGS groundwater | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | `scripts/build_usgs_groundwater_latest_ca.R` |
 | USGS streamflow | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | `scripts/build_usgs_streamflow_latest_ca.R` |
+| Winter Storm Levels | `.github/workflows/build-winter-storm-levels.yml` | `scripts/build_winter_storm_levels.R` |
 
 Supporting workflows are the HRRR sandbox, wind watchdog, and groundwater
 candidate preview. The watchdog reads wind manifests/state and can dispatch

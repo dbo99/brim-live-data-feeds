@@ -31,11 +31,12 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
 | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | Build USGS CA streamflow latest GeoJSON | Manual; :23 every 4h | `scripts/build_usgs_streamflow_latest_ca.R` | GeoJSON/summary |
+| `.github/workflows/build-winter-storm-levels.yml` | Build Winter Storm Levels | Manual dry run by default; proposed four-cycle schedule deferred | `scripts/build_winter_storm_levels.R` | Complete manifest/contour artifact; explicit `main` publication only |
 | `.github/workflows/build-hrrr-wind-sandbox.yml` | Build HRRR wind sandbox | Manual | `scripts/build_hrrr_wind_sandbox.R` | Artifact only |
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
 
-GitHub's dynamic `pages build and deployment` workflow is a seventeenth active
+GitHub's dynamic `pages build and deployment` workflow is an eighteenth active
 workflow but is not source-controlled in `.github/workflows`.
 
 ## Names and entry points
@@ -72,6 +73,10 @@ workflow but is not source-controlled in `.github/workflows`.
   `America/Los_Angeles` timezone once daily at 08:14. It defaults manual
   dispatch to runner-temporary dry-run output and permits scheduled or explicitly
   requested publication only from the selected `main` branch tip.
+- The Winter Storm Levels candidate is manual-only, defaults to
+  runner-temporary dry-run output, and accepts explicit publication only from
+  `main`. The proposed 01:11/07:11/13:11/19:11 UTC schedule is deliberately not
+  enabled before first-publication approval.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
@@ -80,10 +85,11 @@ workflow but is not source-controlled in `.github/workflows`.
 **Gaps**
 
 - Most production manual dispatches have no confirmation/production-target
-  input; the CNRFC and CBRFC forecast writers are product-specific exceptions.
+  input; the CNRFC, CBRFC, and Winter Storm Levels forecast writers are
+  product-specific exceptions.
 - Most writers can be manually targeted at a feature branch and write ordinary
-  product paths on that branch; the CNRFC and CBRFC forecast writers are
-  product-specific dry-run exceptions.
+  product paths on that branch; the CNRFC, CBRFC, and Winter Storm Levels
+  forecast writers are product-specific dry-run exceptions.
 - There is no GitHub Environment approval for official publication.
 
 **Recommended**
@@ -215,6 +221,11 @@ is no separate least-privilege build job.
   substantive source/status fields changed.
 - The CBRFC producer applies the same staged validation and semantic no-op rule
   to its separate exact three-record canonical JSON path.
+- Winter Storm Levels builds its complete target/manifest set under a unique
+  temporary root, validates every member, promotes immutable cycle targets
+  first, and renames its manifest last. A failed pre-manifest promotion test
+  preserves the prior accepted manifest byte-for-byte. Retrieval/publication
+  timestamps are excluded from semantic no-op comparison.
 
 **Gap**
 
@@ -281,6 +292,10 @@ directory and atomically promoted locally.
   eligible before their month. Controlled-date tests cover July 31, August 1,
   September 1, October 1, January 1 and future pre-issuance bootstrap. CBRFC source
   failures and its publication transaction cannot block or alter CNRFC.
+- Winter Storm Levels uses fail-and-retain for source, completeness, decode,
+  contour, contract, and publication failures. It does not publish a partial
+  target set. A successful new cycle retains two cycles; old accepted values age
+  through explicit delayed, stale-LKG, and expired states without restamping.
 
 **Gaps**
 
@@ -303,6 +318,9 @@ directory and atomically promoted locally.
 - Point products use GeoJSON longitude/latitude.
 - GFS/HRRR headers describe their longitude/latitude grids.
 - NBM masks offshore/out-of-domain points.
+- Winter Storm Levels crops with a configured source buffer, contours and
+  simplifies in a projected CRS, then clips serialized WGS84 lines to exact
+  configured bounds.
 - Private BRIM analytical processing may use another CRS before exported
   producer inputs arrive here.
 
@@ -345,7 +363,8 @@ directory and atomically promoted locally.
 - Retrieval, build and publication times are inconsistent or absent across
   product families.
 - Summary field names vary.
-- Only the four wind manifests express some machine freshness metadata.
+- The four wind manifests and Winter Storm Levels express product-specific
+  machine freshness metadata.
 
 **Recommended**
 
@@ -359,15 +378,17 @@ directory and atomically promoted locally.
 
 **Implemented**
 
-- ASOS, GFS, HRRR and NBM have product manifests.
+- ASOS, GFS, HRRR, NBM, and Winter Storm Levels have product manifests.
 - Other families have ad hoc summaries.
 
 **Gaps**
 
-- Eight families lack formal manifests.
+- The remaining families lack formal manifests.
 - Manifest envelopes and versions differ.
-- No JSON Schemas or product checksums exist.
-- Producer workflow/commit and publication time are absent.
+- No JSON Schemas or repository-wide checksum convention exists; Winter Storm
+  Levels has product-specific SHA-256 target checksums.
+- Producer workflow/commit and publication time remain absent or inconsistent
+  across most products.
 
 **Recommended**
 
@@ -386,6 +407,8 @@ directory and atomically promoted locally.
 - Groundwater preview uses 30 days.
 - CNRFC and CBRFC major water-supply forecast run diagnostics use 14 days and
   exclude full source bodies.
+- Winter Storm Levels retains its dry-run vector bundle, browser QA page, and
+  attempt diagnostics for 14 days and excludes full GRIB messages.
 - Artifacts may contain QA packages and debug logs.
 - The groundwater writer emits bounded, sanitized request summaries and
   parser/filter counts, including aggregated warning classes instead of

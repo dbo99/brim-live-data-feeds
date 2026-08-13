@@ -9,7 +9,8 @@ release changelog and does not replace Git history.
 ### Product expansion
 
 The repository grew from individual uploaded datasets into thirteen independently
-scheduled product families. The resulting architecture deliberately keeps
+scheduled product families plus the manual-first Winter Storm Levels production
+candidate. The resulting architecture deliberately keeps
 product-specific scripts, schedules, outputs, and validation because the upstream
 services and consumer semantics differ substantially.
 
@@ -89,11 +90,12 @@ boundary until the producer, consumer, and public contract are changed together.
 
 ## Current strengths
 
-- Thirteen product families have explicit workflow and builder ownership.
+- Fourteen product families or coordinated production candidates have explicit
+  workflow and builder ownership.
 - Production writers use bounded timeouts and reference-scoped non-cancelling
   concurrency.
 - Git commits retain prior published states and support normal rollback.
-- Wind forecast products expose manifests instead of requiring directory listing.
+- Rolling forecast products expose manifests instead of requiring directory listing.
 - GeoJSON feeds are paired with compact summaries where the current contract
   defines them.
 - Sandbox/preview workflows separate selected investigation from production
@@ -126,6 +128,12 @@ boundary until the producer, consumer, and public contract are changed together.
   publication transaction. A direct total-Lake-Mead product remains deferred
   after the special-products pages, Upper and Lower dashboards, reservoir
   listings and official structured request exposed no complete direct record.
+- Winter Storm Levels has an official NBM snow-level source, exact inventory and
+  range retrieval, a versioned checksum manifest, complete-cycle gating,
+  deterministic contour/bounds/simplification tests, semantic no-op behavior,
+  manifest-last promotion with injected-failure coverage, and standalone browser
+  QA. The first official publication and recurring schedule remain deliberately
+  unapproved.
 
 ## Risk register
 
@@ -141,7 +149,7 @@ corruption or outage would require immediate P0 reclassification.
 |---|---|---|---|
 | P1 (highest current latent defect) | Streamflow workflow defines `USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH`, while the builder reads a differently scoped site-count gate and can join an empty latest-value result to the static site set. | A successful publication may contain many features but effectively no current discharge values. | Align the configuration name and implementation; gate on non-null live observations and test empty-upstream behavior before publishing. |
 | P1 | `main` had no observed branch protection or ruleset at the baseline. | A direct push or insufficiently reviewed merge can immediately change the official Pages source. | Require pull requests, successful checks, and restricted direct pushes for `main`. |
-| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow and groundwater now stage, validate, back up and promote their respective multi-file sets, but the control is not repository-wide and separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback where one multi-path atomic primitive is unavailable. |
+| P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow and groundwater now stage, validate, back up and promote their respective multi-file sets; Winter Storm Levels stages the bundle and promotes its manifest last. The control is not repository-wide and separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback or manifest-last designs where one multi-path atomic primitive is unavailable. |
 | P1 | There is no common machine-readable schema or compatibility test for public feeds. | A syntactically valid producer change can silently break a consumer. | Add versioned schemas or contract fixtures and run producer/consumer compatibility checks for changed products. |
 | P2 | CoCoRaHS retrieval lacks a strong repository-wide minimum-completeness or pagination gate. | A partial upstream response can look like a valid low-count day. | Record expected coverage signals and classify partial responses as degraded or failed. |
 | P2 | GFS and HRRR can publish useful but incomplete target sets under product-specific rules. | Target-time choices available to consumers may shrink unexpectedly. | Declare completeness/degraded status in manifests and alert on missing required targets. |
@@ -149,8 +157,9 @@ corruption or outage would require immediate P0 reclassification.
 | P2 | SCAN and snow combine generated live outputs with static/reference context tables. | An algorithm change can make live and context files semantically inconsistent. | Document per-file ownership and validate compatible water-year/date and unit assumptions together. |
 | P2 | Product-specific QA has no shared checksum, provenance, or build metadata standard. | It is harder to prove which upstream response and builder version created a file. | Add non-sensitive provenance and checksums to summaries/manifests or retained build reports. |
 | P2 | Scheduled data commits and code changes share `main`. | High-volume automated history can obscure review and complicate code rollbacks. | Preserve clear commit messages and consider a controlled publication branch only after evaluating Pages and consumer impact. |
-| P2 | Most feature-branch manual writers use ordinary product paths on that branch; the CNRFC and CBRFC forecast writers are dry-run-only exceptions. | A reviewer may mistake branch artifacts for official data or accidentally merge generated changes. | Label evidence clearly, review the changed-file set, and do not merge test-generated feed files unless that is the intended release. |
+| P2 | Most feature-branch manual writers use ordinary product paths on that branch; the CNRFC, CBRFC, and Winter Storm Levels forecast writers are dry-run-only exceptions. | A reviewer may mistake branch artifacts for official data or accidentally merge generated changes. | Label evidence clearly, review the changed-file set, and do not merge test-generated feed files unless that is the intended release. |
 | P2 | Upstream rate limits, latency, format drift, and transient outages are external dependencies. Groundwater now has product-specific retry classification, a circuit breaker, parser accounting and all-chunk completeness, but these controls are not uniform. | Builds can time out, partially populate, or fail repeatedly without a source-code defect. | Extend bounded retries and concise diagnostics product by product, distinguish outage from schema change, and alert on sustained staleness. |
+| P2 | Winter Storm Levels depends on NBM deterministic `SNOWLVL` inventories and the NOAA Open Data bucket, with NOMADS only documented as an alternate. No stable official contour-vector service or operational independent snow-level comparison was found. | Field naming/definition, bucket layout, inventory, or upstream model changes could stop publication; a visually plausible contour set could otherwise hide semantic drift. | Keep exact field/level/unit/time checks, monitor official NBM change notices, exercise NOMADS retrieval before declaring it an automatic fallback, and compare winter cases against CNRFC/NDFD guidance without silently changing the contract. |
 | P2 | The CNRFC major water-supply product depends on labeled server-rendered HTML and inline chart-title/table text because the reviewed official bulk products omit percent-of-median, product 2 is a page table and product 7 requires headline/tabular cross-checking. MHBC1 currently has no official product-2 table. | A CNRFC presentation or per-location availability change can degrade records even when other hydrologic products still exist upstream. | Retain focused and fuller sanitized fixtures, fail ambiguous labels and table conflicts, alert from independent family/metric health, treat new MHBC1 availability as a roster notice, and review an official structured source if CNRFC publishes one with the complete direct-value contract. |
 | P2 | The CBRFC GLDA3 point endpoint is structured but currently served with a non-JSON content type; its official list may omit a newer point issue, and blank-date zero fields are source sentinels. | Loose content-type, sentinel or list-fallback handling could reject valid official data or publish raw guidance/false zeros. | Keep the point `off*` fields authoritative, require a valid official issue date for numeric values, bound and parse the response strictly, treat the list as secondary QA, and retain adversarial fixtures. |
 | P2 | The CBRFC Lake Powell dashboard is server-rendered with no reviewed separate public backend; it is the water-year primary and only a second official representation, not proven independent evidence, for April-July. It supplies percent of mean but no water-year percent of median. | Presentation drift, lag or loose row selection could swap periods, infer a missing statistic, or silently publish the wrong value. | Require the exact Lake Powell heading, ordered headers and semantic rows; compare current Apr-Jul representations at source-displayed precision, notice omission/lag, fail material conflict, bind direct water-year values into the signature, omit percent of median, and isolate period failures. |

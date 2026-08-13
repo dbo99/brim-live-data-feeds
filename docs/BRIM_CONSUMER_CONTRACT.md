@@ -51,6 +51,7 @@ from Pages-relative `data/...` paths. Their repository counterparts are under
 | USGS groundwater | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | `scripts/build_usgs_groundwater_latest_ca.R` | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | No | Groundwater helper |
 | SCAN | `.github/workflows/build-scan-soil-moisture-latest.yml` | `scripts/build_scan_soil_moisture_latest.R` | Latest GeoJSON/summary, current-WY trace, depth style, water-day percentiles, monthly context, and prior-WY fallback under `docs/data/` | No | SCAN helper |
 | Snow-pillow | `.github/workflows/build-snow-pillow-latest.yml` | `scripts/build_snow_pillow_latest.R` | Latest GeoJSON/summary, current-WY trace, water-day percentiles, monthly context, prior-WY fallback, and normal medians under `docs/data/` | No | Snow-pillow helper |
+| Winter Storm Levels | `.github/workflows/build-winter-storm-levels.yml` | `scripts/build_winter_storm_levels.R` | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` and selected target | Yes | Separate integration task not started; additive public contract is ready for consumer implementation after publisher readiness review and the canonical path remains absent until first approved publication |
 
 The established relationships were verified from the producer workflow/script,
 tracked output, private registry path, and corresponding private helper. The new
@@ -70,7 +71,9 @@ files, is maintained in [PRODUCTS.md](PRODUCTS.md).
 - Actions QA artifacts are ZIP archives and are not product URLs.
 - GFS and HRRR wind grids are arrays of U and V records with grid headers and
   data arrays.
-- NBM guidance and point products are GeoJSON FeatureCollections.
+- NBM guidance and point products are GeoJSON FeatureCollections. Winter Storm
+  Levels targets are GeoJSON line FeatureCollections selected only through their
+  manifest.
 - CSV context products must retain a header row and product-specific key
   columns used by the consumer.
 
@@ -162,6 +165,7 @@ defines a formal limit.
 | GFS<br>`docs/data/wind/gfs_surface_wind_feed_manifest.json` | Root `entries:array`; each usable entry has `product_id:string`, `model_cycle_utc:string`, `forecast_hour:number`, `valid_time_utc:string`, `relative_url:string`, `file_bytes:number`, and `status:string`. `browser_selection.supported_lead_hours:array` documents Current/+24 selection; `stale_after_hours:number` is feed freshness metadata. | Entry target is a two-element JSON array of U/V objects. Each has `header:object` and numeric `data:array`; headers require `parameterNumber:number`, `parameterNumberName:string`, `parameterUnit:string`, `nx:number`, `ny:number`, `lo1:number`, `la1:number`, `lo2:number`, `la2:number`, `dx:number`, `dy:number`, `refTime:string`, and `forecastTime:number`. Wind component unit is m/s. | `model_cycle_utc` is model init; `forecast_hour` plus init identifies `valid_time_utc`; manifest `generated_utc` is build generation. A missing/unresolvable entry is unusable. `status` describes entry production/reuse, not meteorological validity. | `docs/data/wind/gfs_surface_wind_latest.json` and its summary are compatibility outputs; current BRIM selection is manifest-driven. |
 | HRRR<br>`docs/data/wind/hrrr_surface_wind_feed_manifest.json` | Root `entries:array`; entries require `product_id:string`, `requested_lead_hours:number`, `target_valid_time_utc:string`, `target_distance_minutes:number`, `model_cycle_utc:string`, `forecast_hour:number`, `valid_time_utc:string`, `relative_url:string`, `file_bytes:number`. `browser_selection.supported_lead_hours:array` defines Current/+6/+12; `stale_after_hours:number`. | Selected target is the same two-record U/V JSON structure and header fields as GFS, with numeric component arrays in m/s. `domain:object`, `grid:object`, and `earth_relative_winds_confirmed:boolean` carry spatial/vector state. | Target time and actual valid time remain distinct; the consumer rejects entries outside its target tolerance. Root `target_failures:array` can report unavailable targets. A load failure may retain the previous in-session field. | `docs/data/wind/hrrr_surface_wind_latest.json` and its summary are compatibility outputs; current BRIM selection is manifest-driven. |
 | NBM<br>`docs/data/wind/nbm_wind_guidance_feed_manifest.json` | Root `entries:array`; each entry requires `feed_version:string`, `target_lead_hours:number`, `model_cycle_utc:string`, `forecast_hour:number`, `valid_time_utc:string`, `relative_url:string`, `feature_count:number`. Root `target_lead_hours:array`, `published_support_lead_hours:array`, and `support_window_hours:number` describe selection support. | Selected target is a GeoJSON `FeatureCollection` of Points. Minimum properties are `grid_i:number`, `grid_j:number`, `wind_dir_degrees:number`, `wind_p10_mph:number`, `wind_p50_mph:number`, `wind_p90_mph:number`, `gust_p10_mph:number`, `gust_p50_mph:number`, `gust_p90_mph:number`. | Init, forecast hour, valid time, and manifest `generated_at_utc` are distinct. The current manifest has no common `product_id`, stale field, or universal error/status envelope. Missing/unresolvable entries are unusable; the browser may retain its prior in-session field. | `docs/data/wind/nbm_wind_guidance_latest_summary.json` is producer/QA metadata, not a compatibility latest field. |
+| Winter Storm Levels<br>`docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Root requires `product_id:"winter_storm_levels"`, supported `schema_version` and `contract_version`, accepted `status`, `source`, `domain`, `contour`, `freshness`, `cycle_time_utc`, retrieval/publication times, `target_count`, complete-set `diagnostics`, and `targets`. Each target requires source/cycle/valid/validity-window/lead, exact provenance URLs/inventory record, relative `path`, media type, SHA-256, bytes, feature count, contour levels, source-grid diagnostics, and output bounds. Consumers select the newest supported cycle and explicit valid-time entry; never list the directory. | Target is a GeoJSON `FeatureCollection` of `LineString` features in WGS84. Required properties are `product_id`, `source_id`, `parameter:"snow_level"`, `definition`, numeric `level_ft_msl`, `label`, `unit:"ft_msl"`, `cycle_time_utc`, `valid_time_utc`, numeric `lead_hours`, segment, and length. Contour elevations are configured 1,000-foot multiples; absence of a level is not zero. | Consumer recomputes active target windows and cycle status: current through 9 h, delayed usable through 15 h, stale LKG through 24 h, then expired; no active target also expires. Target validity is ±3 h. Missing/unresolvable/checksum-invalid targets are load failures. `source_unavailable`, `variable_missing`, `fetch_failed`, `decode_failed`, `validation_failed`, and `publication_failed` are attempt diagnostics and never make prior values look current. | No compatibility latest file. Canonical manifest/targets remain absent until the first approved publication. Browser integration must accept the manifest contract before any later removal or breaking change. |
 
 ### NoData, null, empty, and error representation
 
@@ -566,6 +570,37 @@ and producer scripts.
 - Both-provider failure, invalid prior products, or unavailable valid prior rows
   for the failed provider produces no replacement product.
 - Failure of optional context should not invalidate a usable latest layer.
+
+### Winter Storm Levels
+
+- Load only
+  `docs/data/winter-storm-levels/winter_storm_levels_manifest.json`, require
+  product ID `winter_storm_levels` and a supported contract major, then resolve
+  relative target paths from that manifest. Directory listing, newest filename,
+  file modification time, retrieval time, and Git time are not selection rules.
+- Prefer the newest cycle for overlapping valid times and only display a target
+  while the current time lies between its `valid_from_utc` and
+  `valid_through_utc`. Expose source cycle and valid time separately in Pacific
+  Time while retaining UTC for calculations.
+- Recompute `current`, `delayed_but_usable`, `stale_last_known_good`, and
+  `expired` from the manifest thresholds. Stale LKG may remain visible only with
+  explicit warning; expired targets must not remain an active map layer.
+- Treat `level_ft_msl` as a modeled NBM snow-level elevation in feet above mean
+  sea level. Do not relabel it as surface temperature, freezing level, snow
+  depth, snow accumulation, or observed precipitation type. Display the source
+  definition and modeled-transition caveat.
+- A GeoJSON target must be a nonempty WGS84 LineString FeatureCollection within
+  the manifest domain, with finite coordinates and the required stable feature
+  properties. A missing level or missing feature is not numerical zero. Reject
+  nonfinite coordinates, unsupported units/datum, time disagreement, missing
+  target, or checksum mismatch without crashing unrelated layers.
+- The public producer does not ship a terrain surface. Where a contour height is
+  below local terrain, explain it as a transition at/near the surface; do not
+  calculate or display a below-ground depth from this product alone.
+- The private integration is additive and separate. No private source is copied
+  into this repository, and no consumer change is required to validate this
+  production candidate. First official publication, schedule activation, and
+  later consumer release remain coordinated maintainer decisions.
 
 ## Compatibility and fallback
 

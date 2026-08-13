@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BRIM Winter Storm Levels — Standalone QA</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #07111d; color: #e8f1f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { padding: 18px 22px 12px; border-bottom: 1px solid #294055; background: #0b1826; }
+    h1 { margin: 0 0 4px; font-size: 21px; }
+    header p { margin: 0; color: #9fb4c5; font-size: 13px; }
+    main { display: grid; grid-template-columns: minmax(270px, 340px) 1fr; min-height: calc(100vh - 74px); }
+    aside { padding: 16px; border-right: 1px solid #294055; background: #0a1522; overflow: auto; }
+    section { padding: 16px; min-width: 0; }
+    label { display: block; margin: 11px 0 4px; font-size: 12px; color: #b8cad8; }
+    input, select, button { width: 100%; border: 1px solid #38536a; border-radius: 5px; background: #102337; color: #eff8ff; padding: 8px; }
+    button { margin-top: 7px; cursor: pointer; background: #174b69; font-weight: 650; }
+    button:hover { background: #1b607f; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .panel { margin-top: 14px; padding: 10px; border: 1px solid #294055; border-radius: 6px; background: #0d1b2a; font-size: 12px; }
+    .status { font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+    .current { color: #57d79b; } .delayed_but_usable { color: #ffd166; }
+    .stale_last_known_good, .expired, .source_unavailable, .fetch_failed, .validation_failed { color: #ff7b72; }
+    #warning { display: none; margin-bottom: 10px; padding: 10px; border: 1px solid #a9504b; border-radius: 6px; background: #391d22; }
+    #mapWrap { position: relative; width: 100%; border: 1px solid #294055; border-radius: 8px; overflow: hidden; background: #0c1c2c; }
+    svg { display: block; width: 100%; height: auto; min-height: 560px; }
+    .grid { stroke: #294055; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .frame { fill: none; stroke: #71879a; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .contour { fill: none; stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+    .comparison { stroke-dasharray: 6 4; opacity: .8; }
+    .overlay { fill: #3d91c7; fill-opacity: .16; stroke: #75bce8; stroke-opacity: .5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .label { paint-order: stroke; stroke: #07111d; stroke-width: 4px; fill: white; font-size: 12px; font-weight: 700; }
+    #legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; font-size: 11px; color: #b8cad8; }
+    .swatch { display: inline-block; width: 18px; height: 3px; margin-right: 4px; vertical-align: middle; }
+    code { color: #b8e4ff; word-break: break-all; }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #294055; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Winter Storm Levels — standalone feed QA</h1>
+    <p>Renders published GeoJSON directly; it does not use or modify the private BRIM application.</p>
+  </header>
+  <main>
+    <aside>
+      <label for="manifestUrl">Manifest URL</label>
+      <input id="manifestUrl" value="winter_storm_levels_manifest.json" spellcheck="false">
+      <button id="loadUrl">Load primary manifest</button>
+
+      <label for="localFiles">Or select an extracted manifest and its GeoJSON files</label>
+      <input id="localFiles" type="file" multiple accept=".json,.geojson,application/json">
+
+      <label for="source">Source</label>
+      <select id="source"></select>
+      <label for="cycle">Cycle</label>
+      <select id="cycle"></select>
+      <label for="valid">Valid time</label>
+      <select id="valid"></select>
+
+      <label for="comparisonUrl">Optional comparison manifest URL</label>
+      <input id="comparisonUrl" placeholder="https://…/manifest.json" spellcheck="false">
+      <button id="loadComparison">Load dashed comparison</button>
+
+      <label for="overlayUrl">Optional QPF/GeoJSON overlay URL</label>
+      <input id="overlayUrl" placeholder="https://…/overlay.geojson" spellcheck="false">
+      <button id="loadOverlay">Load translucent overlay</button>
+
+      <div id="statusPanel" class="panel">No feed loaded.</div>
+      <div id="performance" class="panel">Render metrics will appear here.</div>
+      <div class="panel">
+        <strong>Local-file use</strong><br>
+        Select the manifest and all target GeoJSON files from the extracted workflow artifact. Files are matched by basename.
+      </div>
+    </aside>
+    <section>
+      <div id="warning"></div>
+      <div id="mapWrap">
+        <svg id="map" viewBox="0 0 1000 720" role="img" aria-label="Winter storm snow-level contour QA map"></svg>
+      </div>
+      <div id="legend"></div>
+    </section>
+  </main>
+  <script>
+    "use strict";
+    const NS = "http://www.w3.org/2000/svg";
+    const state = { feeds: new Map(), primary: null, comparison: null, overlay: null, local: new Map() };
+    const el = id => document.getElementById(id);
+    const colors = ["#63d2ff", "#70e1b4", "#b2ed80", "#ffe071", "#ffb45e", "#ff7f76", "#d98cff", "#9e9cff"];
+    const svgNode = (name, attrs = {}) => {
+      const node = document.createElementNS(NS, name);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    };
+    const parseTime = text => new Date(text).getTime();
+    const fmt = text => new Date(text).toLocaleString([], { timeZoneName: "short" });
+    const basename = path => path.split(/[\\/]/).pop();
+    const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[character]);
+
+    function setFailure(status, message) {
+      el("statusPanel").innerHTML = `<span class="status ${escapeHtml(status)}">${escapeHtml(status.replaceAll("_", " "))}</span><br>${escapeHtml(message)}`;
+      el("warning").style.display = "block";
+      el("warning").textContent = message;
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+      return response.json();
+    }
+
+    function validateManifest(manifest) {
+      if (manifest?.product_id !== "winter_storm_levels" || !Array.isArray(manifest.targets)) {
+        throw new Error("Not a Winter Storm Levels manifest.");
+      }
+      if (String(manifest.schema_version).split(".")[0] !== "1" ||
+        manifest.contract_version !== manifest.schema_version) {
+        throw new Error("Unsupported or inconsistent manifest schema/contract version.");
+      }
+      if (!manifest.targets.length) throw new Error("Manifest has no targets.");
+      if (!manifest.source?.name || !Array.isArray(manifest.domain?.bbox_wgs84) || manifest.domain.bbox_wgs84.length !== 4) {
+        throw new Error("Manifest source or domain metadata is incomplete.");
+      }
+      const freshness = manifest.freshness;
+      if (![freshness?.current_after_hours, freshness?.delayed_after_hours, freshness?.expire_after_hours]
+        .every(Number.isFinite)) throw new Error("Manifest freshness metadata is invalid.");
+      if (manifest.targets.some(target => !target.path || !target.cycle_time_utc || !target.valid_time_utc ||
+        !target.valid_from_utc || !target.valid_through_utc || !target.sha256)) {
+        throw new Error("Manifest target metadata is incomplete.");
+      }
+      if (manifest.diagnostics?.actual_current_cycle_target_count !==
+        manifest.diagnostics?.expected_current_cycle_target_count) {
+        throw new Error("Manifest current-cycle target set is incomplete.");
+      }
+      return manifest;
+    }
+
+    function validateTarget(geojson, target, manifest) {
+      if (geojson?.type !== "FeatureCollection" || !Array.isArray(geojson.features) || !geojson.features.length) {
+        throw new Error("Target is not a non-empty FeatureCollection.");
+      }
+      const [west, south, east, north] = manifest.domain.bbox_wgs84;
+      geojson.features.forEach(feature => {
+        const properties = feature?.properties;
+        const coordinates = feature?.geometry?.coordinates;
+        if (feature?.geometry?.type !== "LineString" || !Array.isArray(coordinates) || coordinates.length < 2) {
+          throw new Error("Target contains invalid geometry.");
+        }
+        if (properties?.product_id !== "winter_storm_levels" || properties?.source_id !== target.source_id ||
+          properties?.parameter !== "snow_level" || properties?.unit !== "ft_msl" ||
+          properties?.cycle_time_utc !== target.cycle_time_utc || properties?.valid_time_utc !== target.valid_time_utc ||
+          !Number.isFinite(properties?.level_ft_msl) || !Number.isFinite(properties?.segment) ||
+          !Number.isFinite(properties?.length_m)) {
+          throw new Error("Target feature semantics do not match the manifest.");
+        }
+        coordinates.forEach(coordinate => {
+          if (!Array.isArray(coordinate) || coordinate.length !== 2 || !coordinate.every(Number.isFinite) ||
+            coordinate[0] < west || coordinate[0] > east || coordinate[1] < south || coordinate[1] > north) {
+            throw new Error("Target coordinates are invalid or outside the manifest domain.");
+          }
+        });
+      });
+      return geojson;
+    }
+
+    async function loadManifestUrl(url, role) {
+      const started = performance.now();
+      try {
+        const absolute = new URL(url, window.location.href).href;
+        const manifest = validateManifest(await fetchJson(absolute));
+        const feed = { manifest, base: absolute, role, local: false };
+        state.feeds.set(role, feed);
+        state[role] = feed;
+        await refreshControls();
+        el("performance").textContent += ` · Manifest + first render: ${(performance.now() - started).toFixed(1)} ms`;
+      } catch (error) {
+        setFailure(error.message.includes("HTTP 404") ? "source_unavailable" : "fetch_failed", error.message);
+      }
+    }
+
+    async function loadLocal(files) {
+      state.local.clear();
+      [...files].forEach(file => state.local.set(file.name, file));
+      const manifestFile = [...files].find(file => file.name === "winter_storm_levels_manifest.json");
+      if (!manifestFile) return setFailure("validation_failed", "The selected files do not include winter_storm_levels_manifest.json.");
+      try {
+        const manifest = validateManifest(JSON.parse(await manifestFile.text()));
+        const feed = { manifest, role: "primary", local: true };
+        state.feeds.set("primary", feed);
+        state.primary = feed;
+        await refreshControls();
+      } catch (error) { setFailure("validation_failed", error.message); }
+    }
+
+    async function refreshControls() {
+      const feeds = [...state.feeds.values()];
+      el("source").innerHTML = feeds.map(feed => `<option value="${escapeHtml(feed.role)}">${escapeHtml(feed.role)}: ${escapeHtml(feed.manifest.source.name)}</option>`).join("");
+      const selected = state.feeds.get(el("source").value) || state.primary || feeds[0];
+      if (!selected) return;
+      const cycles = [...new Set(selected.manifest.targets.map(target => target.cycle_time_utc))].sort().reverse();
+      el("cycle").innerHTML = cycles.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(fmt(value))}</option>`).join("");
+      await refreshValid();
+    }
+
+    async function refreshValid() {
+      const feed = state.feeds.get(el("source").value) || state.primary;
+      if (!feed) return;
+      const targets = feed.manifest.targets.filter(target => target.cycle_time_utc === el("cycle").value);
+      el("valid").innerHTML = targets.sort((a, b) => parseTime(a.valid_time_utc) - parseTime(b.valid_time_utc))
+        .map(target => `<option value="${escapeHtml(target.path)}">${escapeHtml(fmt(target.valid_time_utc))} · f${escapeHtml(String(target.lead_hours).padStart(3, "0"))}</option>`).join("");
+      await render();
+    }
+
+    function computedStatus(manifest) {
+      const now = Date.now();
+      const cycleAge = (now - parseTime(manifest.cycle_time_utc)) / 36e5;
+      const active = manifest.targets.some(target => now >= parseTime(target.valid_from_utc) && now <= parseTime(target.valid_through_utc));
+      if (!active || cycleAge > manifest.freshness.expire_after_hours) return "expired";
+      if (cycleAge > manifest.freshness.delayed_after_hours) return "stale_last_known_good";
+      if (cycleAge > manifest.freshness.current_after_hours) return "delayed_but_usable";
+      return "current";
+    }
+
+    async function targetJson(feed, target) {
+      let buffer;
+      if (feed.local) {
+        const file = state.local.get(basename(target.path));
+        if (!file) throw new Error(`Missing local target ${basename(target.path)}.`);
+        buffer = await file.arrayBuffer();
+      } else {
+        const url = new URL(target.path, feed.base).href;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+        buffer = await response.arrayBuffer();
+      }
+      if (Number.isFinite(target.bytes) && buffer.byteLength !== target.bytes) {
+        throw new Error(`Target byte count mismatch for ${target.path}.`);
+      }
+      if (target.sha256) {
+        const digest = await crypto.subtle.digest("SHA-256", buffer);
+        const actual = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+        if (actual !== target.sha256) throw new Error(`Target checksum mismatch for ${target.path}.`);
+      }
+      return JSON.parse(new TextDecoder().decode(buffer));
+    }
+
+    function linePath(coords, project) {
+      return coords.map((coord, index) => `${index ? "L" : "M"}${project(coord).join(",")}`).join(" ");
+    }
+
+    function geometryPaths(geometry, project) {
+      if (!geometry) return [];
+      if (geometry.type === "LineString") return [linePath(geometry.coordinates, project)];
+      if (geometry.type === "MultiLineString") return geometry.coordinates.map(line => linePath(line, project));
+      if (geometry.type === "Polygon") return geometry.coordinates.map(ring => `${linePath(ring, project)} Z`);
+      if (geometry.type === "MultiPolygon") return geometry.coordinates.flatMap(poly => poly.map(ring => `${linePath(ring, project)} Z`));
+      return [];
+    }
+
+    async function render() {
+      const feed = state.feeds.get(el("source").value) || state.primary;
+      if (!feed || !el("valid").value) return;
+      const started = performance.now();
+      const target = feed.manifest.targets.find(item => item.path === el("valid").value);
+      if (!target) return;
+      try {
+        const geojson = validateTarget(await targetJson(feed, target), target, feed.manifest);
+        const [west, south, east, north] = feed.manifest.domain.bbox_wgs84;
+        const project = ([lon, lat]) => [((lon - west) / (east - west)) * 1000, ((north - lat) / (north - south)) * 720];
+        const map = el("map");
+        map.replaceChildren();
+
+        for (let lon = Math.ceil(west / 2) * 2; lon <= east; lon += 2) map.append(svgNode("line", { class: "grid", x1: project([lon, south])[0], y1: 0, x2: project([lon, south])[0], y2: 720 }));
+        for (let lat = Math.ceil(south / 2) * 2; lat <= north; lat += 2) map.append(svgNode("line", { class: "grid", x1: 0, y1: project([west, lat])[1], x2: 1000, y2: project([west, lat])[1] }));
+
+        if (state.overlay) state.overlay.features.forEach(feature => geometryPaths(feature.geometry, project).forEach(d => map.append(svgNode("path", { class: "overlay", d }))));
+
+        const levels = [...new Set(geojson.features.map(feature => feature.properties.level_ft_msl))].sort((a, b) => a - b);
+        const color = level => colors[Math.floor(level / 1000) % colors.length];
+        let coordinateCount = 0;
+        const longest = new Map();
+        geojson.features.forEach(feature => {
+          const coords = feature.geometry.coordinates;
+          coordinateCount += coords.length;
+          const level = feature.properties.level_ft_msl;
+          geometryPaths(feature.geometry, project).forEach(d => map.append(svgNode("path", { class: "contour", d, stroke: color(level) })));
+          if (!longest.has(level) || coords.length > longest.get(level).length) longest.set(level, coords);
+        });
+
+        if (state.comparison && state.comparison !== feed) {
+          const matching = state.comparison.manifest.targets.reduce((best, item) => {
+            const delta = Math.abs(parseTime(item.valid_time_utc) - parseTime(target.valid_time_utc));
+            return !best || delta < best.delta ? { item, delta } : best;
+          }, null);
+          if (matching) {
+            const comparison = validateTarget(
+              await targetJson(state.comparison, matching.item), matching.item, state.comparison.manifest
+            );
+            comparison.features.forEach(feature => geometryPaths(feature.geometry, project).forEach(d => map.append(svgNode("path", { class: "contour comparison", d, stroke: color(feature.properties.level_ft_msl) }))));
+          }
+        }
+
+        longest.forEach((coords, level) => {
+          const point = project(coords[Math.floor(coords.length / 2)]);
+          const label = svgNode("text", { class: "label", x: point[0], y: point[1] });
+          label.textContent = `${level.toLocaleString()} ft`;
+          map.append(label);
+        });
+        map.append(svgNode("rect", { class: "frame", x: 0, y: 0, width: 1000, height: 720 }));
+
+        el("legend").innerHTML = levels.map(level => `<span><i class="swatch" style="background:${color(level)}"></i>${escapeHtml(level.toLocaleString())} ft MSL</span>`).join("");
+        const status = computedStatus(feed.manifest);
+        const stale = status !== "current";
+        el("warning").style.display = stale ? "block" : "none";
+        el("warning").textContent = stale ? `Feed is ${status.replaceAll("_", " ")}; do not present it as current.` : "";
+        el("statusPanel").innerHTML = `<span class="status ${escapeHtml(status)}">${escapeHtml(status.replaceAll("_", " "))}</span><br>` +
+          `Accepted build status: <code>${escapeHtml(feed.manifest.status)}</code><br>` +
+          `Cycle: ${escapeHtml(fmt(target.cycle_time_utc))}<br>Valid: ${escapeHtml(fmt(target.valid_time_utc))}<br>` +
+          `Source: ${escapeHtml(feed.manifest.source.name)}<br>File: <code>${escapeHtml(target.path)}</code>`;
+        el("performance").textContent = `${geojson.features.length} features · ${coordinateCount.toLocaleString()} coordinates · ${(performance.now() - started).toFixed(1)} ms fetch/parse/render`;
+      } catch (error) { setFailure("validation_failed", error.message); }
+    }
+
+    el("loadUrl").addEventListener("click", () => loadManifestUrl(el("manifestUrl").value, "primary"));
+    el("loadComparison").addEventListener("click", () => loadManifestUrl(el("comparisonUrl").value, "comparison"));
+    el("loadOverlay").addEventListener("click", async () => {
+      try { state.overlay = await fetchJson(el("overlayUrl").value); await render(); }
+      catch (error) { setFailure("fetch_failed", error.message); }
+    });
+    el("localFiles").addEventListener("change", event => loadLocal(event.target.files));
+    el("source").addEventListener("change", refreshControls);
+    el("cycle").addEventListener("change", refreshValid);
+    el("valid").addEventListener("change", render);
+
+    const requested = new URLSearchParams(location.search).get("manifest");
+    if (requested) { el("manifestUrl").value = requested; loadManifestUrl(requested, "primary"); }
+  </script>
+</body>
+</html>

@@ -70,7 +70,8 @@ data. Every writer therefore needs two independent kinds of evidence:
 
 ## Product architecture
 
-The thirteen production families fall into five broad shapes:
+The fourteen production families or coordinated production candidates fall into
+five broad shapes:
 
 | Shape | Product families | Publication pattern |
 |---|---|---|
@@ -78,7 +79,7 @@ The thirteen production families fall into five broad shapes:
 | Current operational snapshot | Delta operations | JSON summary, GeoJSON features, compact summary, and X2 reference |
 | Geometry-free forecast snapshot | CNRFC major water-supply basin forecasts; CBRFC Colorado River water-supply forecasts | One 51-record CNRFC JSON payload of direct product-9 water-year, product-7 April-July and major-basin-only product-2 accumulated-volume values; one separate three-record CBRFC JSON payload with two direct GLDA3 scalar periods and one direct LKSA3 monthly local-intervening series. CNRFC and CBRFC have separate schemas and publication transactions; all three CBRFC source families reconcile independently. Browser geometry remains outside this repository. |
 | Snapshot with historical/context tables | SCAN soil moisture, snow pillow SWE | GeoJSON and summaries plus trace/context CSV files |
-| Rolling forecast set | GFS, HRRR, NBM wind | Manifest/index plus target-time files; GFS and HRRR also expose latest/summary compatibility views |
+| Rolling forecast set | GFS, HRRR, NBM wind; Winter Storm Levels | Manifest/index plus target-time files; GFS and HRRR also expose latest/summary compatibility views. Winter Storm Levels is line GeoJSON, uses complete-set staging and manifest-last promotion, and remains manual-only until first-publication approval. |
 
 These shapes are related but are not interchangeable schemas. A common envelope
 is a future direction, not a current invariant. Product-specific field and file
@@ -89,9 +90,10 @@ details remain authoritative in [PRODUCTS.md](PRODUCTS.md).
 Production writer workflows use a concurrency group derived from the selected Git
 reference, wait rather than cancel an in-progress writer, check out that reference,
 and push a normal non-force commit back to it. Most manual writers on a feature
-branch therefore write ordinary product paths on that branch; CNRFC and CBRFC
-forecast dispatches instead default to temporary dry runs and cannot publish
-from a feature branch. Neither behavior updates the official Pages feed.
+branch therefore write ordinary product paths on that branch; CNRFC, CBRFC, and
+Winter Storm Levels forecast dispatches instead default to temporary dry runs
+and cannot publish from a feature branch. Neither behavior updates the official
+Pages feed.
 
 The official public site is served from `main/docs`. A successful branch build is
 only branch-level evidence until reviewed and merged. Pages deployment is a
@@ -123,7 +125,9 @@ Rolling forecast products add another identity layer. Their manifests select
 target files and, where present, declare product/version identity and stale
 thresholds. Current manifests are similar but not uniform; in particular NBM uses
 `feed_version` and does not currently expose all identity/freshness fields used by
-the other wind manifests. See the contract before generalizing across them.
+the other wind manifests. Winter Storm Levels adds its own versioned
+manifest/checksum/validity contract and must not be parsed as a wind manifest.
+See the contract before generalizing across them.
 
 ## Validation and last-known-good behavior
 
