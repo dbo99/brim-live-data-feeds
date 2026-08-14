@@ -100,7 +100,8 @@ wsl_build <- function() {
       source_bytes = unname(file.info(grib_path)$size),
       output_bytes = unname(file.info(target_path)$size),
       feature_count = contour$feature_count,
-      finite_coverage = stats$finite_coverage
+      finite_coverage = stats$finite_coverage,
+      geometry_diagnostics = contour$cartography
     )
   }
 

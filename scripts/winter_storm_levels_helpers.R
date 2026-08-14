@@ -595,6 +595,284 @@ wsl_source_grid_spacing_m <- function(raster) {
   spacing
 }
 
+wsl_component_geometry_state <- function(coordinates, intended_closed) {
+  reasons <- character()
+  coordinates <- tryCatch(
+    unclass(coordinates)[, 1:2, drop = FALSE],
+    error = function(error) NULL
+  )
+  if (is.null(coordinates) || nrow(coordinates) < 2L) {
+    return(list(
+      safe = FALSE, reasons = "insufficient_coordinates", coordinates = coordinates,
+      closed = FALSE, projected_line = NULL, length_m = NA_real_
+    ))
+  }
+  if (any(!is.finite(coordinates))) reasons <- c(reasons, "non_finite_coordinates")
+  if (nrow(coordinates) >= 2L && any(rowSums(abs(
+    coordinates[-1L, , drop = FALSE] - coordinates[-nrow(coordinates), , drop = FALSE]
+  )) == 0)) {
+    reasons <- c(reasons, "consecutive_duplicate_coordinates")
+  }
+
+  closed <- wsl_is_closed_coordinates(coordinates)
+  if (!identical(closed, isTRUE(intended_closed))) reasons <- c(reasons, "closure_changed")
+  if (isTRUE(intended_closed) && nrow(unique(coordinates[-nrow(coordinates), , drop = FALSE])) < 3L) {
+    reasons <- c(reasons, "insufficient_distinct_ring_coordinates")
+  }
+
+  projected_line <- tryCatch(
+    sf::st_transform(wsl_geometry_from_coordinates(coordinates, 4326), WSL_CARTOGRAPHIC_CRS),
+    error = function(error) NULL
+  )
+  length_m <- NA_real_
+  if (is.null(projected_line)) {
+    reasons <- c(reasons, "projection_failed")
+  } else {
+    if (isTRUE(sf::st_is_empty(projected_line))) reasons <- c(reasons, "empty")
+    if (!isTRUE(sf::st_is_valid(projected_line))) reasons <- c(reasons, "invalid")
+    if (!isTRUE(sf::st_is_simple(projected_line))) reasons <- c(reasons, "non_simple")
+    length_m <- suppressWarnings(as.numeric(sf::st_length(projected_line)))
+    if (length(length_m) != 1L || !is.finite(length_m) || length_m <= 0) {
+      reasons <- c(reasons, "non_positive_length")
+    }
+  }
+
+  list(
+    safe = !length(unique(reasons)), reasons = unique(reasons), coordinates = coordinates,
+    closed = closed, projected_line = projected_line, length_m = length_m
+  )
+}
+
+wsl_canonical_serialization_state <- function(coordinates, intended_closed, digits) {
+  rounded_coordinates <- if (is.null(coordinates)) NULL else {
+    wsl_normalize_line(coordinates, digits)
+  }
+  state <- wsl_component_geometry_state(rounded_coordinates, intended_closed)
+  distinct_coordinates <- if (is.null(rounded_coordinates)) {
+    0L
+  } else {
+    nrow(unique(rounded_coordinates))
+  }
+
+  exact_zero_area_retrace <- FALSE
+  if (isTRUE(intended_closed) && !is.null(rounded_coordinates) &&
+      nrow(rounded_coordinates) >= 3L &&
+      all(rounded_coordinates[1L, ] == rounded_coordinates[nrow(rounded_coordinates), ])) {
+    integer_grid <- round(rounded_coordinates * 10 ^ as.integer(digits))
+    integer_grid <- sweep(integer_grid, 2L, integer_grid[1L, ], "-")
+    twice_area <- sum(
+      integer_grid[-nrow(integer_grid), 1L] * integer_grid[-1L, 2L] -
+        integer_grid[-1L, 1L] * integer_grid[-nrow(integer_grid), 2L]
+    )
+    exact_zero_area_retrace <- isTRUE(twice_area == 0) &&
+      "non_simple" %in% state$reasons
+  }
+
+  list(
+    safe = isTRUE(state$safe),
+    coordinates = rounded_coordinates,
+    state = state,
+    distinct_coordinates = distinct_coordinates,
+    exact_zero_area_retrace = exact_zero_area_retrace,
+    structurally_unrepresentable_closed = isTRUE(intended_closed) &&
+      !isTRUE(state$safe) &&
+      (distinct_coordinates < 3L || exact_zero_area_retrace)
+  )
+}
+
+wsl_component_profile_for_coordinates <- function(
+    coordinates, intended_closed, grid_spacing_m, config, provenance
+) {
+  state <- wsl_component_geometry_state(coordinates, intended_closed)
+  if (!isTRUE(state$safe)) {
+    wsl_stop(
+      "validation_failed", "Cannot apply the B component profile to unsafe unrounded geometry: ",
+      provenance, " (", paste(state$reasons, collapse = ", "), ")."
+    )
+  }
+  feature <- list(
+    type = "Feature",
+    id = provenance,
+    properties = list(),
+    geometry = list(
+      type = "LineString",
+      coordinates = unname(split(state$coordinates, row(state$coordinates)))
+    )
+  )
+  profile <- wsl_component_profile(list(feature), grid_spacing_m, config)
+  if (!identical(isTRUE(profile$closed[[1L]]), isTRUE(intended_closed))) {
+    wsl_stop("validation_failed", "The unrounded B profile changed component closure: ", provenance)
+  }
+  profile
+}
+
+wsl_select_pre_s2_component <- function(
+    original_coordinates,
+    simplified_coordinates,
+    intended_closed,
+    grid_spacing_m,
+    config,
+    provenance
+) {
+  simplified_state <- wsl_component_geometry_state(simplified_coordinates, intended_closed)
+  original_state <- wsl_component_geometry_state(original_coordinates, intended_closed)
+  simplified_serialization <- wsl_canonical_serialization_state(
+    simplified_state$coordinates, intended_closed, config$coordinate_digits
+  )
+  original_serialization <- wsl_canonical_serialization_state(
+    original_state$coordinates, intended_closed, config$coordinate_digits
+  )
+  original_vertices <- if (is.null(original_state$coordinates)) 0L else
+    nrow(original_state$coordinates)
+  simplified_vertices <- if (is.null(simplified_state$coordinates)) 0L else
+    nrow(simplified_state$coordinates)
+
+  if (isTRUE(simplified_state$safe) && isTRUE(simplified_serialization$safe)) {
+    return(list(
+      action = "use_simplified",
+      coordinates = simplified_serialization$coordinates,
+      key_coordinates = simplified_serialization$coordinates,
+      simplification_fallback = FALSE,
+      precision_collapse = FALSE,
+      serialization_degenerate = FALSE,
+      intended_closed = isTRUE(intended_closed),
+      original_vertices = original_vertices,
+      simplified_vertices = simplified_vertices,
+      original_rounded_distinct_coordinates = original_serialization$distinct_coordinates,
+      simplified_rounded_distinct_coordinates = simplified_serialization$distinct_coordinates,
+      failed_conditions = character(),
+      b_profile = NULL
+    ))
+  }
+
+  # The existing _001 path sends a safe unrounded original through unchanged S2;
+  # its direct rounded form may be non-simple, but it must not structurally collapse.
+  existing_projected_fallback <- !isTRUE(simplified_state$safe) &&
+    isTRUE(original_state$safe) &&
+    (isTRUE(original_serialization$safe) ||
+       (isTRUE(intended_closed) &&
+          !isTRUE(original_serialization$structurally_unrepresentable_closed)))
+  serialization_fallback <- isTRUE(simplified_state$safe) &&
+    !isTRUE(simplified_serialization$safe) &&
+    isTRUE(original_state$safe) && isTRUE(original_serialization$safe)
+  if (existing_projected_fallback || serialization_fallback) {
+    simplified_failure <- if (!isTRUE(simplified_state$safe)) {
+      simplified_state$reasons
+    } else {
+      simplified_serialization$state$reasons
+    }
+    return(list(
+      action = "use_original",
+      coordinates = original_state$coordinates,
+      key_coordinates = original_serialization$coordinates,
+      simplification_fallback = TRUE,
+      precision_collapse = isTRUE(simplified_state$safe) &&
+        !isTRUE(simplified_serialization$safe),
+      serialization_degenerate = FALSE,
+      intended_closed = isTRUE(intended_closed),
+      original_vertices = original_vertices,
+      simplified_vertices = simplified_vertices,
+      original_rounded_distinct_coordinates = original_serialization$distinct_coordinates,
+      simplified_rounded_distinct_coordinates = simplified_serialization$distinct_coordinates,
+      failed_conditions = simplified_failure,
+      b_profile = NULL
+    ))
+  }
+
+  both_quantization_collapses <- isTRUE(simplified_state$safe) &&
+    !isTRUE(simplified_serialization$safe) &&
+    isTRUE(original_state$safe) &&
+    !isTRUE(original_serialization$safe)
+  if (both_quantization_collapses) {
+    profile <- wsl_component_profile_for_coordinates(
+      original_state$coordinates, intended_closed, grid_spacing_m, config, provenance
+    )
+    common <- list(
+      coordinates = NULL,
+      key_coordinates = original_serialization$coordinates,
+      simplification_fallback = FALSE,
+      precision_collapse = TRUE,
+      intended_closed = isTRUE(intended_closed),
+      original_vertices = original_vertices,
+      simplified_vertices = simplified_vertices,
+      original_rounded_distinct_coordinates = original_serialization$distinct_coordinates,
+      simplified_rounded_distinct_coordinates = simplified_serialization$distinct_coordinates,
+      failed_conditions = unique(c(
+        simplified_serialization$state$reasons,
+        original_serialization$state$reasons
+      )),
+      b_profile = profile
+    )
+    if (isTRUE(profile$remove[[1L]])) {
+      return(c(list(
+        action = "remove_precision_collapse",
+        serialization_degenerate = FALSE,
+        removal_reason = "canonical_precision_collapse_existing_b_remove"
+      ), common))
+    }
+
+    if (isTRUE(intended_closed) &&
+        isTRUE(simplified_serialization$structurally_unrepresentable_closed) &&
+        isTRUE(original_serialization$structurally_unrepresentable_closed)) {
+      return(c(list(
+        action = "remove_serialization_degenerate",
+        serialization_degenerate = TRUE,
+        removal_reason = "both_canonical_closed_representations_structurally_unrepresentable"
+      ), common))
+    }
+
+    area <- profile$enclosed_area_km2[[1L]]
+    span <- profile$max_projected_span_m[[1L]]
+    wsl_stop(
+      "validation_failed",
+      "Canonical serialization failure is not an authorized closed-component degeneracy: ",
+      provenance, " (simplified rounded conditions: ",
+      paste(simplified_serialization$state$reasons, collapse = ", "),
+      "; original rounded conditions: ",
+      paste(original_serialization$state$reasons, collapse = ", "),
+      "; original rounded distinct coordinates=",
+      original_serialization$distinct_coordinates,
+      "; unrounded area_km2=", format(area, digits = 12, scientific = FALSE),
+      "; unrounded max_span_m=", format(span, digits = 12, scientific = FALSE), ")."
+    )
+  }
+
+  simplified_failure <- if (isTRUE(simplified_state$safe)) {
+    paste0("canonical:", paste(simplified_serialization$state$reasons, collapse = ","))
+  } else {
+    paste0("unrounded:", paste(simplified_state$reasons, collapse = ","))
+  }
+  original_failure <- if (isTRUE(original_state$safe)) {
+    paste0("canonical:", paste(original_serialization$state$reasons, collapse = ","))
+  } else {
+    paste0("unrounded:", paste(original_state$reasons, collapse = ","))
+  }
+  wsl_stop(
+    "validation_failed",
+    "Simplified and pre-simplification contour components have no authorized safe disposition: ",
+    provenance, " (simplified: ", simplified_failure,
+    "; original: ", original_failure, ")."
+  )
+}
+
+wsl_pre_s2_disposition_diagnostics <- function(selections) {
+  actions <- vapply(selections, `[[`, character(1), "action")
+  precision_collapses <- vapply(
+    selections, function(selection) isTRUE(selection$precision_collapse), logical(1)
+  )
+  list(
+    source_components_before_disposition = length(selections),
+    normal_simplified_count = sum(actions == "use_simplified"),
+    simplification_fallback_count = sum(actions == "use_original"),
+    precision_collapse_count = sum(precision_collapses),
+    precision_collapse_b_removed_count = sum(actions == "remove_precision_collapse"),
+    serialization_degenerate_removed_count = sum(
+      actions == "remove_serialization_degenerate"
+    ),
+    unrecoverable_geometry_count = 0L
+  )
+}
+
 wsl_component_profile <- function(features, grid_spacing_m, config) {
   if (!length(features)) stop("No contour components were supplied for cartographic processing.")
   if (length(grid_spacing_m) != 1L || !is.finite(grid_spacing_m) || grid_spacing_m <= 0) {
@@ -855,45 +1133,180 @@ wsl_make_contours <- function(raster, record, config) {
   clipped <- suppressWarnings(sf::st_cast(clipped, "LINESTRING"))
   clipped <- clipped[!sf::st_is_empty(clipped), , drop = FALSE]
   if (!nrow(clipped)) stop("No snow-level contours intersect the display domain.")
-  simplified <- sf::st_simplify(clipped, dTolerance = config$simplify_tolerance_m, preserveTopology = TRUE)
-  simplified <- simplified[!sf::st_is_empty(simplified), , drop = FALSE]
-  simplified <- sf::st_transform(simplified, 4326)
+  clipped$.source_component <- seq_len(nrow(clipped))
+  clipped$.intended_closed <- vapply(sf::st_geometry(clipped), function(geometry) {
+    coordinates <- sf::st_coordinates(geometry)[, 1:2, drop = FALSE]
+    wsl_is_closed_coordinates(coordinates)
+  }, logical(1))
+
+  simplified <- sf::st_simplify(
+    clipped, dTolerance = config$simplify_tolerance_m, preserveTopology = TRUE
+  )
+  grid_spacing_m <- round(wsl_source_grid_spacing_m(raster), 3)
+
+  finalize_candidates <- function(value) {
+    value <- value[!sf::st_is_empty(value), , drop = FALSE]
+    if (!nrow(value)) return(value)
+    value <- sf::st_transform(value, 4326)
+    value <- suppressMessages(suppressWarnings(sf::st_intersection(
+      value,
+      wsl_bbox_polygon(config$west, config$east, config$south, config$north)
+    )))
+    value <- suppressWarnings(sf::st_collection_extract(value, "LINESTRING"))
+    value <- suppressWarnings(sf::st_cast(value, "LINESTRING"))
+    value[!sf::st_is_empty(value), , drop = FALSE]
+  }
+
   # The projected clip prevents curved-edge artifacts during simplification.
   # A final planar lon/lat clip makes the serialized API bounds exact.
-  simplified <- suppressMessages(suppressWarnings(sf::st_intersection(
-    simplified,
-    wsl_bbox_polygon(config$west, config$east, config$south, config$north)
-  )))
-  simplified <- suppressWarnings(sf::st_collection_extract(simplified, "LINESTRING"))
-  simplified <- suppressWarnings(sf::st_cast(simplified, "LINESTRING"))
-  simplified <- simplified[!sf::st_is_empty(simplified), , drop = FALSE]
-  simplified$length_m <- as.numeric(sf::st_length(sf::st_transform(simplified, 5070)))
+  original_candidates <- finalize_candidates(clipped)
+  simplified_candidates <- finalize_candidates(simplified)
 
-  rows <- lapply(seq_len(nrow(simplified)), function(index) {
-    coordinates <- wsl_normalize_line(sf::st_coordinates(sf::st_geometry(simplified)[[index]]), config$coordinate_digits)
-    if (is.null(coordinates)) return(NULL)
-    level <- as.integer(round(simplified$level_ft_msl[index]))
-    length_m <- round(simplified$length_m[index], 1)
-    if (!is.finite(length_m) || length_m <= 0) return(NULL)
-    list(
-      level = level,
-      length_m = length_m,
-      coordinates = coordinates,
-      key = sprintf("%05d|%s", level, paste(format(coordinates, scientific = FALSE, trim = TRUE), collapse = ","))
-    )
-  })
-  rows <- Filter(Negate(is.null), rows)
+  rows <- list()
+  selections <- list()
+  precision_collapses <- list()
+  precision_collapse_b_removals <- list()
+  serialization_degenerate_removals <- list()
+  component_ids <- sort(unique(c(
+    original_candidates$.source_component,
+    simplified_candidates$.source_component
+  )))
+  for (component_id in component_ids) {
+    originals <- original_candidates[
+      original_candidates$.source_component == component_id, , drop = FALSE
+    ]
+    candidates <- simplified_candidates[
+      simplified_candidates$.source_component == component_id, , drop = FALSE
+    ]
+    part_count <- max(1L, nrow(candidates))
+    for (part_index in seq_len(part_count)) {
+      candidate <- if (nrow(candidates)) candidates[part_index, , drop = FALSE] else NULL
+      original <- if (nrow(originals) == 1L) {
+        originals[1L, , drop = FALSE]
+      } else if (nrow(originals) == nrow(candidates) && nrow(candidates)) {
+        originals[part_index, , drop = FALSE]
+      } else {
+        NULL
+      }
+      level_source <- if (!is.null(candidate)) candidate else original
+      if (is.null(level_source)) {
+        wsl_stop(
+          "validation_failed", "No simplified or pre-simplification contour geometry remains for ",
+          "source component ", component_id, "."
+        )
+      }
+      level <- as.integer(round(level_source$level_ft_msl[[1L]]))
+      provenance <- sprintf(
+        "source_component=%d level_ft_msl=%d part=%d", component_id, level, part_index
+      )
+      original_coordinates <- if (is.null(original)) NULL else {
+        sf::st_coordinates(sf::st_geometry(original)[[1L]])[, 1:2, drop = FALSE]
+      }
+      simplified_coordinates <- if (is.null(candidate)) NULL else {
+        sf::st_coordinates(sf::st_geometry(candidate)[[1L]])[, 1:2, drop = FALSE]
+      }
+      intended_closed <- if (!is.null(original_coordinates)) {
+        wsl_is_closed_coordinates(original_coordinates)
+      } else {
+        isTRUE(level_source$.intended_closed[[1L]])
+      }
+      selection <- wsl_select_pre_s2_component(
+        original_coordinates = original_coordinates,
+        simplified_coordinates = simplified_coordinates,
+        intended_closed = intended_closed,
+        grid_spacing_m = grid_spacing_m,
+        config = config,
+        provenance = provenance
+      )
+      selections[[length(selections) + 1L]] <- selection
+      if (isTRUE(selection$precision_collapse)) {
+        precision_detail <- list(
+          provenance = provenance,
+          level_ft_msl = level,
+          lead_hours = record$lead_hours,
+          closed = isTRUE(intended_closed),
+          disposition = selection$action,
+          reason = selection$removal_reason %||%
+            "simplified_canonical_collapse_original_fallback",
+          original_vertices = selection$original_vertices,
+          simplified_vertices = selection$simplified_vertices,
+          original_rounded_distinct_coordinates =
+            selection$original_rounded_distinct_coordinates,
+          simplified_rounded_distinct_coordinates =
+            selection$simplified_rounded_distinct_coordinates,
+          enclosed_area_km2 = if (is.null(selection$b_profile)) NA_real_ else
+            unname(selection$b_profile$enclosed_area_km2[[1L]]),
+          max_projected_span_m = if (is.null(selection$b_profile)) NA_real_ else
+            unname(selection$b_profile$max_projected_span_m[[1L]]),
+          b_remove = !is.null(selection$b_profile) &&
+            isTRUE(selection$b_profile$remove[[1L]])
+        )
+        precision_collapses[[length(precision_collapses) + 1L]] <- precision_detail
+        if (identical(selection$action, "remove_precision_collapse")) {
+          precision_collapse_b_removals[[
+            length(precision_collapse_b_removals) + 1L
+          ]] <- precision_detail
+        }
+        if (identical(selection$action, "remove_serialization_degenerate")) {
+          serialization_degenerate_removals[[
+            length(serialization_degenerate_removals) + 1L
+          ]] <- precision_detail
+        }
+      }
+      if (selection$action %in% c(
+        "remove_precision_collapse", "remove_serialization_degenerate"
+      )) {
+        next
+      }
+      length_m <- round(as.numeric(sf::st_length(sf::st_transform(
+        wsl_geometry_from_coordinates(selection$coordinates, 4326), WSL_CARTOGRAPHIC_CRS
+      ))), 1)
+      if (!is.finite(length_m) || length_m <= 0) {
+        wsl_stop("validation_failed", "Selected pre-S2 component has non-positive length: ", provenance)
+      }
+      key <- sprintf(
+        "%05d|%s", level,
+        paste(format(selection$key_coordinates, scientific = FALSE, trim = TRUE),
+              collapse = ",")
+      )
+      rows[[length(rows) + 1L]] <- list(
+        level = level,
+        length_m = length_m,
+        coordinates = selection$coordinates,
+        key = key,
+        provenance = provenance,
+        simplification_fallback = isTRUE(selection$simplification_fallback),
+        original_vertices = selection$original_vertices,
+        simplified_vertices = selection$simplified_vertices,
+        failed_conditions = selection$failed_conditions
+      )
+    }
+  }
   rows <- rows[order(vapply(rows, `[[`, character(1), "key"))]
   if (!length(rows)) stop("Contour simplification removed every line.")
 
   level_counts <- integer()
-  features <- lapply(rows, function(row) {
+  simplification_fallbacks <- list()
+  features <- lapply(seq_along(rows), function(index) {
+    row <- rows[[index]]
     key <- as.character(row$level)
     level_counts[key] <<- (level_counts[key] %||% 0L) + 1L
+    feature_id <- sprintf(
+      "%s_f%03d_%05d_%03d", wsl_cycle_token(record$cycle_time_utc),
+      record$lead_hours, row$level, level_counts[key]
+    )
+    if (isTRUE(row$simplification_fallback)) {
+      simplification_fallbacks[[length(simplification_fallbacks) + 1L]] <<- list(
+        feature_id = feature_id,
+        provenance = row$provenance,
+        reason = paste(row$failed_conditions, collapse = ","),
+        original_vertices = row$original_vertices,
+        simplified_vertices = row$simplified_vertices
+      )
+    }
     list(
       type = "Feature",
-      id = sprintf("%s_f%03d_%05d_%03d", wsl_cycle_token(record$cycle_time_utc),
-                   record$lead_hours, row$level, level_counts[key]),
+      id = feature_id,
       properties = list(
         product_id = config$product_id,
         source_id = config$source_id,
@@ -921,8 +1334,19 @@ wsl_make_contours <- function(raster, record, config) {
     features = features
   )
   treated <- wsl_apply_s2_cartography(
-    base_geojson, round(wsl_source_grid_spacing_m(raster), 3), config
+    base_geojson, grid_spacing_m, config
   )
+  disposition_diagnostics <- wsl_pre_s2_disposition_diagnostics(selections)
+  for (name in names(disposition_diagnostics)) {
+    treated$diagnostics[[name]] <- disposition_diagnostics[[name]]
+  }
+  treated$diagnostics$ordinary_b_removed_count <-
+    treated$diagnostics$closed_removed + treated$diagnostics$open_removed
+  treated$diagnostics$simplification_fallbacks <- simplification_fallbacks
+  treated$diagnostics$precision_collapses <- precision_collapses
+  treated$diagnostics$precision_collapse_b_removals <- precision_collapse_b_removals
+  treated$diagnostics$serialization_degenerate_removals <-
+    serialization_degenerate_removals
   treated_features <- treated$geojson$features
   list(
     geojson = treated$geojson,

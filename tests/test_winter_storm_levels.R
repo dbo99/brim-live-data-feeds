@@ -290,7 +290,231 @@ wsl_test_cartographic_feature <- function(id, coordinates, level = 8000L) {
   )
 }
 
-study_grid_spacing_m <- 2539.703
+geometry_fixture_path <- file.path(
+  "tests", "fixtures", "winter_storm_levels", "pre_s2_geometry_robustness.json"
+)
+geometry_fixture <- jsonlite::fromJSON(geometry_fixture_path, simplifyVector = FALSE)
+wsl_test_fixture_coordinates <- function(value) {
+  matrix(as.numeric(unlist(value)), ncol = 2L, byrow = TRUE)
+}
+study_grid_spacing_m <- as.numeric(geometry_fixture$grid_spacing_m)
+
+fallback_original <- wsl_test_fixture_coordinates(
+  geometry_fixture$simplification_fallback$pre_simplification_coordinates_wgs84
+)
+fallback_simplified <- wsl_test_fixture_coordinates(
+  geometry_fixture$simplification_fallback$simplified_coordinates_wgs84
+)
+fallback_original_state <- wsl_component_geometry_state(fallback_original, TRUE)
+fallback_simplified_state <- wsl_component_geometry_state(fallback_simplified, TRUE)
+check(isTRUE(fallback_original_state$safe) && nrow(fallback_original) == 11L,
+      "_001 pre-simplification fixture is an 11-vertex safe closed component")
+check(!isTRUE(fallback_simplified_state$safe) &&
+        "non_simple" %in% fallback_simplified_state$reasons &&
+        nrow(fallback_simplified) == 5L,
+      "_001 simplified fixture is non-simple in the operational CRS")
+fallback_selection <- wsl_select_pre_s2_component(
+  fallback_original, fallback_simplified, TRUE, study_grid_spacing_m, config, "fixture-_001"
+)
+check(identical(fallback_selection$action, "use_original") &&
+        isTRUE(fallback_selection$simplification_fallback) &&
+        identical(fallback_selection$coordinates, fallback_original),
+      "_001 selects the preserved original without polygonization")
+fallback_feature <- wsl_test_cartographic_feature(
+  "fixture-_001", fallback_selection$coordinates, level = 10000L
+)
+fallback_profile <- wsl_component_profile(list(fallback_feature), study_grid_spacing_m, config)
+check(!fallback_profile$remove[[1L]] && fallback_profile$vertices[[1L]] == 11L,
+      "_001 preserved component passes B and is retained")
+fallback_s2 <- wsl_smooth_component_s2(
+  fallback_feature, study_grid_spacing_m, config$coordinate_digits
+)
+fallback_s2_state <- wsl_component_geometry_state(
+  wsl_feature_coordinates(fallback_s2), TRUE
+)
+check(isTRUE(fallback_s2_state$safe) &&
+        wsl_is_closed_coordinates(wsl_feature_coordinates(fallback_s2)),
+      "_001 preserved component passes unchanged S2 and final geometry QA")
+
+precision_original <- wsl_test_fixture_coordinates(
+  geometry_fixture$precision_collapse$pre_simplification_coordinates_wgs84
+)
+precision_simplified <- wsl_test_fixture_coordinates(
+  geometry_fixture$precision_collapse$simplified_coordinates_wgs84
+)
+precision_rounded <- wsl_test_fixture_coordinates(
+  geometry_fixture$precision_collapse$rounded_coordinates_wgs84
+)
+precision_original_state <- wsl_component_geometry_state(precision_original, TRUE)
+precision_simplified_state <- wsl_component_geometry_state(precision_simplified, TRUE)
+precision_original_serialization <- wsl_canonical_serialization_state(
+  precision_original, TRUE, config$coordinate_digits
+)
+precision_simplified_serialization <- wsl_canonical_serialization_state(
+  precision_simplified, TRUE, config$coordinate_digits
+)
+check(isTRUE(precision_original_state$safe) && nrow(precision_original) == 7L &&
+        isTRUE(precision_simplified_state$safe) && nrow(precision_simplified) == 5L,
+      "_011 original and simplified fixtures are safe before canonical serialization")
+check(all(precision_original_serialization$coordinates == precision_rounded) &&
+        all(precision_simplified_serialization$coordinates == precision_rounded) &&
+        precision_original_serialization$distinct_coordinates == 2L &&
+        precision_simplified_serialization$distinct_coordinates == 2L,
+      "_011 original and simplified fixtures both canonicalize to the same A-B-A retrace")
+check(!isTRUE(precision_original_serialization$safe) &&
+        !isTRUE(precision_simplified_serialization$safe) &&
+        isTRUE(precision_original_serialization$structurally_unrepresentable_closed) &&
+        isTRUE(precision_simplified_serialization$structurally_unrepresentable_closed) &&
+        all(c("closure_changed", "insufficient_distinct_ring_coordinates", "non_simple") %in%
+              precision_original_serialization$state$reasons),
+      "_011 five-decimal quantization is a structural closed-ring collapse")
+precision_profile <- wsl_component_profile_for_coordinates(
+  precision_original, TRUE, study_grid_spacing_m, config, "fixture-_011"
+)
+check(!precision_profile$remove[[1L]] &&
+        precision_profile$vertices[[1L]] == 7L &&
+        precision_profile$enclosed_area_km2[[1L]] < study_grid_spacing_m ^ 2 / 1e6 &&
+        precision_profile$max_projected_span_m[[1L]] > 2 * study_grid_spacing_m,
+      "_011 is tiny-area but exceeds the existing B two-grid span limit")
+precision_selection <- wsl_select_pre_s2_component(
+  precision_original, precision_simplified, TRUE,
+  study_grid_spacing_m, config, "fixture-_011"
+)
+check(identical(precision_selection$action, "remove_serialization_degenerate") &&
+        isTRUE(precision_selection$serialization_degenerate) &&
+        !isTRUE(precision_selection$b_profile$remove[[1L]]) &&
+        precision_selection$b_profile$vertices[[1L]] == 7L &&
+        is.null(precision_selection$coordinates),
+      "_011 is accounted as serialization-degenerate after B retains the safe unrounded original")
+isolated_precision_diagnostics <- wsl_pre_s2_disposition_diagnostics(
+  list(precision_selection)
+)
+check(isolated_precision_diagnostics$serialization_degenerate_removed_count == 1L &&
+        isolated_precision_diagnostics$precision_collapse_count == 1L &&
+        isolated_precision_diagnostics$precision_collapse_b_removed_count == 0L &&
+        isolated_precision_diagnostics$unrecoverable_geometry_count == 0L,
+      "isolated _011 reports one serialization-degenerate removal and no B removal")
+
+meaningful_narrow <- wsl_test_fixture_coordinates(
+  geometry_fixture$meaningful_narrow_closed$coordinates_wgs84
+)
+meaningful_serialization <- wsl_canonical_serialization_state(
+  meaningful_narrow, TRUE, config$coordinate_digits
+)
+meaningful_selection <- wsl_select_pre_s2_component(
+  meaningful_narrow, meaningful_narrow, TRUE,
+  study_grid_spacing_m, config, "fixture-meaningful-narrow"
+)
+check(isTRUE(wsl_component_geometry_state(meaningful_narrow, TRUE)$safe) &&
+        isTRUE(meaningful_serialization$safe) &&
+        identical(meaningful_selection$action, "use_simplified") &&
+        !isTRUE(meaningful_selection$serialization_degenerate),
+      "a meaningful narrow closed ring survives and cannot use serialization-degenerate removal")
+
+serialization_fallback_original <- wsl_test_fixture_coordinates(
+  geometry_fixture$simplified_collapse_original_survives$
+    pre_simplification_coordinates_wgs84
+)
+serialization_fallback_simplified <- wsl_test_fixture_coordinates(
+  geometry_fixture$simplified_collapse_original_survives$simplified_coordinates_wgs84
+)
+serialization_fallback_selection <- wsl_select_pre_s2_component(
+  serialization_fallback_original, serialization_fallback_simplified, TRUE,
+  study_grid_spacing_m, config, "fixture-serialization-fallback"
+)
+check(identical(serialization_fallback_selection$action, "use_original") &&
+        isTRUE(serialization_fallback_selection$simplification_fallback) &&
+        isTRUE(serialization_fallback_selection$precision_collapse) &&
+        !isTRUE(serialization_fallback_selection$serialization_degenerate) &&
+        identical(serialization_fallback_selection$coordinates,
+                  serialization_fallback_original),
+      "a simplified serialization collapse falls back to a safely serializable original")
+
+rounded_topology_failure <- wsl_test_fixture_coordinates(
+  geometry_fixture$rounded_topology_failure$coordinates_wgs84
+)
+rounded_topology_state <- wsl_canonical_serialization_state(
+  rounded_topology_failure, TRUE, config$coordinate_digits
+)
+check(isTRUE(wsl_component_geometry_state(rounded_topology_failure, TRUE)$safe) &&
+        !isTRUE(rounded_topology_state$safe) &&
+        rounded_topology_state$distinct_coordinates >= 3L &&
+        !isTRUE(rounded_topology_state$structurally_unrepresentable_closed),
+      "rounded topology fixture retains meaningful vertices and is outside the narrow rule")
+check_error(
+  wsl_select_pre_s2_component(
+    rounded_topology_failure, rounded_topology_failure, TRUE,
+    study_grid_spacing_m, config, "fixture-rounded-topology"
+  ),
+  class = "validation_failed",
+  pattern = "not an authorized closed-component degeneracy"
+)
+
+pre_round_non_simple <- wsl_test_fixture_coordinates(
+  geometry_fixture$pre_round_non_simple$coordinates_wgs84
+)
+check(!isTRUE(wsl_component_geometry_state(pre_round_non_simple, TRUE)$safe) &&
+        "non_simple" %in% wsl_component_geometry_state(pre_round_non_simple, TRUE)$reasons,
+      "pre-round-invalid fixture exposes its non-simple topology")
+check_error(
+  wsl_select_pre_s2_component(
+    pre_round_non_simple, pre_round_non_simple, TRUE,
+    study_grid_spacing_m, config, "fixture-pre-round-invalid"
+  ),
+  class = "validation_failed",
+  pattern = "no authorized safe disposition"
+)
+
+open_precision_collapse <- rbind(
+  c(config$west, 37), c(config$west + 1e-7, 37 + 1e-7)
+)
+check_error(
+  wsl_select_pre_s2_component(
+    open_precision_collapse, open_precision_collapse, FALSE,
+    study_grid_spacing_m, config, "fixture-open-precision-collapse"
+  ),
+  class = "validation_failed",
+  pattern = "not an authorized closed-component degeneracy"
+)
+
+b_eligible_precision <- wsl_test_fixture_coordinates(
+  geometry_fixture$b_eligible_precision_collapse$unrounded_coordinates_wgs84
+)
+b_eligible_selection <- wsl_select_pre_s2_component(
+  b_eligible_precision, b_eligible_precision, TRUE,
+  study_grid_spacing_m, config, "fixture-b-eligible-collapse"
+)
+check(identical(b_eligible_selection$action, "remove_precision_collapse") &&
+        isTRUE(b_eligible_selection$precision_collapse) &&
+        !isTRUE(b_eligible_selection$serialization_degenerate) &&
+        isTRUE(b_eligible_selection$b_profile$remove[[1L]]),
+      "a B-eligible precision collapse remains distinct from serialization-degenerate removal")
+
+normal_closed_coordinates <- wsl_test_fixture_coordinates(
+  geometry_fixture$normal_closed$coordinates_wgs84
+)
+normal_closed_selection <- wsl_select_pre_s2_component(
+  normal_closed_coordinates, normal_closed_coordinates, TRUE,
+  study_grid_spacing_m, config, "fixture-normal-closed"
+)
+check(identical(normal_closed_selection$action, "use_simplified") &&
+        identical(normal_closed_selection$coordinates, normal_closed_coordinates),
+      "normal safe closed geometry follows the existing simplified path byte-for-byte")
+
+normal_open_coordinates <- wsl_test_fixture_coordinates(
+  geometry_fixture$normal_open$coordinates_wgs84
+)
+normal_open_selection <- wsl_select_pre_s2_component(
+  normal_open_coordinates, normal_open_coordinates, FALSE,
+  study_grid_spacing_m, config, "fixture-normal-open"
+)
+check(identical(normal_open_selection$action, "use_simplified") &&
+        identical(normal_open_selection$coordinates, normal_open_coordinates) &&
+        all(normal_open_selection$coordinates[1L, ] == normal_open_coordinates[1L, ]) &&
+        all(normal_open_selection$coordinates[nrow(normal_open_selection$coordinates), ] ==
+              normal_open_coordinates[nrow(normal_open_coordinates), ]),
+      "normal safe open geometry and endpoints follow the existing path unchanged")
+
 tiny_closed <- wsl_test_cartographic_feature("tiny-closed", wsl_test_projected_coordinates(rbind(
   c(0, 0), c(1000, 0), c(1000, 1000), c(0, 1000), c(0, 0)
 )))
@@ -483,6 +707,27 @@ values(source_raster) <- 400 + (xy$x - config$source_west) * 120 + (xy$y - confi
 contour <- wsl_make_contours(source_raster, synthetic_record, config)
 check(contour$feature_count > 0L, "non-empty contour output")
 check(all(contour$contour_levels %% config$contour_interval_ft == 0), "configured contour interval")
+check(all(c(
+  "source_components_before_disposition", "normal_simplified_count",
+  "simplification_fallback_count", "precision_collapse_count",
+  "precision_collapse_b_removed_count", "serialization_degenerate_removed_count",
+  "unrecoverable_geometry_count", "ordinary_b_removed_count",
+  "simplification_fallbacks", "precision_collapses",
+  "precision_collapse_b_removals", "serialization_degenerate_removals"
+) %in% names(contour$cartography)), "pre-S2 robustness diagnostics are complete")
+check(contour$cartography$unrecoverable_geometry_count == 0L &&
+        contour$cartography$precision_collapse_count ==
+          length(contour$cartography$precision_collapses) &&
+        contour$cartography$precision_collapse_b_removed_count ==
+          length(contour$cartography$precision_collapse_b_removals) &&
+        contour$cartography$serialization_degenerate_removed_count ==
+          length(contour$cartography$serialization_degenerate_removals) &&
+        contour$cartography$source_components_before_disposition ==
+          contour$cartography$normal_simplified_count +
+          contour$cartography$simplification_fallback_count +
+          contour$cartography$precision_collapse_b_removed_count +
+          contour$cartography$serialization_degenerate_removed_count,
+      "successful contour output has no unrecoverable or unaccounted precision collapse")
 check(contour$bbox[1L] >= config$west && contour$bbox[3L] <= config$east &&
       contour$bbox[2L] >= config$south && contour$bbox[4L] <= config$north, "exact output bounds")
 properties <- contour$geojson$features[[1L]]$properties
