@@ -38,8 +38,9 @@ requirements rather than duplicated here.
 
 Additional command-line dependencies include:
 
-- `wgrib2` for HRRR and NBM GRIB2 extraction.
-- The geospatial libraries needed by the R spatial packages used by GFS and HRRR.
+- `wgrib2` for HRRR and NBM wind GRIB2 extraction.
+- GDAL/GEOS/PROJ and the geospatial libraries needed by the R spatial packages
+  used by GFS, HRRR, and Winter Storm Levels.
 - Poppler utilities for the Delta operations PDF workflow.
 - Network and TLS access to each product's public upstream services.
 
@@ -63,6 +64,7 @@ package or operating system is equivalent to the hosted runner.
 | USGS streamflow | `scripts/build_usgs_streamflow_latest_ca.R` |
 | CNRFC major water-supply basin forecasts | `scripts/build_major_water_supply_basin_forecasts.R` |
 | CBRFC Colorado River water-supply forecasts | `scripts/build_cbrfc_major_water_supply_forecasts.R` |
+| Winter Storm Levels | `scripts/build_winter_storm_levels.R` |
 
 Run exactly one intended builder. Do not paste or execute the complete
 entry-point inventory as a batch.
@@ -135,6 +137,23 @@ special-product text and, only for the reviewed July 1, 2026 January-label
 defect, the exact June 1 archived confirmation. For isolated live inspection, set both
 `CBRFC_FORECAST_OUTPUT_JSON` and
 `CBRFC_FORECAST_QA_JSON` to paths under `/tmp`.
+
+Winter Storm Levels is dry-run-first and has deterministic offline tests. A live
+local build can be isolated completely from `docs/data/`:
+
+```sh
+cd "$HOME/Documents/brim-live-data-feeds_source_repo"
+Rscript tests/test_winter_storm_levels.R
+python3 tests/test_winter_storm_levels_workflow_safety.py
+BRIM_WSL_OUTPUT_ROOT=/tmp/winter-storm-levels-bundle \
+BRIM_WSL_QA_JSON=/tmp/winter-storm-levels-attempt.json \
+Rscript scripts/build_winter_storm_levels.R
+```
+
+The extracted bundle can be served with any local static HTTP server beside
+`qa/winter_storm_levels/index.html`, or all bundle JSON/GeoJSON files can be
+selected through that page's local-file control. Do not set
+`BRIM_WSL_PUBLISH=true` for local evidence generation.
 
 ## Inspect changes
 

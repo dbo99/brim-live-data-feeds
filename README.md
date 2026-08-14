@@ -11,7 +11,8 @@ reviewed, and rolled back without coupling them to the interface code.
 
 ## Production products
 
-The current production system contains thirteen product families:
+The current production system contains fourteen product families or coordinated
+production candidates:
 
 1. CDEC reservoir storage
 2. CoCoRaHS daily precipitation
@@ -26,6 +27,7 @@ The current production system contains thirteen product families:
 11. USGS California streamflow
 12. CNRFC major water-supply basin forecasts
 13. CBRFC Colorado River water-supply forecasts
+14. Winter Storm Levels NBM snow-level contours
 
 The authoritative paths, workflows, scripts, formats, schedules, time/unit
 semantics, QA gates, and known gaps are in
@@ -45,13 +47,16 @@ Each production writer, subject to documented product-specific branch controls:
 - Pushes normally, without force, back to its authorized selected reference.
 - Shares a reference-scoped, non-cancelling concurrency group with other writers.
 
-The CNRFC and CBRFC forecast writers are the current stricter exceptions: manual
-runs default to runner-temporary dry-run output, feature branches cannot publish,
-and scheduled or explicitly requested publication is restricted to `main`.
+The CNRFC, CBRFC, and Winter Storm Levels forecast writers are the current
+stricter exceptions: manual runs default to runner-temporary dry-run output,
+feature branches cannot publish, and publication is restricted to `main`. Winter
+Storm Levels remains manual-only until the maintainer approves its first official
+publication and schedule.
 
-The official Pages source is `main/docs`. Except for the CNRFC and CBRFC
-dry-run-only feature-branch behavior, a manual writer run on a feature branch changes that
-branch's ordinary product paths; it does not publish the official feed. When a
+The official Pages source is `main/docs`. Except for the dry-run-only
+feature-branch behavior of CNRFC, CBRFC, and Winter Storm Levels, a manual writer
+run on a feature branch changes that branch's ordinary product paths; it does not
+publish the official feed. When a
 builder rejects a response before commit, the previous committed
 files remain the last-known-good publication.
 
@@ -60,7 +65,7 @@ dispatch, incident, rollback, backup, and recovery procedures.
 
 ## Use the feeds
 
-Public consumers should use only documented paths and semantics. Rolling wind
+Public consumers should use only documented paths and semantics. Rolling
 forecast sets must be selected through their manifests rather than by listing
 directories. Consumers should tolerate additive fields, enforce product-specific
 freshness, and preserve usable prior state where the contract defines a fallback.
@@ -111,7 +116,9 @@ replacement. Product-specific checks remain authoritative. The streamflow
 minimum-latest-value configuration and implementation also require alignment
 before its count gate can be relied on as a live-data completeness guarantee.
 
-At the documentation baseline, `main` had no observed branch protection or
-ruleset, and the repository had no license file. These are documented risks, not
-implicit permissions or assurances. See the
+`main` now has the active `main-history-safety` ruleset, which blocks branch
+deletion and non-fast-forward history changes with no bypass actors. Classic
+branch protection remains absent, and the ruleset does not require pull-request
+review or status checks. The repository also has no license file. These are
+documented controls and remaining risks, not implicit permissions or assurances. See the
 [risk register](docs/DEVELOPMENT_HISTORY_AND_RISKS.md).

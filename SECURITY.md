@@ -107,9 +107,11 @@ not resemble a real access value.
 
 ## Branch and publication controls
 
-At the documentation baseline, `main` had no observed branch protection or
-ruleset. That is a high-priority control gap because Pages serves `main/docs`.
-Recommended repository settings are:
+`main` has an active `main-history-safety` ruleset that blocks branch deletion
+and non-fast-forward history changes with no bypass actors. Classic branch
+protection remains absent, and the ruleset does not require pull-request review
+or status checks. Because Pages serves `main/docs`, remaining recommended
+repository settings are:
 
 - Require pull-request review for code, workflow, contract, and path changes.
 - Require relevant validation checks.
@@ -117,8 +119,8 @@ Recommended repository settings are:
 - Limit who can modify workflow files and repository secrets.
 - Review third-party workflow approvals and Actions settings.
 
-Until platform controls are enabled, contributors must treat maintainer review and
-the publication checklist as mandatory process controls.
+The history ruleset is useful but does not replace maintainer review and the
+publication checklist, which remain mandatory process controls.
 
 ## Security review checklist
 
