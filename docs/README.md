@@ -19,6 +19,7 @@ Baseline audited: 2026-07-24 at
 | Review or design a builder/workflow | [WORKFLOW_AND_PRODUCT_STANDARDS.md](WORKFLOW_AND_PRODUCT_STANDARDS.md) |
 | Understand boundaries and data flow | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Review history, known defects, and prioritized risks | [DEVELOPMENT_HISTORY_AND_RISKS.md](DEVELOPMENT_HISTORY_AND_RISKS.md) |
+| Review Winter Storm Levels source research and prototype evidence | [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md) |
 | Reproduce a builder locally | [../BUILD.md](../BUILD.md) |
 | Propose a change | [../CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Apply security controls or report exposure | [../SECURITY.md](../SECURITY.md) |
