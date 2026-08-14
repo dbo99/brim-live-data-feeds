@@ -298,17 +298,217 @@ wsl_decode_grib <- function(path, reader = terra::rast) {
   )
 }
 
-wsl_validate_raster <- function(raster, record, config) {
+wsl_parse_grib_metadata <- function(lines, read_error = NULL) {
+  lines <- trimws(as.character(lines))
+  errors <- character()
+  if (!is.null(read_error)) errors <- c(errors, paste0("metadata read failed: ", read_error))
+
+  band_count <- sum(grepl("^Band [0-9]+(?: |$)", lines))
+  if (band_count != 1L) {
+    errors <- c(errors, paste0("expected one GRIB band; found ", band_count))
+  }
+
+  metadata_value <- function(key) {
+    prefix <- paste0(key, "=")
+    matches <- lines[startsWith(lines, prefix)]
+    if (length(matches) != 1L) {
+      errors <<- c(errors, paste0("expected one ", key, "; found ", length(matches)))
+      return(NA_character_)
+    }
+    substring(matches[[1L]], nchar(prefix) + 1L)
+  }
+  numeric_value <- function(key) {
+    text <- metadata_value(key)
+    value <- suppressWarnings(as.numeric(text))
+    if (length(value) != 1L || !is.finite(value) || value != floor(value)) {
+      errors <<- c(errors, paste0(key, " is not a finite integer"))
+      return(NA_real_)
+    }
+    value
+  }
+
+  list(
+    band_count = as.integer(band_count),
+    reference_time_epoch = numeric_value("GRIB_REF_TIME"),
+    forecast_seconds = numeric_value("GRIB_FORECAST_SECONDS"),
+    valid_time_epoch = numeric_value("GRIB_VALID_TIME"),
+    element = metadata_value("GRIB_ELEMENT"),
+    level = metadata_value("GRIB_SHORT_NAME"),
+    pdtn = numeric_value("GRIB_PDS_PDTN"),
+    parse_errors = unique(errors)
+  )
+}
+
+wsl_read_grib_metadata <- function(path, describer = terra::describe) {
+  description <- tryCatch(describer(path), error = function(error) error)
+  if (inherits(description, "error")) {
+    return(wsl_parse_grib_metadata(character(), conditionMessage(description)))
+  }
+  wsl_parse_grib_metadata(description)
+}
+
+wsl_optional_iso_utc <- function(value) {
+  if (length(value) != 1L || is.na(value)) return(NA_character_)
+  tryCatch(wsl_iso_utc(value), error = function(error) NA_character_)
+}
+
+wsl_runtime_diagnostics <- function() {
+  list(
+    terra_version = tryCatch(as.character(utils::packageVersion("terra")),
+                             error = function(error) NA_character_),
+    gdal_version = tryCatch(as.character(terra::gdal()),
+                            error = function(error) NA_character_)
+  )
+}
+
+wsl_source_diagnostic <- function(metadata, record, terra_time,
+                                  runtime = wsl_runtime_diagnostics()) {
+  expected_reference_epoch <- as.numeric(wsl_as_utc(record$cycle_time_utc))
+  expected_forecast_seconds <- as.numeric(record$lead_hours) * 3600
+  expected_valid_epoch <- as.numeric(wsl_as_utc(record$valid_time_utc))
+  finite_number <- function(value) {
+    length(value) == 1L && is.finite(value)
+  }
+  number_matches <- function(actual, expected) {
+    finite_number(actual) && finite_number(expected) && isTRUE(all.equal(actual, expected))
+  }
+
+  reference_present <- finite_number(metadata$reference_time_epoch)
+  forecast_present <- finite_number(metadata$forecast_seconds)
+  valid_present <- finite_number(metadata$valid_time_epoch)
+  element_present <- length(metadata$element) == 1L && !is.na(metadata$element) && nzchar(metadata$element)
+  level_present <- length(metadata$level) == 1L && !is.na(metadata$level) && nzchar(metadata$level)
+  pdtn_present <- finite_number(metadata$pdtn)
+  required_present <- reference_present && forecast_present && valid_present &&
+    element_present && level_present && pdtn_present && !length(metadata$parse_errors)
+
+  terra_time_utc <- wsl_optional_iso_utc(terra_time)
+  authoritative_valid_time_utc <- if (valid_present) {
+    wsl_optional_iso_utc(metadata$valid_time_epoch)
+  } else {
+    NA_character_
+  }
+  terra_time_available <- length(terra_time_utc) == 1L && !is.na(terra_time_utc)
+  terra_time_agrees <- if (terra_time_available && !is.na(authoritative_valid_time_utc)) {
+    identical(terra_time_utc, authoritative_valid_time_utc)
+  } else {
+    NA
+  }
+
+  checks <- list(
+    required_metadata_present = required_present,
+    single_message_band = identical(as.integer(metadata$band_count), 1L),
+    reference_matches_cycle = number_matches(metadata$reference_time_epoch, expected_reference_epoch),
+    forecast_seconds_match_lead = number_matches(metadata$forecast_seconds, expected_forecast_seconds),
+    valid_equals_reference_plus_step = reference_present && forecast_present && valid_present &&
+      number_matches(metadata$valid_time_epoch,
+                     metadata$reference_time_epoch + metadata$forecast_seconds),
+    valid_matches_inventory = number_matches(metadata$valid_time_epoch, expected_valid_epoch),
+    element_is_snowlvl = element_present && identical(metadata$element, "SNOWLVL"),
+    level_is_zero_gpml = level_present && identical(metadata$level, "0-GPML"),
+    temporal_type_is_instantaneous = pdtn_present && number_matches(metadata$pdtn, 0)
+  )
+
+  list(
+    inventory_record = record$inventory_line %||% NA_character_,
+    expected_cycle_time_utc = record$cycle_time_utc,
+    expected_lead_hours = as.integer(record$lead_hours),
+    expected_valid_time_utc = record$valid_time_utc,
+    grib_reference_time_utc = if (reference_present) {
+      wsl_optional_iso_utc(metadata$reference_time_epoch)
+    } else NA_character_,
+    grib_forecast_seconds = if (forecast_present) metadata$forecast_seconds else NA_real_,
+    grib_valid_time_utc = authoritative_valid_time_utc,
+    authoritative_valid_time_utc = authoritative_valid_time_utc,
+    terra_time_utc = terra_time_utc,
+    terra_time_agrees = terra_time_agrees,
+    decoder_divergence = isTRUE(terra_time_available && !isTRUE(terra_time_agrees)),
+    element = metadata$element,
+    level = metadata$level,
+    pdtn = if (pdtn_present) metadata$pdtn else NA_real_,
+    temporal_type = if (pdtn_present && number_matches(metadata$pdtn, 0)) {
+      "instantaneous"
+    } else if (pdtn_present) {
+      paste0("unsupported_pdtn_", format(metadata$pdtn, scientific = FALSE))
+    } else {
+      NA_character_
+    },
+    message_band_count = as.integer(metadata$band_count),
+    metadata_parse_errors = metadata$parse_errors,
+    validation_checks = checks,
+    authoritative_metadata_accepted = all(unlist(checks), na.rm = FALSE),
+    runtime = runtime
+  )
+}
+
+wsl_require_source_diagnostic <- function(diagnostic) {
+  checks <- diagnostic$validation_checks
+  if (!isTRUE(checks$required_metadata_present) || !isTRUE(checks$single_message_band)) {
+    detail <- diagnostic$metadata_parse_errors
+    if (!length(detail)) detail <- "one or more required fields are missing"
+    stop("Authoritative GRIB metadata are missing or ambiguous: ", paste(detail, collapse = "; "))
+  }
+  if (!isTRUE(checks$reference_matches_cycle)) {
+    stop("GRIB reference time does not match the selected inventory cycle.")
+  }
+  if (!isTRUE(checks$forecast_seconds_match_lead)) {
+    stop("GRIB forecast seconds do not match the selected inventory lead.")
+  }
+  if (!isTRUE(checks$valid_equals_reference_plus_step)) {
+    stop("GRIB valid time does not equal reference time plus forecast seconds.")
+  }
+  if (!isTRUE(checks$valid_matches_inventory)) {
+    stop("GRIB valid time does not match the selected inventory record.")
+  }
+  if (!isTRUE(checks$element_is_snowlvl)) {
+    stop("GRIB element is not deterministic SNOWLVL.")
+  }
+  if (!isTRUE(checks$level_is_zero_gpml)) {
+    stop("GRIB level is not 0 m GPML.")
+  }
+  if (!isTRUE(checks$temporal_type_is_instantaneous)) {
+    stop("GRIB PDTN is not the expected instantaneous forecast type.")
+  }
+  invisible(TRUE)
+}
+
+wsl_log_source_diagnostic <- function(diagnostic) {
+  value <- function(x) if (length(x) != 1L || is.na(x)) "missing" else as.character(x)
+  message(
+    "NBM source timing: cycle=", value(diagnostic$expected_cycle_time_utc),
+    " lead_hours=", value(diagnostic$expected_lead_hours),
+    " expected_valid=", value(diagnostic$expected_valid_time_utc),
+    " grib_reference=", value(diagnostic$grib_reference_time_utc),
+    " grib_forecast_seconds=", value(diagnostic$grib_forecast_seconds),
+    " grib_valid=", value(diagnostic$grib_valid_time_utc),
+    " terra_time=", value(diagnostic$terra_time_utc),
+    " terra_agrees=", value(diagnostic$terra_time_agrees),
+    " element=", value(diagnostic$element),
+    " level=", value(diagnostic$level),
+    " pdtn=", value(diagnostic$pdtn),
+    " temporal_type=", value(diagnostic$temporal_type)
+  )
+  if (isTRUE(diagnostic$decoder_divergence)) {
+    message(
+      "NBM decoder-time divergence accepted after authoritative metadata validation: terra_time=",
+      value(diagnostic$terra_time_utc), " authoritative_valid=",
+      value(diagnostic$authoritative_valid_time_utc)
+    )
+  }
+  invisible(diagnostic)
+}
+
+wsl_validate_raster <- function(raster, record, config, source_diagnostic) {
   if (!inherits(raster, "SpatRaster")) stop("Decoded source is not a SpatRaster.")
   if (terra::nlyr(raster) != 1L) stop("SNOWLVL message must decode to one raster layer.")
+  if (missing(source_diagnostic) || is.null(source_diagnostic)) {
+    stop("Authoritative GRIB source diagnostics are required for raster validation.")
+  }
+  wsl_require_source_diagnostic(source_diagnostic)
   if (!nzchar(terra::crs(raster))) stop("SNOWLVL raster has no coordinate reference system.")
   units <- tolower(trimws(terra::units(raster)[1L] %||% ""))
   if (!units %in% c("m", "meter", "metre", "meters", "metres")) {
     stop("SNOWLVL raster units must be metres; received: ", units)
-  }
-  valid_time <- terra::time(raster)[1L]
-  if (is.na(valid_time) || !identical(wsl_iso_utc(valid_time), record$valid_time_utc)) {
-    stop("Decoded GRIB valid time does not match the selected inventory record.")
   }
   values <- terra::values(raster, mat = FALSE)
   finite <- is.finite(values) & values < 9999
@@ -323,7 +523,9 @@ wsl_validate_raster <- function(raster, record, config) {
     min_m = unname(range_m[1L]),
     max_m = unname(range_m[2L]),
     rows = terra::nrow(raster), columns = terra::ncol(raster),
-    resolution_m = unname(mean(terra::res(raster)))
+    resolution_m = unname(mean(terra::res(raster))),
+    valid_time_utc = source_diagnostic$authoritative_valid_time_utc,
+    decoder_divergence = isTRUE(source_diagnostic$decoder_divergence)
   )
 }
 

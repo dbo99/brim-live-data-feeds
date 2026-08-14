@@ -52,7 +52,9 @@ attempt <- list(
   selected_cycle_time_utc = NULL,
   output_root = if (publish) "docs/data/winter-storm-levels" else output_root,
   promoted = FALSE,
-  semantic_change = FALSE
+  semantic_change = FALSE,
+  environment_diagnostics = wsl_runtime_diagnostics(),
+  source_diagnostics = list()
 )
 
 wsl_build <- function() {
@@ -73,7 +75,15 @@ wsl_build <- function() {
     on.exit(unlink(grib_path, force = TRUE), add = TRUE)
     wsl_fetch_range(record$grib_url, record$start_byte, record$end_byte, grib_path, config)
     raster <- wsl_decode_grib(grib_path)
-    stats <- wsl_validate_raster(raster, record, config)
+    grib_metadata <- wsl_read_grib_metadata(grib_path)
+    terra_time <- tryCatch(terra::time(raster)[1L], error = function(error) NA)
+    source_diagnostic <- wsl_source_diagnostic(
+      grib_metadata, record, terra_time, attempt$environment_diagnostics
+    )
+    diagnostic_key <- sprintf("f%03d", record$lead_hours)
+    attempt$source_diagnostics[[diagnostic_key]] <<- source_diagnostic
+    wsl_log_source_diagnostic(source_diagnostic)
+    stats <- wsl_validate_raster(raster, record, config, source_diagnostic)
     contour <- wsl_make_contours(raster, record, config)
     working_path <- file.path(stage_root, ".working", sprintf("f%03d.geojson", record$lead_hours))
     wsl_write_json(contour$geojson, working_path)

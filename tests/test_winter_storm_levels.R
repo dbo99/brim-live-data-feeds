@@ -150,6 +150,87 @@ check_error(
 check_error(wsl_decode_grib("malformed.grib2", function(path) stop("truncated message")),
             "decode_failed", "truncated message")
 
+metadata_fixture_path <- file.path(
+  "tests", "fixtures", "winter_storm_levels", "valid_time_divergence_metadata.json"
+)
+metadata_fixture <- jsonlite::fromJSON(metadata_fixture_path, simplifyVector = FALSE)
+metadata_record <- metadata_fixture$record
+metadata_record$lead_hours <- as.integer(metadata_record$lead_hours)
+metadata_lines <- unname(unlist(metadata_fixture$gdal_describe_lines))
+diagnosed_metadata <- wsl_parse_grib_metadata(metadata_lines)
+metadata_diagnostic <- wsl_source_diagnostic(
+  diagnosed_metadata, metadata_record, metadata_fixture$simulated_terra_time_utc,
+  list(terra_version = "simulated-runner", gdal_version = "simulated-runner")
+)
+check(isTRUE(metadata_diagnostic$authoritative_metadata_accepted),
+      "coherent authoritative GRIB metadata accepted")
+check(identical(metadata_diagnostic$authoritative_valid_time_utc,
+                metadata_fixture$expected_authoritative_valid_time_utc),
+      "authoritative GRIB valid time controls normalized source time")
+check(isTRUE(metadata_diagnostic$decoder_divergence) &&
+      identical(metadata_diagnostic$terra_time_utc,
+                metadata_fixture$simulated_terra_time_utc),
+      "divergent terra convenience time is recorded without controlling authority")
+check(isTRUE(wsl_require_source_diagnostic(metadata_diagnostic)),
+      "coherent metadata passes the fail-closed authority gate")
+
+metadata_clone <- function(value) unserialize(serialize(value, NULL))
+diagnostic_for <- function(metadata = diagnosed_metadata, record = metadata_record,
+                           terra_time = metadata_fixture$simulated_terra_time_utc) {
+  wsl_source_diagnostic(
+    metadata, record, terra_time,
+    list(terra_version = "test", gdal_version = "test")
+  )
+}
+
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$reference_time_epoch <- bad_metadata$reference_time_epoch - 6 * 3600
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB reference time does not match")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$forecast_seconds <- 7200
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB forecast seconds do not match")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$valid_time_epoch <- bad_metadata$valid_time_epoch + 3600
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB valid time does not equal reference time plus forecast seconds")
+bad_record <- metadata_clone(metadata_record)
+bad_record$valid_time_utc <- "2026-08-14T14:00:00Z"
+check_error(wsl_require_source_diagnostic(diagnostic_for(record = bad_record)),
+            pattern = "GRIB valid time does not match the selected inventory record")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$element <- "TMP"
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB element is not deterministic SNOWLVL")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$level <- "surface"
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB level is not 0 m GPML")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$pdtn <- 8
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "GRIB PDTN is not the expected instantaneous forecast type")
+bad_metadata <- metadata_clone(diagnosed_metadata)
+bad_metadata$valid_time_epoch <- NA_real_
+check_error(wsl_require_source_diagnostic(diagnostic_for(bad_metadata)),
+            pattern = "Authoritative GRIB metadata are missing or ambiguous")
+
+successful_record <- metadata_clone(metadata_record)
+successful_record$cycle_time_utc <- "2026-08-13T18:00:00Z"
+successful_record$valid_time_utc <- "2026-08-13T19:00:00Z"
+successful_record$inventory_line <- paste0(
+  "131:134479767:d=2026081318:SNOWLVL:0 m above mean sea level:1 hour fcst:"
+)
+successful_metadata <- metadata_clone(diagnosed_metadata)
+successful_metadata$reference_time_epoch <- as.numeric(wsl_as_utc(successful_record$cycle_time_utc))
+successful_metadata$valid_time_epoch <- as.numeric(wsl_as_utc(successful_record$valid_time_utc))
+successful_diagnostic <- diagnostic_for(
+  successful_metadata, successful_record, successful_record$valid_time_utc
+)
+check(isTRUE(wsl_require_source_diagnostic(successful_diagnostic)),
+      "previously successful August 13 timing semantics remain accepted")
+
 check(identical(wsl_freshness_status(now - 8 * 3600, now, config), "current"), "current freshness")
 check(identical(wsl_freshness_status(now - 10 * 3600, now, config), "delayed_but_usable"), "delayed freshness")
 check(identical(wsl_freshness_status(now - 18 * 3600, now, config), "stale_last_known_good"), "last-known-good freshness")
@@ -347,20 +428,56 @@ xy <- crds(source_raster, df = TRUE)
 values(source_raster) <- 400 + (xy$x - config$source_west) * 120 + (xy$y - config$source_south) * 35
 time(source_raster) <- wsl_as_utc(synthetic_record$valid_time_utc)
 units(source_raster) <- "m"
-stats <- wsl_validate_raster(source_raster, synthetic_record, config)
+wsl_test_metadata_for_record <- function(record) {
+  list(
+    band_count = 1L,
+    reference_time_epoch = as.numeric(wsl_as_utc(record$cycle_time_utc)),
+    forecast_seconds = as.numeric(record$lead_hours) * 3600,
+    valid_time_epoch = as.numeric(wsl_as_utc(record$valid_time_utc)),
+    element = "SNOWLVL",
+    level = "0-GPML",
+    pdtn = 0,
+    parse_errors = character()
+  )
+}
+synthetic_metadata <- wsl_test_metadata_for_record(synthetic_record)
+synthetic_diagnostic <- wsl_source_diagnostic(
+  synthetic_metadata, synthetic_record, terra::time(source_raster)[1L]
+)
+stats <- wsl_validate_raster(source_raster, synthetic_record, config, synthetic_diagnostic)
 check(stats$finite_coverage == 1 && stats$min_m >= 0, "finite synthetic raster validation")
 
 wrong_unit <- source_raster
 units(wrong_unit) <- "K"
-check_error(wsl_validate_raster(wrong_unit, synthetic_record, config), pattern = "units must be metres")
+check_error(wsl_validate_raster(wrong_unit, synthetic_record, config, synthetic_diagnostic),
+            pattern = "units must be metres")
 units(source_raster) <- "m"
 wrong_time <- source_raster
 time(wrong_time) <- wsl_as_utc("2026-01-15T13:00:00Z")
-check_error(wsl_validate_raster(wrong_time, synthetic_record, config), pattern = "valid time")
+wrong_time_diagnostic <- wsl_source_diagnostic(
+  synthetic_metadata, synthetic_record, terra::time(wrong_time)[1L]
+)
+wrong_time_stats <- wsl_validate_raster(
+  wrong_time, synthetic_record, config, wrong_time_diagnostic
+)
+check(isTRUE(wrong_time_stats$decoder_divergence) &&
+      identical(wrong_time_stats$valid_time_utc, synthetic_record$valid_time_utc),
+      "divergent terra time remains diagnostic after authoritative validation")
 time(source_raster) <- wsl_as_utc(synthetic_record$valid_time_utc)
 negative_raster <- source_raster
 values(negative_raster)[1:10] <- -100
-check(wsl_validate_raster(negative_raster, synthetic_record, config)$min_m == -100, "documented near-surface negative values accepted")
+check(wsl_validate_raster(negative_raster, synthetic_record, config,
+                          synthetic_diagnostic)$min_m == -100,
+      "documented near-surface negative values accepted")
+
+fixture_raster <- source_raster
+time(fixture_raster) <- wsl_as_utc(metadata_fixture$simulated_terra_time_utc)
+fixture_stats <- wsl_validate_raster(
+  fixture_raster, metadata_record, config, metadata_diagnostic
+)
+check(identical(fixture_stats$valid_time_utc, "2026-08-14T13:00:00Z") &&
+      isTRUE(fixture_stats$decoder_divergence),
+      "diagnosed f001 fixture validates with authoritative 13Z product time")
 values(source_raster) <- 400 + (xy$x - config$source_west) * 120 + (xy$y - config$source_south) * 35
 
 contour <- wsl_make_contours(source_raster, synthetic_record, config)
