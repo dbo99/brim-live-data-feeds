@@ -480,6 +480,37 @@ check_error(
 b_eligible_precision <- wsl_test_fixture_coordinates(
   geometry_fixture$b_eligible_precision_collapse$unrounded_coordinates_wgs84
 )
+b_eligible_state <- wsl_component_geometry_state(b_eligible_precision, TRUE)
+b_eligible_serialization <- wsl_canonical_serialization_state(
+  b_eligible_precision, TRUE, config$coordinate_digits
+)
+b_eligible_profile <- wsl_component_profile_for_coordinates(
+  b_eligible_precision, TRUE, study_grid_spacing_m, config,
+  "fixture-b-eligible-collapse"
+)
+check(isTRUE(b_eligible_state$closed) && nrow(b_eligible_precision) == 5L &&
+        all(is.finite(b_eligible_precision)) &&
+        !isTRUE(sf::st_is_empty(b_eligible_state$projected_line)),
+      "B-eligible precision-collapse fixture is a finite nonempty closed ring")
+check(isTRUE(b_eligible_state$safe) &&
+        isTRUE(sf::st_is_valid(b_eligible_state$projected_line)) &&
+        isTRUE(sf::st_is_simple(b_eligible_state$projected_line)) &&
+        is.finite(b_eligible_state$length_m) && b_eligible_state$length_m > 0,
+      "B-eligible precision-collapse fixture is valid and simple before rounding")
+check(is.finite(b_eligible_profile$enclosed_area_km2[[1L]]) &&
+        b_eligible_profile$enclosed_area_km2[[1L]] > 0 &&
+        b_eligible_profile$enclosed_area_km2[[1L]] <
+          study_grid_spacing_m ^ 2 / 1e6,
+      "B-eligible precision-collapse fixture has positive area below the existing B threshold")
+check(is.finite(b_eligible_profile$max_projected_span_m[[1L]]) &&
+        b_eligible_profile$max_projected_span_m[[1L]] > 0 &&
+        b_eligible_profile$max_projected_span_m[[1L]] < 2 * study_grid_spacing_m &&
+        isTRUE(b_eligible_profile$remove[[1L]]),
+      "B-eligible precision-collapse fixture has span below the existing B threshold")
+check(!isTRUE(b_eligible_serialization$safe) &&
+        isTRUE(b_eligible_serialization$structurally_unrepresentable_closed) &&
+        b_eligible_serialization$distinct_coordinates == 2L,
+      "B-eligible precision-collapse fixture structurally collapses at five decimals")
 b_eligible_selection <- wsl_select_pre_s2_component(
   b_eligible_precision, b_eligible_precision, TRUE,
   study_grid_spacing_m, config, "fixture-b-eligible-collapse"
