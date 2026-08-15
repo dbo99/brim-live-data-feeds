@@ -9,8 +9,8 @@ release changelog and does not replace Git history.
 ### Product expansion
 
 The repository grew from individual uploaded datasets into thirteen independently
-scheduled product families plus the manual-first Winter Storm Levels production
-candidate. The resulting architecture deliberately keeps
+scheduled product families plus the manual-only Winter Storm Levels product. The
+resulting architecture deliberately keeps
 product-specific scripts, schedules, outputs, and validation because the upstream
 services and consumer semantics differ substantially.
 
@@ -90,7 +90,7 @@ boundary until the producer, consumer, and public contract are changed together.
 
 ## Current strengths
 
-- Fourteen product families or coordinated production candidates have explicit
+- Fourteen product families have explicit
   workflow and builder ownership.
 - Production writers use bounded timeouts and reference-scoped non-cancelling
   concurrency.
@@ -132,8 +132,12 @@ boundary until the producer, consumer, and public contract are changed together.
   range retrieval, a versioned checksum manifest, complete-cycle gating,
   deterministic full-grid isoband contour/bounds/serialization tests, semantic
   no-op behavior, manifest-last promotion with injected-failure coverage, and
-  standalone browser QA. The first official publication and recurring schedule
-  remain deliberately unapproved.
+  standalone browser QA. Its accepted public state has two complete retained
+  cycles and 22 targets; the recurring schedule remains deliberately disabled.
+  Geometry research progressed from Terra contour extraction and `maxcells`
+  through 750-m/B/S2/custom-repair experiments before the bake-off selected
+  full-native-grid raw isoband. The inactive experimental chain was removed only
+  after the two-cycle publication and retention proof.
 
 ## Risk register
 

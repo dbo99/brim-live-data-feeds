@@ -50,7 +50,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
 | Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
-| Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Manual-only dry run or approved `main` publication; proposed 01:11, 07:11, 13:11, 19:11 after first-release approval | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
+| Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Manual-only dry run or explicit `main` publication; proposed 01:11, 07:11, 13:11, 19:11 schedule disabled | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
 
 The absence of a declared product ID or manifest is a current contract gap,
 not permission to assign an identifier casually. A later versioned manifest
@@ -58,8 +58,9 @@ migration may establish IDs after producer and consumer review.
 
 ## Observed payload snapshot
 
-The following values describe tracked output near baseline commit `d39a128`.
-They are operational observations, not acceptance limits.
+The following values are operational observations from reviewed tracked states,
+not acceptance limits. Most legacy rows describe output near baseline commit
+`d39a128`; newer forecast rows reflect their stated accepted retained state.
 
 | Product | Observed records | Approximate primary payload |
 |---|---:|---:|
@@ -72,7 +73,7 @@ They are operational observations, not acceptance limits.
 | USGS groundwater | 2,263 well features | 11.9 MB |
 | SCAN | 28 station features | 0.29 MB, plus context CSVs |
 | Snow-pillow | 304 station features | 0.70 MB, plus context CSVs |
-| Winter Storm Levels live prototype | 11 NBM valid-time targets; 17-68 contour features per target | About 0.9 MB plus a 14-KB manifest |
+| Winter Storm Levels | 22 NBM valid-time targets across two complete cycles | About 7.8 MB plus a 30-KB manifest in the current retained set |
 
 GFS, HRRR, NBM wind, and Winter Storm Levels are rolling multi-file products. Their total size changes
 with retained model cycles and forecast entries. Do not infer a payload budget
@@ -102,7 +103,7 @@ It does not mean every such file is a canonical consumer product.
 | USGS groundwater | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | Both are canonical consumer products |
 | SCAN soil moisture | `docs/data/scan_soil_moisture_latest.geojson`<br>`docs/data/scan_soil_moisture_latest_summary.json`<br>`docs/data/scan_soil_moisture_current_wy_trace.csv`<br>`docs/data/scan_soil_moisture_current_wy_trace_summary.json`<br>`docs/data/scan_depth_style.csv` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata; depth style is consumer context. `docs/data/scan_sms_waterday_percentiles.csv`, `docs/data/scan_sms_monthly_context.csv`, and `docs/data/scan_sms_prior_wy_fallback_traces.csv` are separately managed consumer context |
 | Snow-pillow SWE | `docs/data/snow_pillow_latest.geojson`<br>`docs/data/snow_pillow_latest_summary.json`<br>`docs/data/snow_pillow_current_wy_trace.csv`<br>`docs/data/snow_pillow_current_wy_trace_summary.json` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata. `docs/data/snow_pillow_swe_waterday_percentiles.csv`, `docs/data/snow_pillow_swe_monthly_context.csv`, `docs/data/snow_pillow_swe_prior_wy_fallback_traces.csv`, and `docs/data/snow_pillow_swe_normal_medians.csv` are static/manual consumer context |
-| Winter Storm Levels | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json`<br>`docs/data/winter-storm-levels/nbm/snow-level/*.geojson` | Manifest and selected rolling target become canonical after the first approved publication. No live-test payload is seeded or committed by this implementation change. Attempt diagnostics and standalone QA remain workflow artifacts/nonproduction files. |
+| Winter Storm Levels | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json`<br>`docs/data/winter-storm-levels/nbm/snow-level/*.geojson` | Manifest and selected rolling targets are canonical. Attempt diagnostics and standalone QA remain workflow artifacts/nonproduction files. |
 
 Context files are part of consumer behavior even when the scheduled writer does
 not regenerate them. A file's presence in this table does not change its current
@@ -903,7 +904,7 @@ ownership.
 - **Canonical entry point and rolling set:**
   `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` and its
   relative targets beneath `docs/data/winter-storm-levels/nbm/snow-level/`.
-  The paths are intentionally absent until the first approved publication.
+  The accepted public set contains two complete retained cycles and 22 targets.
   Target filenames include a short content-hash suffix so a same-cycle revision
   cannot overwrite bytes still referenced by an older manifest. Consumers must
   never select by directory listing or filename guessing.

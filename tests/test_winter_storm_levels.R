@@ -237,9 +237,6 @@ check(identical(wsl_freshness_status(now - 10 * 3600, now, config), "delayed_but
 check(identical(wsl_freshness_status(now - 18 * 3600, now, config), "stale_last_known_good"), "last-known-good freshness")
 check(identical(wsl_freshness_status(now - 25 * 3600, now, config), "expired"), "expired freshness")
 check(identical(wsl_freshness_status(now, now, config, FALSE), "expired"), "no active target expires")
-check(is.null(wsl_normalize_line(
-  rbind(c(-120, 40), c(-119.9999999, 40.0000001)), config$coordinate_digits
-)), "coordinate rounding removes a collapsed degenerate line")
 zero_length_line <- st_sf(
   level_ft_msl = 1000,
   geometry = st_sfc(st_linestring(rbind(c(-120, 40), c(-120, 40))), crs = 4326)
@@ -332,425 +329,6 @@ check(nrow(closed_lines) >= 1L && any(vapply(st_geometry(closed_lines), function
   all(coordinates[1L, ] == coordinates[nrow(coordinates), ])
 }, logical(1))), "isoband conversion supports closed isolines")
 
-# Legacy rollback-helper coverage. These helpers remain temporarily but are not
-# called by the active wsl_make_contours() production path.
-wsl_test_projected_coordinates <- function(offsets_m) {
-  center <- st_coordinates(st_transform(
-    st_sfc(st_point(c(-120, 37)), crs = 4326), WSL_CARTOGRAPHIC_CRS
-  ))[1L, 1:2]
-  projected <- sweep(offsets_m, 2L, center, "+")
-  st_coordinates(st_transform(
-    wsl_geometry_from_coordinates(projected, WSL_CARTOGRAPHIC_CRS), 4326
-  ))[, 1:2, drop = FALSE]
-}
-wsl_test_cartographic_feature <- function(id, coordinates, level = 8000L) {
-  list(
-    type = "Feature",
-    id = id,
-    properties = list(
-      product_id = config$product_id,
-      source_id = config$source_id,
-      parameter = "snow_level",
-      definition = "height of the wet-bulb 0.5 degree C surface",
-      level_ft_msl = as.integer(level),
-      label = sprintf("%s ft MSL", format(level, big.mark = ",", scientific = FALSE)),
-      unit = "ft_msl",
-      cycle_time_utc = synthetic_record$cycle_time_utc,
-      valid_time_utc = synthetic_record$valid_time_utc,
-      lead_hours = synthetic_record$lead_hours,
-      segment = 1L,
-      length_m = 1
-    ),
-    geometry = list(
-      type = "LineString",
-      coordinates = unname(split(coordinates, row(coordinates)))
-    )
-  )
-}
-
-geometry_fixture_path <- file.path(
-  "tests", "fixtures", "winter_storm_levels", "pre_s2_geometry_robustness.json"
-)
-geometry_fixture <- jsonlite::fromJSON(geometry_fixture_path, simplifyVector = FALSE)
-wsl_test_fixture_coordinates <- function(value) {
-  matrix(as.numeric(unlist(value)), ncol = 2L, byrow = TRUE)
-}
-study_grid_spacing_m <- as.numeric(geometry_fixture$grid_spacing_m)
-
-fallback_original <- wsl_test_fixture_coordinates(
-  geometry_fixture$simplification_fallback$pre_simplification_coordinates_wgs84
-)
-fallback_simplified <- wsl_test_fixture_coordinates(
-  geometry_fixture$simplification_fallback$simplified_coordinates_wgs84
-)
-fallback_original_state <- wsl_component_geometry_state(fallback_original, TRUE)
-fallback_simplified_state <- wsl_component_geometry_state(fallback_simplified, TRUE)
-check(isTRUE(fallback_original_state$safe) && nrow(fallback_original) == 11L,
-      "_001 pre-simplification fixture is an 11-vertex safe closed component")
-check(!isTRUE(fallback_simplified_state$safe) &&
-        "non_simple" %in% fallback_simplified_state$reasons &&
-        nrow(fallback_simplified) == 5L,
-      "_001 simplified fixture is non-simple in the operational CRS")
-fallback_selection <- wsl_select_pre_s2_component(
-  fallback_original, fallback_simplified, TRUE, study_grid_spacing_m, config, "fixture-_001"
-)
-check(identical(fallback_selection$action, "use_original") &&
-        isTRUE(fallback_selection$simplification_fallback) &&
-        identical(fallback_selection$coordinates, fallback_original),
-      "_001 selects the preserved original without polygonization")
-fallback_feature <- wsl_test_cartographic_feature(
-  "fixture-_001", fallback_selection$coordinates, level = 10000L
-)
-fallback_profile <- wsl_component_profile(list(fallback_feature), study_grid_spacing_m, config)
-check(!fallback_profile$remove[[1L]] && fallback_profile$vertices[[1L]] == 11L,
-      "_001 preserved component passes B and is retained")
-fallback_s2 <- wsl_smooth_component_s2(
-  fallback_feature, study_grid_spacing_m, config$coordinate_digits
-)
-fallback_s2_state <- wsl_component_geometry_state(
-  wsl_feature_coordinates(fallback_s2), TRUE
-)
-check(isTRUE(fallback_s2_state$safe) &&
-        wsl_is_closed_coordinates(wsl_feature_coordinates(fallback_s2)),
-      "_001 preserved component passes unchanged S2 and final geometry QA")
-
-precision_original <- wsl_test_fixture_coordinates(
-  geometry_fixture$precision_collapse$pre_simplification_coordinates_wgs84
-)
-precision_simplified <- wsl_test_fixture_coordinates(
-  geometry_fixture$precision_collapse$simplified_coordinates_wgs84
-)
-precision_rounded <- wsl_test_fixture_coordinates(
-  geometry_fixture$precision_collapse$rounded_coordinates_wgs84
-)
-precision_original_state <- wsl_component_geometry_state(precision_original, TRUE)
-precision_simplified_state <- wsl_component_geometry_state(precision_simplified, TRUE)
-precision_original_serialization <- wsl_canonical_serialization_state(
-  precision_original, TRUE, config$coordinate_digits
-)
-precision_simplified_serialization <- wsl_canonical_serialization_state(
-  precision_simplified, TRUE, config$coordinate_digits
-)
-check(isTRUE(precision_original_state$safe) && nrow(precision_original) == 7L &&
-        isTRUE(precision_simplified_state$safe) && nrow(precision_simplified) == 5L,
-      "_011 original and simplified fixtures are safe before canonical serialization")
-check(all(precision_original_serialization$coordinates == precision_rounded) &&
-        all(precision_simplified_serialization$coordinates == precision_rounded) &&
-        precision_original_serialization$distinct_coordinates == 2L &&
-        precision_simplified_serialization$distinct_coordinates == 2L,
-      "_011 original and simplified fixtures both canonicalize to the same A-B-A retrace")
-check(!isTRUE(precision_original_serialization$safe) &&
-        !isTRUE(precision_simplified_serialization$safe) &&
-        isTRUE(precision_original_serialization$structurally_unrepresentable_closed) &&
-        isTRUE(precision_simplified_serialization$structurally_unrepresentable_closed) &&
-        all(c("closure_changed", "insufficient_distinct_ring_coordinates", "non_simple") %in%
-              precision_original_serialization$state$reasons),
-      "_011 five-decimal quantization is a structural closed-ring collapse")
-precision_profile <- wsl_component_profile_for_coordinates(
-  precision_original, TRUE, study_grid_spacing_m, config, "fixture-_011"
-)
-check(!precision_profile$remove[[1L]] &&
-        precision_profile$vertices[[1L]] == 7L &&
-        precision_profile$enclosed_area_km2[[1L]] < study_grid_spacing_m ^ 2 / 1e6 &&
-        precision_profile$max_projected_span_m[[1L]] > 2 * study_grid_spacing_m,
-      "_011 is tiny-area but exceeds the existing B two-grid span limit")
-precision_selection <- wsl_select_pre_s2_component(
-  precision_original, precision_simplified, TRUE,
-  study_grid_spacing_m, config, "fixture-_011"
-)
-check(identical(precision_selection$action, "remove_serialization_degenerate") &&
-        isTRUE(precision_selection$serialization_degenerate) &&
-        !isTRUE(precision_selection$b_profile$remove[[1L]]) &&
-        precision_selection$b_profile$vertices[[1L]] == 7L &&
-        is.null(precision_selection$coordinates),
-      "_011 is accounted as serialization-degenerate after B retains the safe unrounded original")
-isolated_precision_diagnostics <- wsl_pre_s2_disposition_diagnostics(
-  list(precision_selection)
-)
-check(isolated_precision_diagnostics$serialization_degenerate_removed_count == 1L &&
-        isolated_precision_diagnostics$precision_collapse_count == 1L &&
-        isolated_precision_diagnostics$precision_collapse_b_removed_count == 0L &&
-        isolated_precision_diagnostics$unrecoverable_geometry_count == 0L,
-      "isolated _011 reports one serialization-degenerate removal and no B removal")
-
-meaningful_narrow <- wsl_test_fixture_coordinates(
-  geometry_fixture$meaningful_narrow_closed$coordinates_wgs84
-)
-meaningful_serialization <- wsl_canonical_serialization_state(
-  meaningful_narrow, TRUE, config$coordinate_digits
-)
-meaningful_selection <- wsl_select_pre_s2_component(
-  meaningful_narrow, meaningful_narrow, TRUE,
-  study_grid_spacing_m, config, "fixture-meaningful-narrow"
-)
-check(isTRUE(wsl_component_geometry_state(meaningful_narrow, TRUE)$safe) &&
-        isTRUE(meaningful_serialization$safe) &&
-        identical(meaningful_selection$action, "use_simplified") &&
-        !isTRUE(meaningful_selection$serialization_degenerate),
-      "a meaningful narrow closed ring survives and cannot use serialization-degenerate removal")
-
-serialization_fallback_original <- wsl_test_fixture_coordinates(
-  geometry_fixture$simplified_collapse_original_survives$
-    pre_simplification_coordinates_wgs84
-)
-serialization_fallback_simplified <- wsl_test_fixture_coordinates(
-  geometry_fixture$simplified_collapse_original_survives$simplified_coordinates_wgs84
-)
-serialization_fallback_selection <- wsl_select_pre_s2_component(
-  serialization_fallback_original, serialization_fallback_simplified, TRUE,
-  study_grid_spacing_m, config, "fixture-serialization-fallback"
-)
-check(identical(serialization_fallback_selection$action, "use_original") &&
-        isTRUE(serialization_fallback_selection$simplification_fallback) &&
-        isTRUE(serialization_fallback_selection$precision_collapse) &&
-        !isTRUE(serialization_fallback_selection$serialization_degenerate) &&
-        identical(serialization_fallback_selection$coordinates,
-                  serialization_fallback_original),
-      "a simplified serialization collapse falls back to a safely serializable original")
-
-rounded_topology_failure <- wsl_test_fixture_coordinates(
-  geometry_fixture$rounded_topology_failure$coordinates_wgs84
-)
-rounded_topology_state <- wsl_canonical_serialization_state(
-  rounded_topology_failure, TRUE, config$coordinate_digits
-)
-check(isTRUE(wsl_component_geometry_state(rounded_topology_failure, TRUE)$safe) &&
-        !isTRUE(rounded_topology_state$safe) &&
-        rounded_topology_state$distinct_coordinates >= 3L &&
-        !isTRUE(rounded_topology_state$structurally_unrepresentable_closed),
-      "rounded topology fixture retains meaningful vertices and is outside the narrow rule")
-check_error(
-  wsl_select_pre_s2_component(
-    rounded_topology_failure, rounded_topology_failure, TRUE,
-    study_grid_spacing_m, config, "fixture-rounded-topology"
-  ),
-  class = "validation_failed",
-  pattern = "not an authorized closed-component degeneracy"
-)
-
-pre_round_non_simple <- wsl_test_fixture_coordinates(
-  geometry_fixture$pre_round_non_simple$coordinates_wgs84
-)
-check(!isTRUE(wsl_component_geometry_state(pre_round_non_simple, TRUE)$safe) &&
-        "non_simple" %in% wsl_component_geometry_state(pre_round_non_simple, TRUE)$reasons,
-      "pre-round-invalid fixture exposes its non-simple topology")
-check_error(
-  wsl_select_pre_s2_component(
-    pre_round_non_simple, pre_round_non_simple, TRUE,
-    study_grid_spacing_m, config, "fixture-pre-round-invalid"
-  ),
-  class = "validation_failed",
-  pattern = "no authorized safe disposition"
-)
-
-open_precision_collapse <- rbind(
-  c(config$west, 37), c(config$west + 1e-7, 37 + 1e-7)
-)
-check_error(
-  wsl_select_pre_s2_component(
-    open_precision_collapse, open_precision_collapse, FALSE,
-    study_grid_spacing_m, config, "fixture-open-precision-collapse"
-  ),
-  class = "validation_failed",
-  pattern = "not an authorized closed-component degeneracy"
-)
-
-b_eligible_precision <- wsl_test_fixture_coordinates(
-  geometry_fixture$b_eligible_precision_collapse$unrounded_coordinates_wgs84
-)
-b_eligible_state <- wsl_component_geometry_state(b_eligible_precision, TRUE)
-b_eligible_serialization <- wsl_canonical_serialization_state(
-  b_eligible_precision, TRUE, config$coordinate_digits
-)
-b_eligible_profile <- wsl_component_profile_for_coordinates(
-  b_eligible_precision, TRUE, study_grid_spacing_m, config,
-  "fixture-b-eligible-collapse"
-)
-check(isTRUE(b_eligible_state$closed) && nrow(b_eligible_precision) == 5L &&
-        all(is.finite(b_eligible_precision)) &&
-        !isTRUE(sf::st_is_empty(b_eligible_state$projected_line)),
-      "B-eligible precision-collapse fixture is a finite nonempty closed ring")
-check(isTRUE(b_eligible_state$safe) &&
-        isTRUE(sf::st_is_valid(b_eligible_state$projected_line)) &&
-        isTRUE(sf::st_is_simple(b_eligible_state$projected_line)) &&
-        is.finite(b_eligible_state$length_m) && b_eligible_state$length_m > 0,
-      "B-eligible precision-collapse fixture is valid and simple before rounding")
-check(is.finite(b_eligible_profile$enclosed_area_km2[[1L]]) &&
-        b_eligible_profile$enclosed_area_km2[[1L]] > 0 &&
-        b_eligible_profile$enclosed_area_km2[[1L]] <
-          study_grid_spacing_m ^ 2 / 1e6,
-      "B-eligible precision-collapse fixture has positive area below the existing B threshold")
-check(is.finite(b_eligible_profile$max_projected_span_m[[1L]]) &&
-        b_eligible_profile$max_projected_span_m[[1L]] > 0 &&
-        b_eligible_profile$max_projected_span_m[[1L]] < 2 * study_grid_spacing_m &&
-        isTRUE(b_eligible_profile$remove[[1L]]),
-      "B-eligible precision-collapse fixture has span below the existing B threshold")
-check(!isTRUE(b_eligible_serialization$safe) &&
-        isTRUE(b_eligible_serialization$structurally_unrepresentable_closed) &&
-        b_eligible_serialization$distinct_coordinates == 2L,
-      "B-eligible precision-collapse fixture structurally collapses at five decimals")
-b_eligible_selection <- wsl_select_pre_s2_component(
-  b_eligible_precision, b_eligible_precision, TRUE,
-  study_grid_spacing_m, config, "fixture-b-eligible-collapse"
-)
-check(identical(b_eligible_selection$action, "remove_precision_collapse") &&
-        isTRUE(b_eligible_selection$precision_collapse) &&
-        !isTRUE(b_eligible_selection$serialization_degenerate) &&
-        isTRUE(b_eligible_selection$b_profile$remove[[1L]]),
-      "a B-eligible precision collapse remains distinct from serialization-degenerate removal")
-
-normal_closed_coordinates <- wsl_test_fixture_coordinates(
-  geometry_fixture$normal_closed$coordinates_wgs84
-)
-normal_closed_selection <- wsl_select_pre_s2_component(
-  normal_closed_coordinates, normal_closed_coordinates, TRUE,
-  study_grid_spacing_m, config, "fixture-normal-closed"
-)
-check(identical(normal_closed_selection$action, "use_simplified") &&
-        identical(normal_closed_selection$coordinates, normal_closed_coordinates),
-      "normal safe closed geometry follows the existing simplified path byte-for-byte")
-
-normal_open_coordinates <- wsl_test_fixture_coordinates(
-  geometry_fixture$normal_open$coordinates_wgs84
-)
-normal_open_selection <- wsl_select_pre_s2_component(
-  normal_open_coordinates, normal_open_coordinates, FALSE,
-  study_grid_spacing_m, config, "fixture-normal-open"
-)
-check(identical(normal_open_selection$action, "use_simplified") &&
-        identical(normal_open_selection$coordinates, normal_open_coordinates) &&
-        all(normal_open_selection$coordinates[1L, ] == normal_open_coordinates[1L, ]) &&
-        all(normal_open_selection$coordinates[nrow(normal_open_selection$coordinates), ] ==
-              normal_open_coordinates[nrow(normal_open_coordinates), ]),
-      "normal safe open geometry and endpoints follow the existing path unchanged")
-
-tiny_closed <- wsl_test_cartographic_feature("tiny-closed", wsl_test_projected_coordinates(rbind(
-  c(0, 0), c(1000, 0), c(1000, 1000), c(0, 1000), c(0, 0)
-)))
-large_area_closed <- wsl_test_cartographic_feature("large-area-closed", wsl_test_projected_coordinates(rbind(
-  c(0, 0), c(3000, 0), c(3000, 3000), c(0, 3000), c(0, 0)
-)))
-wide_closed <- wsl_test_cartographic_feature("wide-closed", wsl_test_projected_coordinates(rbind(
-  c(0, 0), c(6000, 0), c(6000, 500), c(0, 500), c(0, 0)
-)))
-tiny_interior_open <- wsl_test_cartographic_feature(
-  "tiny-interior-open", wsl_test_projected_coordinates(rbind(c(0, 0), c(1000, 0)))
-)
-boundary_open <- wsl_test_cartographic_feature(
-  "boundary-open", rbind(c(config$west, 35), c(config$west + 0.01, 35))
-)
-long_open <- wsl_test_cartographic_feature(
-  "long-open", wsl_test_projected_coordinates(rbind(c(0, 0), c(6000, 0)))
-)
-cartographic_features <- list(
-  tiny_closed, large_area_closed, wide_closed,
-  tiny_interior_open, boundary_open, long_open
-)
-
-b_filter <- wsl_filter_components_b(cartographic_features, study_grid_spacing_m, config)
-removed_ids <- b_filter$profile$feature_id[b_filter$profile$remove]
-retained_ids <- vapply(b_filter$features, `[[`, character(1), "id")
-check("tiny-closed" %in% removed_ids, "B removes a closed loop below both area and span thresholds")
-check("large-area-closed" %in% retained_ids,
-      "B retains a closed loop that fails the area criterion")
-check("wide-closed" %in% retained_ids,
-      "B retains a closed loop that fails the maximum-span criterion")
-check("tiny-interior-open" %in% removed_ids, "B removes a short interior open fragment")
-check("boundary-open" %in% retained_ids, "B retains a short boundary-adjacent open fragment")
-check("long-open" %in% retained_ids, "B retains a normal long open contour")
-check(b_filter$diagnostics$closed_removed == 1L && b_filter$diagnostics$open_removed == 1L,
-      "B reports closed/open removals separately")
-
-projected_open <- rbind(c(0, 0), c(1000, 0), c(1000, 1000))
-chaikin_one <- wsl_chaikin(projected_open, FALSE, 1L)
-chaikin_two <- wsl_chaikin(projected_open, FALSE, WSL_S2_CHAIKIN_PASSES)
-check(WSL_S2_CHAIKIN_PASSES == 2L && nrow(chaikin_one) == 6L && nrow(chaikin_two) == 12L,
-      "S2 performs exactly two Chaikin passes")
-check(identical(chaikin_two, wsl_chaikin_once(chaikin_one, FALSE)),
-      "two-pass Chaikin output equals two explicit corner-cutting applications")
-check(all(chaikin_two[1L, ] == projected_open[1L, ]) &&
-      all(chaikin_two[nrow(chaikin_two), ] == projected_open[nrow(projected_open), ]),
-      "open Chaikin endpoints are preserved")
-projected_closed <- rbind(c(0, 0), c(1000, 0), c(1000, 1000), c(0, 1000), c(0, 0))
-chaikin_closed <- wsl_chaikin(projected_closed, TRUE, WSL_S2_CHAIKIN_PASSES)
-check(nrow(chaikin_closed) == 17L && wsl_is_closed_coordinates(chaikin_closed),
-      "closed Chaikin smoothing is cyclic and explicitly reclosed")
-segmentized <- wsl_segmentize_coordinates(rbind(c(0, 0), c(12000, 0)),
-                                          WSL_S2_DENSIFY_GRID_CELLS * study_grid_spacing_m)
-check(max(sqrt(rowSums((segmentized[-1L, ] - segmentized[-nrow(segmentized), ]) ^ 2))) <=
-        WSL_S2_DENSIFY_GRID_CELLS * study_grid_spacing_m,
-      "S2 segmentization enforces the two-grid maximum spacing")
-check(nrow(wsl_remove_consecutive_duplicates(rbind(
-  c(0, 0), c(0, 0), c(1, 1), c(1, 1), c(2, 2)
-))) == 3L, "post-rounding consecutive duplicate cleanup works")
-
-cartographic_geojson <- list(
-  type = "FeatureCollection", contract_version = config$contract_version,
-  bbox = c(config$west, config$south, config$east, config$north),
-  features = cartographic_features
-)
-s2_fixture <- wsl_apply_s2_cartography(cartographic_geojson, study_grid_spacing_m, config)
-s2_features <- s2_fixture$geojson$features
-s2_ids <- vapply(s2_features, `[[`, character(1), "id")
-check(identical(s2_ids, retained_ids) && length(s2_features) == 4L,
-      "S2 preserves component identities without cross-component merging")
-check(all(vapply(s2_features, function(feature) {
-  source_feature <- cartographic_features[[match(feature$id, vapply(
-    cartographic_features, `[[`, character(1), "id"
-  ))]]
-  all(vapply(c("product_id", "source_id", "parameter", "definition", "level_ft_msl",
-               "label", "unit", "cycle_time_utc", "valid_time_utc", "lead_hours", "segment"),
-             function(name) identical(feature$properties[[name]], source_feature$properties[[name]]),
-             logical(1)))
-}, logical(1))), "S2 preserves source/model/time/lead/elevation properties")
-check(all(vapply(s2_features, function(feature) {
-  line <- wsl_geometry_from_coordinates(wsl_feature_coordinates(feature))
-  isTRUE(st_is_valid(line)) && isTRUE(st_is_simple(line)) && !isTRUE(st_is_empty(line))
-}, logical(1))), "S2 emits no invalid, non-simple, or empty geometry")
-check(all(vapply(s2_features, function(feature) {
-  coordinates <- wsl_feature_coordinates(feature)
-  nrow(coordinates) >= 2L && !any(rowSums(abs(
-    coordinates[-1L, , drop = FALSE] - coordinates[-nrow(coordinates), , drop = FALSE]
-  )) == 0)
-}, logical(1))), "S2 emits no adjacent duplicate coordinates")
-check(all(vapply(Filter(function(feature) grepl("closed", feature$id, fixed = TRUE), s2_features),
-                 function(feature) wsl_is_closed_coordinates(wsl_feature_coordinates(feature)), logical(1))),
-      "S2 retained closed loops remain closed")
-check(all(vapply(Filter(function(feature) feature$id %in% c("boundary-open", "long-open"), s2_features),
-                 function(feature) {
-                   source_feature <- cartographic_features[[match(feature$id, vapply(
-                     cartographic_features, `[[`, character(1), "id"
-                   ))]]
-                   coordinates <- wsl_feature_coordinates(feature)
-                   source_coordinates <- wsl_feature_coordinates(source_feature)
-                   all(coordinates[1L, ] == round(source_coordinates[1L, ], config$coordinate_digits)) &&
-                     all(coordinates[nrow(coordinates), ] ==
-                           round(source_coordinates[nrow(source_coordinates), ], config$coordinate_digits))
-                 }, logical(1))), "S2 final output preserves open endpoints exactly")
-check(all(vapply(s2_features, function(feature) {
-  actual <- as.numeric(st_length(st_transform(
-    wsl_geometry_from_coordinates(wsl_feature_coordinates(feature)), WSL_CARTOGRAPHIC_CRS
-  )))
-  abs(actual - feature$properties$length_m) <= 0.051
-}, logical(1))), "S2 recomputes geometry-derived component lengths")
-s2_coordinates <- do.call(rbind, lapply(s2_features, wsl_feature_coordinates))
-check(identical(as.numeric(s2_fixture$geojson$bbox), c(
-  min(s2_coordinates[, 1L]), min(s2_coordinates[, 2L]),
-  max(s2_coordinates[, 1L]), max(s2_coordinates[, 2L])
-)), "S2 recomputes geometry-derived target bounds")
-
-collapsed_feature <- wsl_test_cartographic_feature(
-  "collapsed-retained", rbind(c(-120, 37), c(-119.999999, 37))
-)
-check_error(
-  wsl_finalize_s2_feature(
-    collapsed_feature,
-    st_transform(wsl_geometry_from_coordinates(wsl_feature_coordinates(collapsed_feature)),
-                 WSL_CARTOGRAPHIC_CRS),
-    config$coordinate_digits
-  ),
-  class = "validation_failed", pattern = "collapsed retained component"
-)
 
 single_horizon_config <- config
 single_horizon_config$forecast_lead_hours <- 6L
@@ -821,24 +399,34 @@ check(all(c(
   "contour_input_cells", "full_native_source_crop_passed", "raster_resampled",
   "source_isoline_count", "clipped_component_count", "components_retained",
   "open_count", "closed_count", "non_simple_count", "vertices",
-  "serialization_collapse_removed_count", "serialization_collapse_removals",
-  "legacy_geometry_chain_active"
+  "serialization_collapse_removed_count", "serialization_collapse_removals"
 ) %in% names(contour$cartography)), "raw-isoband diagnostics are complete")
 check(identical(contour$cartography$contour_engine, "isoband") &&
         isTRUE(contour$cartography$full_native_source_crop_passed) &&
         !isTRUE(contour$cartography$raster_resampled) &&
-        !isTRUE(contour$cartography$legacy_geometry_chain_active) &&
+        !"legacy_geometry_chain_active" %in% names(contour$cartography) &&
         contour$cartography$contour_input_cells == ncell(source_raster) &&
         contour$cartography$components_retained == contour$feature_count &&
         contour$cartography$serialization_collapse_removed_count ==
           length(contour$cartography$serialization_collapse_removals),
       "active contour path uses every native source-crop cell and accounts collapses")
 active_contour_body <- paste(deparse(body(wsl_make_contours)), collapse = "\n")
-check(!grepl("terra::as.contour", active_contour_body, fixed = TRUE) &&
-        !grepl("st_simplify", active_contour_body, fixed = TRUE) &&
-        !grepl("wsl_apply_s2_cartography", active_contour_body, fixed = TRUE) &&
-        !grepl("wsl_filter_components_b", active_contour_body, fixed = TRUE),
-      "active contour function does not call Terra contour, simplification, B, or S2")
+retired_geometry_symbols <- c(
+  "WSL_S2_DENSIFY_GRID_CELLS", "WSL_S2_CHAIKIN_PASSES",
+  "WSL_S2_SIMPLIFY_GRID_CELLS", "wsl_normalize_line",
+  "wsl_feature_coordinates", "wsl_coordinates_to_feature",
+  "wsl_is_closed_coordinates", "wsl_source_grid_spacing_m",
+  "wsl_component_geometry_state", "wsl_canonical_serialization_state",
+  "wsl_component_profile_for_coordinates", "wsl_select_pre_s2_component",
+  "wsl_pre_s2_disposition_diagnostics", "wsl_component_profile",
+  "wsl_filter_components_b", "wsl_segmentize_coordinates", "wsl_chaikin_once",
+  "wsl_chaikin", "wsl_finalize_s2_feature", "wsl_smooth_component_s2",
+  "wsl_apply_s2_cartography"
+)
+check(!any(vapply(retired_geometry_symbols, exists, logical(1), inherits = TRUE)) &&
+        !grepl("terra::as.contour", active_contour_body, fixed = TRUE) &&
+        !grepl("st_simplify", active_contour_body, fixed = TRUE),
+      "retired Terra/B/S2 geometry symbols are absent from the active producer")
 check(contour$bbox[1L] >= config$west && contour$bbox[3L] <= config$east &&
       contour$bbox[2L] >= config$south && contour$bbox[4L] <= config$north, "exact output bounds")
 properties <- contour$geojson$features[[1L]]$properties
@@ -847,6 +435,13 @@ check(identical(properties$cycle_time_utc, synthetic_record$cycle_time_utc) &&
 check(!any(c("retrieval_time_utc", "publication_time_utc", "generated_at") %in% names(properties)), "no volatile per-feature timestamps")
 
 wsl_test_clone <- function(value) unserialize(serialize(value, NULL))
+wsl_test_feature_coordinates <- function(feature) {
+  matrix(as.numeric(unlist(feature$geometry$coordinates)), ncol = 2L, byrow = TRUE)
+}
+wsl_test_set_feature_coordinates <- function(feature, coordinates) {
+  feature$geometry$coordinates <- unname(split(coordinates, row(coordinates)))
+  feature
+}
 
 wsl_test_cycle_entries <- function(root, cycle_time, config, contour, stats) {
   dir.create(root, recursive = TRUE, showWarnings = FALSE)
@@ -918,7 +513,7 @@ non_simple_feature$properties$level_ft_msl <- 10000L
 non_simple_feature$properties$label <- "10,000 ft MSL"
 non_simple_feature$properties$segment <- 1L
 non_simple_feature$properties$length_m <- non_simple_component$row$length_m
-non_simple_feature <- wsl_coordinates_to_feature(
+non_simple_feature <- wsl_test_set_feature_coordinates(
   non_simple_feature, non_simple_component$row$coordinates
 )
 non_simple_output$features <- list(non_simple_feature)
@@ -939,9 +534,9 @@ wsl_write_json(invalid_output, invalid_output_path)
 check_error(wsl_validate_geojson(invalid_output_path, synthetic_record, config),
             pattern = "parameter/unit semantics")
 duplicate_output <- contour$geojson
-duplicate_coordinates <- wsl_feature_coordinates(duplicate_output$features[[1L]])
+duplicate_coordinates <- wsl_test_feature_coordinates(duplicate_output$features[[1L]])
 duplicate_coordinates <- rbind(duplicate_coordinates[1L, ], duplicate_coordinates)
-duplicate_output$features[[1L]] <- wsl_coordinates_to_feature(
+duplicate_output$features[[1L]] <- wsl_test_set_feature_coordinates(
   duplicate_output$features[[1L]], duplicate_coordinates
 )
 duplicate_output_path <- file.path(temp_root, "duplicate-output.geojson")
