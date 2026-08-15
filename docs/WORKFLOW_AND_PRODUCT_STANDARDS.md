@@ -31,7 +31,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
 | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | Build USGS CA streamflow latest GeoJSON | Manual; :23 every 4h | `scripts/build_usgs_streamflow_latest_ca.R` | GeoJSON/summary |
-| `.github/workflows/build-winter-storm-levels.yml` | Build Winter Storm Levels | Manual dry run by default; proposed four-cycle schedule deferred | `scripts/build_winter_storm_levels.R` | Complete manifest/contour artifact; explicit `main` publication only |
+| `.github/workflows/build-winter-storm-levels.yml` | Build Winter Storm Levels | Manual dry run by default; guarded primary +128m and fallback +174m for 00/06/12/18Z | `scripts/build_winter_storm_levels.R` | Complete manifest/contour artifact; scheduled or explicit `main` publication only after a newer complete-cycle preflight |
 | `.github/workflows/build-hrrr-wind-sandbox.yml` | Build HRRR wind sandbox | Manual | `scripts/build_hrrr_wind_sandbox.R` | Artifact only |
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
@@ -63,7 +63,7 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Thirteen writers have schedules and `workflow_dispatch`.
+- Fourteen writers have schedules and `workflow_dispatch`.
 - The CNRFC forecast writer uses GitHub Actions' native
   `America/Los_Angeles` timezone at 10:56 and 16:56. It has no runtime
   exact-minute guard, records a stable Pacific AM/PM logical slot, defaults
@@ -73,10 +73,13 @@ workflow but is not source-controlled in `.github/workflows`.
   `America/Los_Angeles` timezone once daily at 08:14. It defaults manual
   dispatch to runner-temporary dry-run output and permits scheduled or explicitly
   requested publication only from the selected `main` branch tip.
-- The Winter Storm Levels writer is manual-only, defaults to
-  runner-temporary dry-run output, and accepts explicit publication only from
-  `main`. The proposed 01:11/07:11/13:11/19:11 UTC schedule is deliberately not
-  enabled; schedule activation remains a separate maintainer decision.
+- The Winter Storm Levels writer defaults manual dispatch to runner-temporary
+  dry-run output and accepts publication only from `main`. Scheduled primary
+  attempts run at 02:08/08:08/14:08/20:08 UTC and fallbacks at
+  02:54/08:54/14:54/20:54 UTC. Scheduled and explicit manual publication first
+  run the shared-logic, inventory-only cycle preflight; only `NEW_CYCLE` reaches
+  the full producer. Manual `publish: false` remains available for diagnostic
+  current-cycle rebuilds.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
@@ -139,6 +142,10 @@ is no separate least-privilege build job.
 - Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
   feature-to-main publication.
 - Re-evaluate queue behavior when schedules or runtime increase materially.
+- Winter Storm Levels intentionally starts scheduled operation inside the
+  existing whole-workflow queue. Migrating all main writers to parallel builds,
+  one job-level main publisher queue, and post-lock reconciliation remains a
+  required repository-wide optimization before NBM QPF.
 
 ## Runner and action versions
 

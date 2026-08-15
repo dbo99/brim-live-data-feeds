@@ -610,8 +610,8 @@ and producer scripts.
   calculate or display a below-ground depth from this product alone.
 - The private integration is additive and separate. No private source is copied
   into this repository, and no consumer change is required to validate this
-  public producer. Schedule activation and the later consumer release remain
-  coordinated maintainer decisions.
+  public producer. Guarded producer scheduling is independent of the later
+  consumer release, which remains a separate coordinated maintainer decision.
 
 ## Compatibility and fallback
 

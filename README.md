@@ -49,8 +49,9 @@ Each production writer, subject to documented product-specific branch controls:
 The CNRFC, CBRFC, and Winter Storm Levels forecast writers are the current
 stricter exceptions: manual runs default to runner-temporary dry-run output,
 feature branches cannot publish, and publication is restricted to `main`. Winter
-Storm Levels remains manual-only; enabling its proposed recurring schedule is a
-separate maintainer decision.
+Storm Levels also uses guarded primary and fallback scheduled attempts for each
+00/06/12/18 UTC NBM cycle; only a strictly newer complete cycle can reach its
+existing publication transaction.
 
 The official Pages source is `main/docs`. Except for the dry-run-only
 feature-branch behavior of CNRFC, CBRFC, and Winter Storm Levels, a manual writer

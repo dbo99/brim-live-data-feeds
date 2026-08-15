@@ -50,7 +50,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
 | Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
-| Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Manual-only dry run or explicit `main` publication; proposed 01:11, 07:11, 13:11, 19:11 schedule disabled | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
+| Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Guarded primary 02:08/08:08/14:08/20:08 and fallback 02:54/08:54/14:54/20:54; manual dry run or explicit `main` publication | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
 
 The absence of a declared product ID or manifest is a current contract gap,
 not permission to assign an identifier casually. A later versioned manifest
@@ -964,11 +964,20 @@ ownership.
   validate and retain the prior root cycle, producing exactly two complete
   cycles and 22 targets. Any malformed, unsafe, incomplete, missing,
   checksum-invalid, or uncopyable prior retention state fails the candidate.
-- **Publication controls:** Manual dispatch defaults to a runner-temporary dry
-  run, and feature branches cannot publish. Explicit `publish: true` works only
-  on `main`. No schedule is active until the maintainer approves the first
-  official publication. The proposed collision-resistant cadence is 01:11,
-  07:11, 13:11, and 19:11 UTC.
+- **Publication controls and schedule:** Manual dispatch defaults to a
+  runner-temporary dry run, and feature branches cannot publish. Manual
+  `publish: false` can diagnostically rebuild the currently discoverable cycle;
+  explicit `publish: true` works only on `main` and uses the same newer-cycle
+  guard as the schedule. For every 00/06/12/18 UTC NBM cycle, primary attempts
+  run at +128 minutes (02:08/08:08/14:08/20:08) and fallbacks at +174 minutes
+  (02:54/08:54/14:54/20:54). The inventory-only preflight reuses the producer's
+  cycle discovery and 11-lead completeness semantics. It exits successfully
+  without geospatial setup or a build when the newest nominal cycle is already
+  canonical or a newer cycle is not complete. Unexpected inventory/source
+  errors fail visibly; all guarded no-build outcomes leave the canonical LKG
+  unchanged. The workflow remains in the repository-wide whole-workflow writer
+  queue; parallel-build/job-level publication locking is a separate required
+  optimization before NBM QPF.
 - **Browser QA:** [`qa/winter_storm_levels/index.html`](../qa/winter_storm_levels/index.html)
   is a standalone nonproduction renderer with source/cycle/valid-time selection,
   stale/error display, labeling, optional comparison/overlay loading, and render
