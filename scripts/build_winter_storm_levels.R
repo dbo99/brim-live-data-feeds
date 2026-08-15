@@ -14,7 +14,7 @@ wsl_project_root <- normalizePath(
 setwd(wsl_project_root)
 source(file.path("scripts", "winter_storm_levels_helpers.R"))
 
-required_packages <- c("digest", "httr2", "jsonlite", "sf", "terra")
+required_packages <- c("digest", "httr2", "isoband", "jsonlite", "sf", "terra")
 missing_packages <- required_packages[
   !vapply(required_packages, requireNamespace, quietly = TRUE, FUN.VALUE = logical(1))
 ]
@@ -83,6 +83,7 @@ wsl_build <- function() {
     diagnostic_key <- sprintf("f%03d", record$lead_hours)
     attempt$source_diagnostics[[diagnostic_key]] <<- source_diagnostic
     wsl_log_source_diagnostic(source_diagnostic)
+    target_started <- proc.time()[["elapsed"]]
     stats <- wsl_validate_raster(raster, record, config, source_diagnostic)
     contour <- wsl_make_contours(raster, record, config)
     working_path <- file.path(stage_root, ".working", sprintf("f%03d.geojson", record$lead_hours))
@@ -98,8 +99,15 @@ wsl_build <- function() {
     source_stats[[length(source_stats) + 1L]] <- list(
       lead_hours = record$lead_hours,
       source_bytes = unname(file.info(grib_path)$size),
+      source_sha256 = wsl_sha256(grib_path),
       output_bytes = unname(file.info(target_path)$size),
+      output_sha256 = wsl_sha256(target_path),
       feature_count = contour$feature_count,
+      contour_levels_ft_msl = contour$contour_levels,
+      non_simple_count = contour$cartography$non_simple_count,
+      serialization_collapse_removed_count =
+        contour$cartography$serialization_collapse_removed_count,
+      target_runtime_seconds = round(proc.time()[["elapsed"]] - target_started, 3),
       finite_coverage = stats$finite_coverage,
       geometry_diagnostics = contour$cartography
     )

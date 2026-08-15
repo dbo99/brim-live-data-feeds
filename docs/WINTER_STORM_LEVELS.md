@@ -129,9 +129,9 @@ browser payload small. The output contract is:
   intersect the display domain;
 - display bounds west -130, east -112, south 30, north 44.5;
 - source crop buffer west -132, east -110, south 28.5, north 46;
-- initial simplification in a projected CRS at 750 metres, less than one-third
-  of the approximately 2.54-km source cell, followed by exact display-bound
-  clipping and the selected v1 cartographic treatment described below;
+- raw full-resolution isoband contours from every native cell in the source
+  crop, followed by exact display-bound clipping and the minimal v1 treatment
+  described below;
 - stable feature ordering, coordinate rounding to five decimal places, and no
   volatile per-feature retrieval/build timestamps.
 
@@ -143,37 +143,31 @@ water for landfall context.
 
 ### Selected v1 cartographic treatment
 
-NBM snow-level contours are lightly filtered and smoothed for regional display;
-modeled snow-level elevations are unchanged. The producer applies the treatment
-to each accepted component independently after the existing approximately
-750-m simplification. It does not smooth the NBM raster, merge components or
-levels, or change source/model/cycle/valid-time/lead identity.
+The producer uses `isoband::isolines()` directly on the unsmoothed native NBM
+source crop. Configured public levels remain exact feet MSL values, converted to
+metres only for contour extraction and assigned back from the configured level
+list rather than parsed from floating-point output names.
 
-All metric operations use EPSG:5070 and the decoded source-grid spacing. The
-accepted 2026-08-13 18Z evidence had a 2,539.703-m spacing, yielding the
-following approximately stated thresholds:
+The active path is deliberately small:
 
-1. The fixed B filter removes a closed component only when its enclosed area is
-   below one grid-cell area (6.450 km²) **and** its maximum projected bounding-box
-   span is below two grid cells (5.079 km).
-2. It removes an open component only when its length is below two grid cells
-   (5.079 km) **and** its distance from the product boundary is greater than one
-   grid cell (2.540 km). Short boundary-clipped contours are therefore retained.
-3. Each survivor is projected to EPSG:5070 and segmentized to a maximum spacing
-   of two grid cells (5,079.406 m).
-4. Exactly two Chaikin corner-cutting passes are applied. Open endpoints are
-   preserved exactly; closed components are handled cyclically and explicitly
-   reclosed without a seam.
-5. A separate topology-preserving simplification of one-quarter grid cell
-   (634.926 m) follows smoothing.
-6. The result is transformed to WGS84, rounded to five decimal places, stripped
-   of consecutive duplicate coordinates, and rejected if empty, invalid,
-   non-simple, collapsed, or zero-length. Geometry-derived length and target
-   bounds are recomputed before target and manifest validation.
+1. reverse Terra's north-to-south matrix rows together with the native y vector
+   so isoband receives increasing y without resampling;
+2. deterministically convert isolines to native-CRS `LineString` components;
+3. clip to the existing product domain and transform to WGS84;
+4. remove consecutive duplicates, round to five decimals, remove any duplicates
+   created by rounding, and canonicalize component direction/start position;
+5. omit and diagnose only a component with fewer than two distinct serialized
+   positions; and
+6. deterministically order features, recompute lengths/bounds, and validate the
+   unchanged target and manifest contracts.
 
-The stronger P10, P20, and P30 physical-scale smoothing candidates remain
-offline cartographic research evidence only. They are not production behavior,
-and S2 does not change the version-1 schema or scientific product semantics.
+The active path does not apply the legacy 750-m simplification, B filter, S2,
+segmentization, Chaikin smoothing, fallback repair, polygonization, node/split
+repair, or topology-based serialization disposition. Mathematical non-simplicity
+is diagnostic rather than a rejection condition when the LineString is finite,
+structurally valid, in bounds, and renderable. The legacy
+`simplify_tolerance_m` manifest member remains serialized for version-1 contract
+compatibility but does not control the raw-isoband path.
 
 ## Interpretation caveats
 

@@ -596,9 +596,12 @@ and producer scripts.
 - Treat `level_ft_msl` as a modeled NBM snow-level elevation in feet above mean
   sea level. Do not relabel it as surface temperature, freezing level, snow
   depth, snow accumulation, or observed precipitation type. Display the source
-  definition and modeled-transition caveat. The producer lightly filters and
-  smooths contour geometry for regional display; modeled elevations, source
-  identity, cycle, valid time, and forecast lead remain unchanged.
+  definition and modeled-transition caveat. The producer derives contour
+  linework from the full native buffered NBM crop and applies only clipping,
+  coordinate transformation, and deterministic serialization cleanup; modeled
+  elevations, source identity, cycle, valid time, and forecast lead remain
+  unchanged. Mathematical line simplicity is diagnostic, not a consumer or
+  publication requirement for these display LineStrings.
 - A GeoJSON target must be a nonempty WGS84 LineString FeatureCollection within
   the manifest domain, with finite coordinates and the required stable feature
   properties. A missing level or missing feature is not numerical zero. Reject

@@ -555,6 +555,193 @@ wsl_normalize_line <- function(coordinates, digits) {
   coordinates
 }
 
+wsl_lexicographic_less <- function(left, right) {
+  left <- as.numeric(t(left))
+  right <- as.numeric(t(right))
+  difference <- which(left != right)
+  if (!length(difference)) return(FALSE)
+  left[difference[[1L]]] < right[difference[[1L]]]
+}
+
+wsl_canonical_coordinate_key <- function(coordinates, digits) {
+  paste(
+    formatC(as.numeric(t(coordinates)), format = "f", digits = as.integer(digits)),
+    collapse = ","
+  )
+}
+
+wsl_canonicalize_isoband_line <- function(coordinates, digits) {
+  coordinates <- tryCatch(
+    unclass(coordinates)[, 1:2, drop = FALSE],
+    error = function(error) NULL
+  )
+  if (is.null(coordinates) || any(!is.finite(coordinates))) {
+    wsl_stop("validation_failed", "Isoband contour coordinates are non-finite or malformed.")
+  }
+  coordinates <- wsl_remove_consecutive_duplicates(coordinates)
+  coordinates <- round(coordinates, as.integer(digits))
+  coordinates <- wsl_remove_consecutive_duplicates(coordinates)
+  if (nrow(coordinates) < 2L || nrow(unique(coordinates)) < 2L) return(NULL)
+
+  closed <- all(coordinates[1L, ] == coordinates[nrow(coordinates), ])
+  if (!closed) {
+    reversed <- coordinates[nrow(coordinates):1L, , drop = FALSE]
+    if (wsl_lexicographic_less(reversed, coordinates)) coordinates <- reversed
+    return(coordinates)
+  }
+
+  ring <- coordinates[-nrow(coordinates), , drop = FALSE]
+  if (!nrow(ring)) return(NULL)
+  minimum_x <- min(ring[, 1L])
+  minimum_y <- min(ring[ring[, 1L] == minimum_x, 2L])
+  canonical_candidates <- list()
+  for (candidate_ring in list(ring, ring[nrow(ring):1L, , drop = FALSE])) {
+    starts <- which(candidate_ring[, 1L] == minimum_x & candidate_ring[, 2L] == minimum_y)
+    for (start in starts) {
+      order <- c(
+        seq.int(start, nrow(candidate_ring)),
+        if (start > 1L) seq_len(start - 1L) else integer()
+      )
+      rotated <- candidate_ring[order, , drop = FALSE]
+      canonical_candidates[[length(canonical_candidates) + 1L]] <- rbind(
+        rotated, rotated[1L, , drop = FALSE]
+      )
+    }
+  }
+  best <- canonical_candidates[[1L]]
+  if (length(canonical_candidates) > 1L) {
+    for (candidate in canonical_candidates[-1L]) {
+      if (wsl_lexicographic_less(candidate, best)) best <- candidate
+    }
+  }
+  best
+}
+
+wsl_isoband_native_lines <- function(raster, levels_ft_msl) {
+  if (terra::nlyr(raster) != 1L) {
+    wsl_stop("validation_failed", "Isoband contour input must have exactly one raster layer.")
+  }
+  levels_ft_msl <- as.numeric(levels_ft_msl)
+  if (!length(levels_ft_msl) || any(!is.finite(levels_ft_msl))) {
+    wsl_stop("validation_failed", "Isoband contour levels are missing or non-finite.")
+  }
+  values_m <- terra::as.matrix(raster, wide = TRUE)
+  if (!all(dim(values_m) == c(terra::nrow(raster), terra::ncol(raster)))) {
+    wsl_stop("validation_failed", "Isoband contour matrix dimensions do not match the raster grid.")
+  }
+  x <- terra::xFromCol(raster, seq_len(terra::ncol(raster)))
+  # Terra matrices run north-to-south. Isoband requires increasing y, so both
+  # the y vector and matrix rows are reversed together without resampling.
+  y <- terra::yFromRow(raster, terra::nrow(raster):1L)
+  values_m <- values_m[terra::nrow(raster):1L, , drop = FALSE]
+  levels_m <- levels_ft_msl / WSL_METERS_TO_FEET
+  isolines <- isoband::isolines(x, y, values_m, levels = levels_m)
+
+  geometries <- list()
+  elevations <- numeric()
+  level_indices <- integer()
+  source_isoline_ids <- integer()
+  for (level_index in seq_along(levels_ft_msl)) {
+    isoline <- isolines[[level_index]]
+    if (!length(isoline$x)) next
+    for (source_id in unique(isoline$id)) {
+      keep <- isoline$id == source_id
+      coordinates <- cbind(isoline$x[keep], isoline$y[keep])
+      coordinates <- wsl_remove_consecutive_duplicates(coordinates)
+      if (nrow(coordinates) < 2L || any(!is.finite(coordinates))) {
+        wsl_stop(
+          "validation_failed", "Isoband emitted malformed native linework at level index ",
+          level_index, " source isoline ", source_id, "."
+        )
+      }
+      geometries[[length(geometries) + 1L]] <- sf::st_linestring(coordinates)
+      elevations <- c(elevations, levels_ft_msl[[level_index]])
+      level_indices <- c(level_indices, as.integer(level_index))
+      source_isoline_ids <- c(source_isoline_ids, as.integer(source_id))
+    }
+  }
+  if (!length(geometries)) {
+    return(sf::st_sf(
+      level_ft_msl = numeric(), level_index = integer(), source_isoline_id = integer(),
+      geometry = sf::st_sfc(crs = sf::st_crs(terra::crs(raster)))
+    ))
+  }
+  sf::st_sf(
+    level_ft_msl = elevations,
+    level_index = level_indices,
+    source_isoline_id = source_isoline_ids,
+    geometry = sf::st_sfc(geometries, crs = sf::st_crs(terra::crs(raster)))
+  )
+}
+
+wsl_prepare_isoband_component <- function(
+    coordinates, level_ft_msl, lineage, coordinate_digits
+) {
+  coordinates <- tryCatch(
+    unclass(coordinates)[, 1:2, drop = FALSE],
+    error = function(error) NULL
+  )
+  if (is.null(coordinates) || any(!is.finite(coordinates))) {
+    wsl_stop("validation_failed", "Non-finite isoband component coordinates: ", lineage)
+  }
+  vertices_before <- nrow(coordinates)
+  serialized_preview <- wsl_remove_consecutive_duplicates(coordinates)
+  serialized_preview <- round(serialized_preview, as.integer(coordinate_digits))
+  serialized_preview <- wsl_remove_consecutive_duplicates(serialized_preview)
+  distinct_serialized_positions <- nrow(unique(serialized_preview))
+  canonical <- wsl_canonicalize_isoband_line(coordinates, coordinate_digits)
+  if (is.null(canonical)) {
+    return(list(
+      retained = FALSE,
+      removal = list(
+        lineage = lineage,
+        level_ft_msl = as.integer(level_ft_msl),
+        vertices_before = vertices_before,
+        distinct_serialized_positions = distinct_serialized_positions
+      )
+    ))
+  }
+  distinct_positions <- nrow(unique(canonical))
+  if (nrow(canonical) < 2L || distinct_positions < 2L) {
+    return(list(
+      retained = FALSE,
+      removal = list(
+        lineage = lineage,
+        level_ft_msl = as.integer(level_ft_msl),
+        vertices_before = vertices_before,
+        distinct_serialized_positions = distinct_positions
+      )
+    ))
+  }
+
+  projected <- sf::st_transform(
+    wsl_geometry_from_coordinates(canonical, 4326), WSL_CARTOGRAPHIC_CRS
+  )
+  if (isTRUE(sf::st_is_empty(projected)) || !isTRUE(sf::st_is_valid(projected))) {
+    wsl_stop("validation_failed", "Isoband component is empty or structurally invalid: ", lineage)
+  }
+  length_m <- suppressWarnings(as.numeric(sf::st_length(projected)))
+  if (length(length_m) != 1L || !is.finite(length_m) || length_m <= 0) {
+    wsl_stop("validation_failed", "Isoband component has non-positive length: ", lineage)
+  }
+  list(
+    retained = TRUE,
+    row = list(
+      level = as.integer(level_ft_msl),
+      length_m = round(length_m, 1),
+      coordinates = canonical,
+      key = sprintf(
+        "%05d|%s", as.integer(level_ft_msl),
+        wsl_canonical_coordinate_key(canonical, coordinate_digits)
+      ),
+      lineage = lineage,
+      non_simple = !isTRUE(sf::st_is_simple(projected)),
+      vertices_before = vertices_before,
+      vertices_after = nrow(canonical)
+    )
+  )
+}
+
 wsl_feature_coordinates <- function(feature) {
   matrix(as.numeric(unlist(feature$geometry$coordinates)), ncol = 2L, byrow = TRUE)
 }
@@ -1102,25 +1289,26 @@ wsl_make_contours <- function(raster, record, config) {
   source_box <- terra::project(source_box, source_crs)
   cropped <- terra::crop(raster, source_box, snap = "out")
   cropped[cropped >= 9999] <- NA
-  feet <- cropped * WSL_METERS_TO_FEET
-  levels <- seq(config$contour_min_ft, config$contour_max_ft, by = config$contour_interval_ft)
-  contours <- tryCatch(
-    terra::as.contour(feet, levels = levels),
-    error = function(error) NULL
-  )
-  contour_count <- tryCatch(nrow(contours), error = function(error) NULL)
-  if (is.null(contour_count) || !length(contour_count) || contour_count == 0L) {
+  levels_ft_msl <- as.integer(seq(
+    config$contour_min_ft, config$contour_max_ft, by = config$contour_interval_ft
+  ))
+  contours_sf <- wsl_isoband_native_lines(cropped, levels_ft_msl)
+  if (!nrow(contours_sf)) {
     stop("No configured snow-level contours intersect the source crop.")
   }
-  contours_sf <- sf::st_as_sf(contours)
-  level_field <- intersect(c("level", "elevation", "value"), names(contours_sf))[1L]
-  if (is.na(level_field)) stop("Contour conversion did not expose an elevation field.")
-  names(contours_sf)[names(contours_sf) == level_field] <- "level_ft_msl"
 
   processing_crs <- source_crs
   if (isTRUE(sf::st_is_longlat(contours_sf))) {
-    processing_crs <- "EPSG:5070"
+    processing_crs <- WSL_CARTOGRAPHIC_CRS
     contours_sf <- sf::st_transform(contours_sf, processing_crs)
+  }
+
+  extract_lines <- function(value) {
+    value <- value[!sf::st_is_empty(value), , drop = FALSE]
+    if (!nrow(value)) return(value)
+    value <- suppressWarnings(sf::st_collection_extract(value, "LINESTRING"))
+    value <- suppressWarnings(sf::st_cast(value, "LINESTRING"))
+    value[!sf::st_is_empty(value), , drop = FALSE]
   }
 
   display <- sf::st_transform(wsl_bbox_polygon(
@@ -1129,164 +1317,43 @@ wsl_make_contours <- function(raster, record, config) {
   previous_s2 <- suppressMessages(sf::sf_use_s2(FALSE))
   on.exit(suppressMessages(sf::sf_use_s2(previous_s2)), add = TRUE)
   clipped <- suppressMessages(suppressWarnings(sf::st_intersection(contours_sf, display)))
-  clipped <- suppressWarnings(sf::st_collection_extract(clipped, "LINESTRING"))
-  clipped <- suppressWarnings(sf::st_cast(clipped, "LINESTRING"))
-  clipped <- clipped[!sf::st_is_empty(clipped), , drop = FALSE]
+  clipped <- extract_lines(clipped)
   if (!nrow(clipped)) stop("No snow-level contours intersect the display domain.")
-  clipped$.source_component <- seq_len(nrow(clipped))
-  clipped$.intended_closed <- vapply(sf::st_geometry(clipped), function(geometry) {
-    coordinates <- sf::st_coordinates(geometry)[, 1:2, drop = FALSE]
-    wsl_is_closed_coordinates(coordinates)
-  }, logical(1))
-
-  simplified <- sf::st_simplify(
-    clipped, dTolerance = config$simplify_tolerance_m, preserveTopology = TRUE
-  )
-  grid_spacing_m <- round(wsl_source_grid_spacing_m(raster), 3)
-
-  finalize_candidates <- function(value) {
-    value <- value[!sf::st_is_empty(value), , drop = FALSE]
-    if (!nrow(value)) return(value)
-    value <- sf::st_transform(value, 4326)
-    value <- suppressMessages(suppressWarnings(sf::st_intersection(
-      value,
-      wsl_bbox_polygon(config$west, config$east, config$south, config$north)
-    )))
-    value <- suppressWarnings(sf::st_collection_extract(value, "LINESTRING"))
-    value <- suppressWarnings(sf::st_cast(value, "LINESTRING"))
-    value[!sf::st_is_empty(value), , drop = FALSE]
-  }
-
-  # The projected clip prevents curved-edge artifacts during simplification.
-  # A final planar lon/lat clip makes the serialized API bounds exact.
-  original_candidates <- finalize_candidates(clipped)
-  simplified_candidates <- finalize_candidates(simplified)
+  # A final planar lon/lat clip keeps serialized API bounds exact.
+  clipped <- sf::st_transform(clipped, 4326)
+  clipped <- suppressMessages(suppressWarnings(sf::st_intersection(
+    clipped,
+    wsl_bbox_polygon(config$west, config$east, config$south, config$north)
+  )))
+  clipped <- extract_lines(clipped)
+  if (!nrow(clipped)) stop("No WGS84 snow-level contours intersect the display domain.")
+  clipped$clip_part <- seq_len(nrow(clipped))
 
   rows <- list()
-  selections <- list()
-  precision_collapses <- list()
-  precision_collapse_b_removals <- list()
-  serialization_degenerate_removals <- list()
-  component_ids <- sort(unique(c(
-    original_candidates$.source_component,
-    simplified_candidates$.source_component
-  )))
-  for (component_id in component_ids) {
-    originals <- original_candidates[
-      original_candidates$.source_component == component_id, , drop = FALSE
-    ]
-    candidates <- simplified_candidates[
-      simplified_candidates$.source_component == component_id, , drop = FALSE
-    ]
-    part_count <- max(1L, nrow(candidates))
-    for (part_index in seq_len(part_count)) {
-      candidate <- if (nrow(candidates)) candidates[part_index, , drop = FALSE] else NULL
-      original <- if (nrow(originals) == 1L) {
-        originals[1L, , drop = FALSE]
-      } else if (nrow(originals) == nrow(candidates) && nrow(candidates)) {
-        originals[part_index, , drop = FALSE]
-      } else {
-        NULL
-      }
-      level_source <- if (!is.null(candidate)) candidate else original
-      if (is.null(level_source)) {
-        wsl_stop(
-          "validation_failed", "No simplified or pre-simplification contour geometry remains for ",
-          "source component ", component_id, "."
-        )
-      }
-      level <- as.integer(round(level_source$level_ft_msl[[1L]]))
-      provenance <- sprintf(
-        "source_component=%d level_ft_msl=%d part=%d", component_id, level, part_index
-      )
-      original_coordinates <- if (is.null(original)) NULL else {
-        sf::st_coordinates(sf::st_geometry(original)[[1L]])[, 1:2, drop = FALSE]
-      }
-      simplified_coordinates <- if (is.null(candidate)) NULL else {
-        sf::st_coordinates(sf::st_geometry(candidate)[[1L]])[, 1:2, drop = FALSE]
-      }
-      intended_closed <- if (!is.null(original_coordinates)) {
-        wsl_is_closed_coordinates(original_coordinates)
-      } else {
-        isTRUE(level_source$.intended_closed[[1L]])
-      }
-      selection <- wsl_select_pre_s2_component(
-        original_coordinates = original_coordinates,
-        simplified_coordinates = simplified_coordinates,
-        intended_closed = intended_closed,
-        grid_spacing_m = grid_spacing_m,
-        config = config,
-        provenance = provenance
-      )
-      selections[[length(selections) + 1L]] <- selection
-      if (isTRUE(selection$precision_collapse)) {
-        precision_detail <- list(
-          provenance = provenance,
-          level_ft_msl = level,
-          lead_hours = record$lead_hours,
-          closed = isTRUE(intended_closed),
-          disposition = selection$action,
-          reason = selection$removal_reason %||%
-            "simplified_canonical_collapse_original_fallback",
-          original_vertices = selection$original_vertices,
-          simplified_vertices = selection$simplified_vertices,
-          original_rounded_distinct_coordinates =
-            selection$original_rounded_distinct_coordinates,
-          simplified_rounded_distinct_coordinates =
-            selection$simplified_rounded_distinct_coordinates,
-          enclosed_area_km2 = if (is.null(selection$b_profile)) NA_real_ else
-            unname(selection$b_profile$enclosed_area_km2[[1L]]),
-          max_projected_span_m = if (is.null(selection$b_profile)) NA_real_ else
-            unname(selection$b_profile$max_projected_span_m[[1L]]),
-          b_remove = !is.null(selection$b_profile) &&
-            isTRUE(selection$b_profile$remove[[1L]])
-        )
-        precision_collapses[[length(precision_collapses) + 1L]] <- precision_detail
-        if (identical(selection$action, "remove_precision_collapse")) {
-          precision_collapse_b_removals[[
-            length(precision_collapse_b_removals) + 1L
-          ]] <- precision_detail
-        }
-        if (identical(selection$action, "remove_serialization_degenerate")) {
-          serialization_degenerate_removals[[
-            length(serialization_degenerate_removals) + 1L
-          ]] <- precision_detail
-        }
-      }
-      if (selection$action %in% c(
-        "remove_precision_collapse", "remove_serialization_degenerate"
-      )) {
-        next
-      }
-      length_m <- round(as.numeric(sf::st_length(sf::st_transform(
-        wsl_geometry_from_coordinates(selection$coordinates, 4326), WSL_CARTOGRAPHIC_CRS
-      ))), 1)
-      if (!is.finite(length_m) || length_m <= 0) {
-        wsl_stop("validation_failed", "Selected pre-S2 component has non-positive length: ", provenance)
-      }
-      key <- sprintf(
-        "%05d|%s", level,
-        paste(format(selection$key_coordinates, scientific = FALSE, trim = TRUE),
-              collapse = ",")
-      )
-      rows[[length(rows) + 1L]] <- list(
-        level = level,
-        length_m = length_m,
-        coordinates = selection$coordinates,
-        key = key,
-        provenance = provenance,
-        simplification_fallback = isTRUE(selection$simplification_fallback),
-        original_vertices = selection$original_vertices,
-        simplified_vertices = selection$simplified_vertices,
-        failed_conditions = selection$failed_conditions
-      )
+  serialization_collapse_removals <- list()
+  for (index in seq_len(nrow(clipped))) {
+    level <- as.integer(clipped$level_ft_msl[[index]])
+    lineage <- sprintf(
+      "level_index=%d source_isoline_id=%d clip_part=%d",
+      as.integer(clipped$level_index[[index]]),
+      as.integer(clipped$source_isoline_id[[index]]),
+      as.integer(clipped$clip_part[[index]])
+    )
+    coordinates <- sf::st_coordinates(sf::st_geometry(clipped)[[index]])[, 1:2, drop = FALSE]
+    prepared <- wsl_prepare_isoband_component(
+      coordinates, level, lineage, config$coordinate_digits
+    )
+    if (!isTRUE(prepared$retained)) {
+      serialization_collapse_removals[[length(serialization_collapse_removals) + 1L]] <-
+        prepared$removal
+      next
     }
+    rows[[length(rows) + 1L]] <- prepared$row
   }
   rows <- rows[order(vapply(rows, `[[`, character(1), "key"))]
-  if (!length(rows)) stop("Contour simplification removed every line.")
+  if (!length(rows)) stop("Canonical serialization removed every isoband contour line.")
 
   level_counts <- integer()
-  simplification_fallbacks <- list()
   features <- lapply(seq_along(rows), function(index) {
     row <- rows[[index]]
     key <- as.character(row$level)
@@ -1295,15 +1362,6 @@ wsl_make_contours <- function(raster, record, config) {
       "%s_f%03d_%05d_%03d", wsl_cycle_token(record$cycle_time_utc),
       record$lead_hours, row$level, level_counts[key]
     )
-    if (isTRUE(row$simplification_fallback)) {
-      simplification_fallbacks[[length(simplification_fallbacks) + 1L]] <<- list(
-        feature_id = feature_id,
-        provenance = row$provenance,
-        reason = paste(row$failed_conditions, collapse = ","),
-        original_vertices = row$original_vertices,
-        simplified_vertices = row$simplified_vertices
-      )
-    }
     list(
       type = "Feature",
       id = feature_id,
@@ -1333,29 +1391,42 @@ wsl_make_contours <- function(raster, record, config) {
     bbox = unname(bbox),
     features = features
   )
-  treated <- wsl_apply_s2_cartography(
-    base_geojson, grid_spacing_m, config
+  closed <- vapply(rows, function(row) {
+    coordinates <- row$coordinates
+    all(coordinates[1L, ] == coordinates[nrow(coordinates), ])
+  }, logical(1))
+  diagnostics <- list(
+    contour_engine = "isoband",
+    source_raster_rows = terra::nrow(raster),
+    source_raster_columns = terra::ncol(raster),
+    source_raster_cells = terra::ncell(raster),
+    contour_input_rows = terra::nrow(cropped),
+    contour_input_columns = terra::ncol(cropped),
+    contour_input_cells = terra::ncell(cropped),
+    full_native_source_crop_passed = TRUE,
+    raster_resampled = FALSE,
+    levels_requested_ft_msl = levels_ft_msl,
+    levels_requested_m = unname(levels_ft_msl / WSL_METERS_TO_FEET),
+    source_isoline_count = nrow(contours_sf),
+    clipped_component_count = nrow(clipped),
+    components_retained = length(rows),
+    open_count = sum(!closed),
+    closed_count = sum(closed),
+    non_simple_count = sum(vapply(rows, `[[`, logical(1), "non_simple")),
+    vertices_before_serialization = sum(vapply(rows, `[[`, integer(1), "vertices_before")),
+    vertices = sum(vapply(rows, `[[`, integer(1), "vertices_after")),
+    serialization_collapse_removed_count = length(serialization_collapse_removals),
+    serialization_collapse_removals = serialization_collapse_removals,
+    legacy_geometry_chain_active = FALSE
   )
-  disposition_diagnostics <- wsl_pre_s2_disposition_diagnostics(selections)
-  for (name in names(disposition_diagnostics)) {
-    treated$diagnostics[[name]] <- disposition_diagnostics[[name]]
-  }
-  treated$diagnostics$ordinary_b_removed_count <-
-    treated$diagnostics$closed_removed + treated$diagnostics$open_removed
-  treated$diagnostics$simplification_fallbacks <- simplification_fallbacks
-  treated$diagnostics$precision_collapses <- precision_collapses
-  treated$diagnostics$precision_collapse_b_removals <- precision_collapse_b_removals
-  treated$diagnostics$serialization_degenerate_removals <-
-    serialization_degenerate_removals
-  treated_features <- treated$geojson$features
   list(
-    geojson = treated$geojson,
-    feature_count = length(treated_features),
-    contour_levels = sort(unique(vapply(treated_features, function(feature) {
+    geojson = base_geojson,
+    feature_count = length(features),
+    contour_levels = sort(unique(vapply(features, function(feature) {
       as.integer(feature$properties$level_ft_msl)
     }, integer(1)))),
-    bbox = treated$geojson$bbox,
-    cartography = treated$diagnostics
+    bbox = base_geojson$bbox,
+    cartography = diagnostics
   )
 }
 
@@ -1550,9 +1621,8 @@ wsl_validate_geojson <- function(path, record, config) {
     projected_line <- sf::st_transform(
       wsl_geometry_from_coordinates(coordinates, 4326), WSL_CARTOGRAPHIC_CRS
     )
-    if (sf::st_is_empty(projected_line) || !isTRUE(sf::st_is_valid(projected_line)) ||
-        !isTRUE(sf::st_is_simple(projected_line))) {
-      stop("GeoJSON contains empty, invalid, or non-simple linework.")
+    if (sf::st_is_empty(projected_line) || !isTRUE(sf::st_is_valid(projected_line))) {
+      stop("GeoJSON contains empty or structurally invalid linework.")
     }
     ids <- c(ids, feature$id)
     all_coordinates[[length(all_coordinates) + 1L]] <- coordinates
