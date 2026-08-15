@@ -8,7 +8,7 @@ in [PUBLISHING_AND_OPERATIONS.md](PUBLISHING_AND_OPERATIONS.md).
 
 ## Selected source
 
-The production candidate uses the deterministic `SNOWLVL` record in the NOAA/NWS
+The production feed uses the deterministic `SNOWLVL` record in the NOAA/NWS
 National Blend of Models (NBM) CONUS Core GRIB2 product. NBM version 5 provides a
 2.5-km Lambert Conformal CONUS grid. The current MDL definition is the elevation
 where wet-bulb temperature reaches 0.5 degrees C. Output values are metres above
@@ -168,6 +168,17 @@ is diagnostic rather than a rejection condition when the LineString is finite,
 structurally valid, in bounds, and renderable. The legacy
 `simplify_tolerance_m` manifest member remains serialized for version-1 contract
 compatibility but does not control the raw-isoband path.
+
+### Retired geometry development chain
+
+Early prototypes used Terra contour extraction with a `maxcells` limit, then a
+750-m simplification, fixed B filtering, S2 segmentization/Chaikin smoothing,
+and narrow custom fallback and serialization-repair experiments. The contour
+engine bake-off selected full-native-grid raw isoband instead. After official
+publication and two-cycle/22-target retention proved that path, the unreachable
+Terra/B/S2/custom-repair implementation, tests, fixture, and obsolete negative
+diagnostics were removed. This paragraph is historical context, not an
+alternate or rollback algorithm.
 
 ## Interpretation caveats
 

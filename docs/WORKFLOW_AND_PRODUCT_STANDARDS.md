@@ -73,10 +73,10 @@ workflow but is not source-controlled in `.github/workflows`.
   `America/Los_Angeles` timezone once daily at 08:14. It defaults manual
   dispatch to runner-temporary dry-run output and permits scheduled or explicitly
   requested publication only from the selected `main` branch tip.
-- The Winter Storm Levels candidate is manual-only, defaults to
+- The Winter Storm Levels writer is manual-only, defaults to
   runner-temporary dry-run output, and accepts explicit publication only from
   `main`. The proposed 01:11/07:11/13:11/19:11 UTC schedule is deliberately not
-  enabled before first-publication approval.
+  enabled; schedule activation remains a separate maintainer decision.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.

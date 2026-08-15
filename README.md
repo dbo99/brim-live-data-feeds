@@ -11,8 +11,7 @@ reviewed, and rolled back without coupling them to the interface code.
 
 ## Production products
 
-The current production system contains fourteen product families or coordinated
-production candidates:
+The current production system contains fourteen product families:
 
 1. CDEC reservoir storage
 2. CoCoRaHS daily precipitation
@@ -50,8 +49,8 @@ Each production writer, subject to documented product-specific branch controls:
 The CNRFC, CBRFC, and Winter Storm Levels forecast writers are the current
 stricter exceptions: manual runs default to runner-temporary dry-run output,
 feature branches cannot publish, and publication is restricted to `main`. Winter
-Storm Levels remains manual-only until the maintainer approves its first official
-publication and schedule.
+Storm Levels remains manual-only; enabling its proposed recurring schedule is a
+separate maintainer decision.
 
 The official Pages source is `main/docs`. Except for the dry-run-only
 feature-branch behavior of CNRFC, CBRFC, and Winter Storm Levels, a manual writer
