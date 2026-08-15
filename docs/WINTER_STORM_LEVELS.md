@@ -106,11 +106,13 @@ following approximate delay from source cycle to a complete sampled inventory:
 | 01Z | 92 minutes | Audited, not selected |
 | 02Z-06Z | 38-43 minutes | 06Z selected; hourly cycles audited |
 
-The proposed 71-minute schedule offset covers the selected 00Z/06Z observations
-while complete-cycle fallback handles a slower issue. Dated URLs prevent an old
-cycle from being mistaken for a newer one; cycle identity is also checked inside
-every inventory and decoded message. A `200` maintenance body, wrong range,
-truncated body, stale cycle, or missing lead fails closed.
+Those measurements informed early prototyping only. The operational schedule
+uses a larger production-evidence margin: inventory-only primary preflights at
++128 minutes and one fallback at +174 minutes for each selected 00/06/12/18Z
+cycle. Dated URLs prevent an old cycle from being mistaken for a newer one;
+cycle identity is also checked inside every inventory and decoded message. A
+`200` maintenance body, wrong range, truncated body, stale cycle, or missing
+lead fails closed.
 
 The data are NOAA-produced U.S. government information. NOAA describes its
 government-server material as public-domain unless annotated otherwise and asks
@@ -288,13 +290,16 @@ source-unavailable state for a missing manifest.
 
 ## Publication state
 
-The workflow is intentionally manual-only for the first release. Dispatch
-defaults to a runner-temporary dry run; a feature branch cannot publish. An
-explicit `publish: true` is honored only on `main`. The proposed later schedule
-is 01:11, 07:11, 13:11, and 19:11 UTC, after the corresponding 00/06/12/18 NBM
-cycles and separated from existing writer minutes. On August 4 the reviewed 06Z
-core fields appeared about 43 minutes after cycle time and 00Z about 65 minutes
-after cycle time; a 71-minute offset leaves observed margin, while cycle fallback
-and fail-and-retain handle a slower issue. Schedule activation, the
-first canonical `docs/data/winter-storm-levels/` publication, merge, and any
-official rollback remain maintainer decisions.
+Dispatch defaults to a runner-temporary dry run; a feature branch cannot
+publish. Manual `publish: false` continues to support diagnostic current-cycle
+rebuilds. Explicit `publish: true` is honored only on `main` and, like scheduled
+publication, first requires a strictly newer complete cycle. Scheduled primary
+attempts run at 02:08/08:08/14:08/20:08 UTC (+128 minutes after the corresponding
+00/06/12/18Z cycles); fallbacks run at 02:54/08:54/14:54/20:54 UTC (+174
+minutes). The fallback normally exits as `NO_NEW_CYCLE` after primary success.
+An incomplete newer nominal cycle exits successfully as `SOURCE_NOT_READY`,
+while unexpected inventory/source errors remain visible failures. Neither case
+starts the full producer or alters canonical LKG. The current implementation
+retains repository-wide whole-workflow writer serialization; parallel build and
+job-level publication locking remain a separate required optimization before
+NBM QPF. Merge and any official rollback remain maintainer decisions.

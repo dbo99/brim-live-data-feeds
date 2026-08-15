@@ -1,6 +1,9 @@
 name: Build Winter Storm Levels
 
 on:
+  schedule:
+    - cron: "8 2,8,14,20 * * *"
+    - cron: "54 2,8,14,20 * * *"
   workflow_dispatch:
     inputs:
       publish:
@@ -9,9 +12,6 @@ on:
         default: false
         type: boolean
 
-# The first production schedule is intentionally deferred until the maintainer
-# approves an official first publication. The proposed four-cycle cadence is
-# documented in docs/PUBLISHING_AND_OPERATIONS.md.
 permissions:
   contents: write
 
@@ -36,21 +36,30 @@ jobs:
         id: run-mode
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           PUBLISH_INPUT: ${{ inputs.publish || false }}
         run: |
           set -euo pipefail
 
           publish=false
-          if [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" == "main" ]]; then
+          guard_preflight=false
+          if [[ "${EVENT_NAME}" == "schedule" ]]; then
             publish=true
+            guard_preflight=true
+          elif [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" == "main" ]]; then
+            publish=true
+            guard_preflight=true
           fi
           if [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" != "main" ]]; then
             echo "Feature branches are dry-run only." >&2
           fi
 
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "guard_preflight=${guard_preflight}" >> "${GITHUB_OUTPUT}"
+          echo "trigger_type=${EVENT_NAME}" >> "${GITHUB_OUTPUT}"
           echo "output_root=${RUNNER_TEMP}/winter-storm-levels-bundle" >> "${GITHUB_OUTPUT}"
+          echo "preflight_json=${RUNNER_TEMP}/winter-storm-levels-preflight.json" >> "${GITHUB_OUTPUT}"
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -58,7 +67,44 @@ jobs:
           r-version: "release"
           use-public-rspm: true
 
+      - name: Install lightweight preflight dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: winter-storm-levels-preflight-v1
+          packages: |
+            any::httr2
+            any::jsonlite
+
+      - name: Run preflight and workflow-safety tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          Rscript tests/test_winter_storm_levels_preflight.R
+          python3 tests/test_winter_storm_levels_workflow_safety.py
+
+      - name: Run inventory-only cycle preflight
+        id: preflight
+        if: steps.run-mode.outputs.guard_preflight == 'true'
+        shell: bash
+        env:
+          BRIM_WSL_PREFLIGHT_JSON: ${{ steps.run-mode.outputs.preflight_json }}
+          BRIM_WSL_TRIGGER_TYPE: ${{ steps.run-mode.outputs.trigger_type }}
+        run: |
+          set -euo pipefail
+          Rscript scripts/preflight_winter_storm_levels.R
+          outcome="$(jq -er '.preflight_outcome' "${BRIM_WSL_PREFLIGHT_JSON}")"
+          echo "outcome=${outcome}" >> "${GITHUB_OUTPUT}"
+          echo "Preflight outcome: ${outcome}"
+
+      - name: Stop on preflight source error
+        if: steps.run-mode.outputs.guard_preflight == 'true' && steps.preflight.outputs.outcome == 'SOURCE_ERROR'
+        shell: bash
+        run: |
+          echo "Unexpected Winter Storm Levels inventory/source failure." >&2
+          exit 1
+
       - name: Install geospatial system libraries
+        if: steps.run-mode.outputs.guard_preflight != 'true' || steps.preflight.outputs.outcome == 'NEW_CYCLE'
         shell: bash
         run: |
           sudo apt-get update
@@ -71,6 +117,7 @@ jobs:
             libudunits2-dev
 
       - name: Install R package dependencies
+        if: steps.run-mode.outputs.guard_preflight != 'true' || steps.preflight.outputs.outcome == 'NEW_CYCLE'
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           cache-version: winter-storm-levels-v1
@@ -83,13 +130,15 @@ jobs:
             any::terra
 
       - name: Run Winter Storm Levels unit tests
+        if: steps.run-mode.outputs.guard_preflight != 'true' || steps.preflight.outputs.outcome == 'NEW_CYCLE'
         shell: bash
         run: |
           set -euo pipefail
           Rscript tests/test_winter_storm_levels.R
-          python3 tests/test_winter_storm_levels_workflow_safety.py
 
       - name: Build and validate Winter Storm Levels bundle
+        id: bundle
+        if: steps.run-mode.outputs.guard_preflight != 'true' || steps.preflight.outputs.outcome == 'NEW_CYCLE'
         shell: bash
         env:
           BRIM_WSL_PUBLISH: ${{ steps.run-mode.outputs.publish }}
@@ -97,10 +146,16 @@ jobs:
           BRIM_WSL_QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
         run: |
           set -euo pipefail
+          echo "build_started=true" >> "${GITHUB_OUTPUT}"
+          if [[ -f "${{ steps.run-mode.outputs.preflight_json }}" ]]; then
+            preflight_tmp="${{ steps.run-mode.outputs.preflight_json }}.tmp"
+            jq '.build_started = true' "${{ steps.run-mode.outputs.preflight_json }}" > "${preflight_tmp}"
+            mv "${preflight_tmp}" "${{ steps.run-mode.outputs.preflight_json }}"
+          fi
           Rscript scripts/build_winter_storm_levels.R
 
       - name: Prepare standalone browser QA artifact
-        if: always()
+        if: always() && steps.bundle.outputs.build_started == 'true'
         shell: bash
         env:
           OUTPUT_ROOT: ${{ steps.run-mode.outputs.output_root }}
@@ -109,39 +164,32 @@ jobs:
           mkdir -p "${OUTPUT_ROOT}"
           cp qa/winter_storm_levels/index.html "${OUTPUT_ROOT}/qa.html"
 
-      - name: Write build summary
-        if: always()
-        shell: bash
-        env:
-          QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
-        run: |
-          if [[ ! -f "${QA_JSON}" ]]; then
-            echo "## Winter Storm Levels" >> "${GITHUB_STEP_SUMMARY}"
-            echo "No attempt diagnostics were produced." >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
-          {
-            echo "## Winter Storm Levels"
-            echo
-            echo "| Field | Value |"
-            echo "|---|---|"
-            jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Publication outcome | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
       - name: Upload dry-run bundle and diagnostics
-        if: always()
+        id: upload-bundle
+        if: always() && steps.bundle.outputs.build_started == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: winter-storm-levels-qa
           path: |
             ${{ steps.run-mode.outputs.output_root }}/
             ${{ runner.temp }}/winter-storm-levels-attempt.json
+            ${{ steps.run-mode.outputs.preflight_json }}
             docs/data/winter-storm-levels/
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Upload guarded no-op diagnostics
+        if: always() && steps.run-mode.outputs.guard_preflight == 'true' && steps.bundle.outputs.build_started != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: winter-storm-levels-qa
+          path: ${{ steps.run-mode.outputs.preflight_json }}
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Commit updated Winter Storm Levels bundle
-        if: steps.run-mode.outputs.publish == 'true'
+        id: publish
+        if: steps.run-mode.outputs.publish == 'true' && steps.bundle.outcome == 'success' && steps.bundle.outputs.build_started == 'true' && steps.upload-bundle.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -150,6 +198,22 @@ jobs:
             echo "Refusing to publish outside the main branch: ${GITHUB_REF}" >&2
             exit 1
           fi
+
+          canonical_manifest="docs/data/winter-storm-levels/winter_storm_levels_manifest.json"
+          candidate_cycle="$(jq -er '.cycle_time_utc' "${canonical_manifest}")"
+          current_cycle="$(git show "HEAD:${canonical_manifest}" | jq -er '.cycle_time_utc')"
+          if [[ ! "${candidate_cycle}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00Z$ ||
+                ! "${current_cycle}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00Z$ ]]; then
+            echo "Candidate or canonical cycle is not a comparable UTC cycle." >&2
+            exit 1
+          fi
+          if [[ "${candidate_cycle}" < "${current_cycle}" || "${candidate_cycle}" == "${current_cycle}" ]]; then
+            echo "publication_attempted=false" >> "${GITHUB_OUTPUT}"
+            echo "Candidate cycle ${candidate_cycle} is not newer than canonical ${current_cycle}; no publication."
+            exit 0
+          fi
+          echo "publication_attempted=true" >> "${GITHUB_OUTPUT}"
+          echo "Publication guard accepted ${candidate_cycle} > ${current_cycle}."
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -176,3 +240,38 @@ jobs:
             echo "Rerun this workflow from the latest branch tip." >&2
             exit 1
           fi
+
+      - name: Write build summary
+        if: always()
+        shell: bash
+        env:
+          BUILD_STARTED: ${{ steps.bundle.outputs.build_started || 'false' }}
+          PREFLIGHT_JSON: ${{ steps.run-mode.outputs.preflight_json }}
+          PUBLICATION_ATTEMPTED: ${{ steps.publish.outputs.publication_attempted || 'false' }}
+          QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
+        run: |
+          set -euo pipefail
+          {
+            echo "## Winter Storm Levels"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            if [[ -f "${PREFLIGHT_JSON}" ]]; then
+              preflight_tmp="${PREFLIGHT_JSON}.tmp"
+              jq --argjson build_started "${BUILD_STARTED}" \
+                 --argjson publication_attempted "${PUBLICATION_ATTEMPTED}" \
+                 '.build_started = $build_started | .publication_attempted = $publication_attempted' \
+                 "${PREFLIGHT_JSON}" > "${preflight_tmp}"
+              mv "${preflight_tmp}" "${PREFLIGHT_JSON}"
+              jq -r '"| Trigger | `\(.trigger_type)` |", "| Observation time | `\(.observation_time_utc)` |", "| Canonical cycle | `\(.canonical_current_cycle // "none")` |", "| Candidate cycles | `\(.candidate_cycles | join(", "))` |", "| Newest complete cycle | `\(.newest_complete_cycle // "none")` |", "| Preflight outcome | `\(.preflight_outcome)` |", "| Build started | `\(.build_started)` |", "| Publication attempted | `\(.publication_attempted)` |"' "${PREFLIGHT_JSON}"
+            else
+              echo "| Preflight | `not_required_for_manual_dry_run` |"
+              echo "| Build started | `${BUILD_STARTED}` |"
+              echo "| Publication attempted | `${PUBLICATION_ATTEMPTED}` |"
+            fi
+            if [[ -f "${QA_JSON}" ]]; then
+              jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Publication outcome | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
+            else
+              echo "| Producer attempt | `not_started` |"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

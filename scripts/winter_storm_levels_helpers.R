@@ -288,6 +288,137 @@ wsl_discover_cycle <- function(now, config, fetch_text = wsl_fetch_text) {
   stop(condition)
 }
 
+wsl_read_canonical_cycle <- function(path, expected_product_id = "winter_storm_levels") {
+  if (!file.exists(path)) {
+    wsl_stop("validation_failed", "Canonical Winter Storm Levels manifest is missing.")
+  }
+  manifest <- tryCatch(
+    jsonlite::fromJSON(path, simplifyVector = FALSE),
+    error = function(error) {
+      wsl_stop("validation_failed", "Canonical manifest is not valid JSON: ", conditionMessage(error))
+    }
+  )
+  if (!identical(manifest$product_id, expected_product_id)) {
+    wsl_stop("validation_failed", "Canonical manifest product identity is invalid.")
+  }
+  if (!is.character(manifest$cycle_time_utc) || length(manifest$cycle_time_utc) != 1L) {
+    wsl_stop("validation_failed", "Canonical manifest root cycle is missing or invalid.")
+  }
+  root_cycle <- wsl_as_utc(manifest$cycle_time_utc)
+  if (is.na(root_cycle)) {
+    wsl_stop("validation_failed", "Canonical manifest root cycle is not a valid UTC time.")
+  }
+  if (!is.list(manifest$targets) || !length(manifest$targets)) {
+    wsl_stop("validation_failed", "Canonical manifest has no target entries.")
+  }
+  target_cycles <- vapply(manifest$targets, function(entry) {
+    if (!is.character(entry$cycle_time_utc) || length(entry$cycle_time_utc) != 1L) {
+      wsl_stop("validation_failed", "Canonical manifest target cycle is missing or invalid.")
+    }
+    cycle <- wsl_as_utc(entry$cycle_time_utc)
+    if (is.na(cycle)) {
+      wsl_stop("validation_failed", "Canonical manifest target cycle is not a valid UTC time.")
+    }
+    as.numeric(cycle)
+  }, numeric(1))
+  if (!identical(as.numeric(root_cycle), max(target_cycles))) {
+    wsl_stop("validation_failed", "Canonical manifest root cycle is not its newest target cycle.")
+  }
+  root_cycle
+}
+
+wsl_cycle_is_strictly_newer <- function(candidate_cycle, canonical_cycle) {
+  candidate <- wsl_as_utc(candidate_cycle)
+  canonical <- wsl_as_utc(canonical_cycle)
+  !is.na(candidate) && !is.na(canonical) && candidate > canonical
+}
+
+wsl_preflight <- function(
+    now,
+    config,
+    canonical_manifest_path,
+    fetch_text = wsl_fetch_text,
+    trigger_type = "unknown"
+) {
+  observation_time <- wsl_as_utc(now)
+  candidate_times <- wsl_candidate_cycles(observation_time, config)
+  candidate_cycles <- vapply(candidate_times, wsl_iso_utc, character(1))
+  result <- list(
+    product_id = config$product_id,
+    trigger_type = as.character(trigger_type),
+    observation_time_utc = wsl_iso_utc(observation_time),
+    candidate_cycles = unname(candidate_cycles),
+    newest_nominal_candidate = candidate_cycles[[1L]],
+    newest_complete_cycle = NULL,
+    canonical_current_cycle = NULL,
+    strictly_newer_complete_cycle = FALSE,
+    preflight_outcome = "SOURCE_ERROR",
+    build_started = FALSE,
+    publication_attempted = FALSE,
+    source_attempts = list()
+  )
+
+  canonical <- tryCatch(
+    wsl_read_canonical_cycle(canonical_manifest_path, config$product_id),
+    error = function(error) error
+  )
+  if (inherits(canonical, "error")) {
+    result$error <- conditionMessage(canonical)
+    return(result)
+  }
+  result$canonical_current_cycle <- wsl_iso_utc(canonical)
+
+  newest_nominal <- candidate_times[[1L]]
+  if (!wsl_cycle_is_strictly_newer(newest_nominal, canonical)) {
+    # A validated canonical cycle is already at least as new as every normal
+    # candidate. The fallback can therefore no-op without any source request.
+    result$newest_complete_cycle <- result$canonical_current_cycle
+    result$preflight_outcome <- "NO_NEW_CYCLE"
+    return(result)
+  }
+
+  discovery <- tryCatch(
+    wsl_discover_cycle(observation_time, config, fetch_text),
+    error = function(error) error
+  )
+  result$source_attempts <- discovery$attempts %||% list()
+  newest_attempt <- Filter(function(attempt) {
+    identical(attempt$cycle_time_utc, result$newest_nominal_candidate)
+  }, result$source_attempts)
+  newest_attempt <- if (length(newest_attempt)) newest_attempt[[1L]] else NULL
+  unexpected_newest_failure <- !is.null(newest_attempt) &&
+    !isTRUE(newest_attempt$complete) &&
+    !identical(newest_attempt$outcome, "source_unavailable")
+
+  if (inherits(discovery, "error")) {
+    if (unexpected_newest_failure || is.null(newest_attempt)) {
+      result$preflight_outcome <- "SOURCE_ERROR"
+      result$error <- if (unexpected_newest_failure) {
+        newest_attempt$reason %||% conditionMessage(discovery)
+      } else {
+        conditionMessage(discovery)
+      }
+    } else {
+      result$preflight_outcome <- "SOURCE_NOT_READY"
+    }
+    return(result)
+  }
+
+  result$newest_complete_cycle <- wsl_iso_utc(discovery$cycle_time)
+  result$strictly_newer_complete_cycle <- wsl_cycle_is_strictly_newer(
+    discovery$cycle_time, canonical
+  )
+  if (unexpected_newest_failure) {
+    result$preflight_outcome <- "SOURCE_ERROR"
+    result$error <- newest_attempt$reason %||% "Unexpected newest-cycle inventory failure."
+  } else if (isTRUE(result$strictly_newer_complete_cycle)) {
+    result$preflight_outcome <- "NEW_CYCLE"
+  } else {
+    result$preflight_outcome <- "SOURCE_NOT_READY"
+  }
+  result
+}
+
 wsl_decode_grib <- function(path, reader = terra::rast) {
   tryCatch(
     reader(path),

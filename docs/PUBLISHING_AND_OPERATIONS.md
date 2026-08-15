@@ -28,7 +28,7 @@ newer product than the hosted site.
 
 ## Branch-safe writer behavior
 
-All thirteen scheduled production writers currently:
+All fourteen scheduled production writers currently:
 
 - support schedules and manual dispatch;
 - request `contents: write`;
@@ -44,19 +44,20 @@ All thirteen scheduled production writers currently:
 
 They do not pull, merge or rebase generated-product commits.
 
-The Winter Storm Levels production candidate is an additional manual-only
-writer. It uses the same shared non-cancelling concurrency and normal-push
-contract, but dispatch defaults to runner-temporary dry-run output and explicit
-publication is accepted only from `main`. Its schedule is intentionally absent
-until the maintainer approves the first official publication.
+Winter Storm Levels uses the same shared non-cancelling concurrency and
+normal-push contract. Manual dispatch defaults to runner-temporary dry-run
+output and explicit publication is accepted only from `main`. Its primary and
+fallback schedule paths perform an inventory-only newer-cycle preflight before
+installing geospatial dependencies or starting the producer.
 
 The established writers retain their existing documented checkout behavior.
 The two major-basin forecast workflows select the current `main` branch tip for
 scheduled runs and the explicitly dispatched branch tip for manual dry runs.
 Manual publication for either major-basin feed remains permitted only from
 `main`; a feature-branch dispatch remains nonpublishing.
-Winter Storm Levels likewise checks out the selected branch tip, but has no
-scheduled event and cannot publish from a feature branch.
+Winter Storm Levels likewise checks out the selected branch tip and cannot
+publish from a feature branch. A scheduled event resolves to guarded official
+publication only when preflight finds a strictly newer complete cycle.
 
 Consequences:
 
@@ -84,6 +85,12 @@ product-writing jobs so two writers do not push at the same time.
 pending run. Ordering should not be treated as a data guarantee. Every queued
 writer re-resolves the selected branch when the job begins.
 
+Initial Winter Storm Levels scheduling intentionally holds this lock for its
+whole workflow. That is collision-safe but can serialize inventory, dependency,
+build, and publication work behind unrelated writers. Before NBM QPF is added,
+the required repository-wide follow-on is parallel build work plus one shared
+job-level main publisher queue and product-specific post-lock reconciliation.
+
 The HRRR sandbox and wind watchdog use separate groups and
 `cancel-in-progress: true`; they are safe to supersede because they do not
 directly publish product commits. The groundwater preview has no production
@@ -105,6 +112,21 @@ do not have:
 The two major-basin forecast writers and Winter Storm Levels are documented
 exceptions: they expose a boolean publication input that defaults false, use
 temporary output for dry runs, and refuse feature-branch publication.
+
+Winter Storm Levels also runs at two guarded UTC offsets for each selected NBM
+00/06/12/18 cycle:
+
+- primary: 02:08, 08:08, 14:08 and 20:08 (+128 minutes);
+- fallback: 02:54, 08:54, 14:54 and 20:54 (+174 minutes).
+
+The primary and fallback use the same producer discovery/completeness semantics
+through an inventory-only preflight. `NEW_CYCLE` continues to the full producer
+and normal official publication path. `SOURCE_NOT_READY` and `NO_NEW_CYCLE` are
+successful guarded no-ops; the fallback is therefore normally expected to
+no-op after primary success. `SOURCE_ERROR` fails visibly without starting the
+producer. There is no internal polling. Manual `publish: true` on `main` uses
+the same guard, while manual `publish: false` preserves diagnostic current-cycle
+rebuild behavior.
 
 Before any manual writer dispatch, the operator must record:
 
@@ -154,7 +176,7 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `usgs-groundwater-candidate-discovery-preview` | Groundwater preview workflow | Nonproduction candidate-discovery review | Explicit 30 days |
 | `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
-| `winter-storm-levels-qa` | Winter Storm Levels writer | Complete dry-run manifest/GeoJSON bundle, standalone browser QA page, and concise attempt diagnostics; no full GRIB files | Explicit 14 days |
+| `winter-storm-levels-qa` | Winter Storm Levels writer | Complete manifest/GeoJSON bundle and browser QA when a build starts; concise inventory-preflight diagnostics for guarded no-build outcomes; no full GRIB files | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -262,6 +284,7 @@ success" is not universally equivalent to "complete current product."
 | First CBRFC bootstrap establishes no official family and an active family has an unexplained fetch/parse/validation failure | No CBRFC canonical replacement or commit step; CNRFC is unaffected; the failure is not relabeled out of season | No CBRFC canonical seed is created |
 | CBRFC roster/schema/serialization/staged validation fails | No CBRFC canonical replacement or commit step; CNRFC is unaffected | Prior CBRFC canonical bytes remain unchanged |
 | Winter Storm Levels source is unavailable, its variable is missing, fetch/decode/validation/publication fails, or any of 11 horizons is missing | Attempt diagnostics preserve the distinct failure class; no manifest promotion or commit step | Prior manifest and referenced contours remain unchanged and age naturally into delayed, stale LKG, then expired states |
+| Winter Storm Levels scheduled preflight finds no newer complete cycle | `NO_NEW_CYCLE` or `SOURCE_NOT_READY`; geospatial setup, producer, and publication transaction do not run | Prior manifest and referenced contours remain unchanged; fallback may make one later inventory-only attempt |
 | Winter Storm Levels candidate is unchanged except retrieval time | Semantic no-op; no data commit | Prior accepted bytes remain authoritative |
 | Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
 | Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |

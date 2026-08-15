@@ -144,6 +144,7 @@ local build can be isolated completely from `docs/data/`:
 ```sh
 cd "$HOME/Documents/brim-live-data-feeds_source_repo"
 Rscript tests/test_winter_storm_levels.R
+Rscript tests/test_winter_storm_levels_preflight.R
 python3 tests/test_winter_storm_levels_workflow_safety.py
 BRIM_WSL_OUTPUT_ROOT=/tmp/winter-storm-levels-bundle \
 BRIM_WSL_QA_JSON=/tmp/winter-storm-levels-attempt.json \

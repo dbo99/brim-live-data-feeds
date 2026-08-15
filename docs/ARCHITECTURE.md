@@ -79,7 +79,7 @@ five broad shapes:
 | Current operational snapshot | Delta operations | JSON summary, GeoJSON features, compact summary, and X2 reference |
 | Geometry-free forecast snapshot | CNRFC major water-supply basin forecasts; CBRFC Colorado River water-supply forecasts | One 51-record CNRFC JSON payload of direct product-9 water-year, product-7 April-July and major-basin-only product-2 accumulated-volume values; one separate three-record CBRFC JSON payload with two direct GLDA3 scalar periods and one direct LKSA3 monthly local-intervening series. CNRFC and CBRFC have separate schemas and publication transactions; all three CBRFC source families reconcile independently. Browser geometry remains outside this repository. |
 | Snapshot with historical/context tables | SCAN soil moisture, snow pillow SWE | GeoJSON and summaries plus trace/context CSV files |
-| Rolling forecast set | GFS, HRRR, NBM wind; Winter Storm Levels | Manifest/index plus target-time files; GFS and HRRR also expose latest/summary compatibility views. Winter Storm Levels is line GeoJSON, uses complete-set staging and manifest-last promotion, and remains manual-only until first-publication approval. |
+| Rolling forecast set | GFS, HRRR, NBM wind; Winter Storm Levels | Manifest/index plus target-time files; GFS and HRRR also expose latest/summary compatibility views. Winter Storm Levels is line GeoJSON, uses inventory-only schedule guards, complete-set staging, and manifest-last promotion. |
 
 These shapes are related but are not interchangeable schemas. A common envelope
 is a future direction, not a current invariant. Product-specific field and file
