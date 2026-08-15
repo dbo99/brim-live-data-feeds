@@ -913,13 +913,16 @@ ownership.
 - **Format/domain/CRS:** Each target is a WGS84 GeoJSON FeatureCollection of
   LineStrings clipped exactly to `[-130, 30, -112, 44.5]`. The source is cropped
   with a larger configured buffer. Published contours are 0-20,000 feet MSL at
-  1,000-foot intervals. After the existing 750-m projected simplification, the
-  producer conservatively removes qualifying sub-grid components and applies
-  the bounded S2 smoothing/generalization treatment before final five-decimal
-  coordinate cleanup. This processing is cartographic only: NBM values,
-  contour elevations, source cycle, valid time, and forecast lead are unchanged.
-  Only levels actually crossing the domain appear. Exact v1 treatment parameters
-  are recorded in [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
+  1,000-foot intervals. The producer passes every native cell in the buffered
+  source crop to `isoband::isolines()`, clips the resulting linework, transforms
+  it to WGS84, and performs deterministic five-decimal coordinate cleanup. It
+  does not resample the raster or apply vector simplification, filtering,
+  smoothing, or topology repair in the active path. A component that collapses
+  below two distinct serialized positions during coordinate cleanup is omitted
+  and counted diagnostically. NBM values, contour elevations, source cycle,
+  valid time, and forecast lead are unchanged. Only levels actually crossing
+  the domain appear. Exact v1 treatment details are recorded in
+  [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
 - **Feature contract:** Every feature carries stable product/source/parameter,
   snow-level definition, `level_ft_msl`, label/unit, source cycle, valid time,
   forecast lead, segment, and length properties. Retrieval/build/publication
@@ -948,7 +951,7 @@ ownership.
 - **QA/failure policy:** All 11 inventories, exact record identity, range
   response, single-layer decode, metre unit, valid time, CRS, at least 95%
   finite source coverage, physical range, contour metadata/bounds, manifest
-  paths/checksums/sizes, feature metadata, valid/simple nonempty linework,
+  paths/checksums/sizes, feature metadata, structurally valid nonempty linework,
   duplicate-free coordinates, geometry-derived lengths/bounds, complete horizon
   set, and unique cycle/valid identities must pass. Source unavailable, variable missing,
   fetch, decode, validation, and publication failure remain distinct. Any failure

@@ -321,8 +321,9 @@ directory and atomically promoted locally.
 - Point products use GeoJSON longitude/latitude.
 - GFS/HRRR headers describe their longitude/latitude grids.
 - NBM masks offshore/out-of-domain points.
-- Winter Storm Levels crops with a configured source buffer, contours and
-  simplifies in a projected CRS, then clips serialized WGS84 lines to exact
+- Winter Storm Levels crops with a configured source buffer, passes every native
+  source-crop cell to isoband without raster resampling or vector smoothing,
+  then clips, transforms, and canonically serializes WGS84 lines to exact
   configured bounds.
 - Private BRIM analytical processing may use another CRS before exported
   producer inputs arrive here.

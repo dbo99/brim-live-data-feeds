@@ -130,10 +130,10 @@ boundary until the producer, consumer, and public contract are changed together.
   listings and official structured request exposed no complete direct record.
 - Winter Storm Levels has an official NBM snow-level source, exact inventory and
   range retrieval, a versioned checksum manifest, complete-cycle gating,
-  deterministic contour/bounds/simplification tests, semantic no-op behavior,
-  manifest-last promotion with injected-failure coverage, and standalone browser
-  QA. The first official publication and recurring schedule remain deliberately
-  unapproved.
+  deterministic full-grid isoband contour/bounds/serialization tests, semantic
+  no-op behavior, manifest-last promotion with injected-failure coverage, and
+  standalone browser QA. The first official publication and recurring schedule
+  remain deliberately unapproved.
 
 ## Risk register
 

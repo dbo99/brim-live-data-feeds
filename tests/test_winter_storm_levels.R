@@ -3,6 +3,7 @@
 suppressPackageStartupMessages({
   library(digest)
   library(httr2)
+  library(isoband)
   library(jsonlite)
   library(sf)
   library(terra)
@@ -255,7 +256,84 @@ synthetic_record <- list(
   inventory_line = "1:0:d=2026011506:SNOWLVL:0 m above mean sea level:6 hour fcst:"
 )
 
-# Exact v1 B-filter and S2 cartographic treatment.
+# Active raw-isoband contour architecture.
+canonical_open <- rbind(c(-120.2, 37.0), c(-120.1, 37.1), c(-120.0, 37.2))
+check(identical(
+  wsl_canonicalize_isoband_line(canonical_open, config$coordinate_digits),
+  wsl_canonicalize_isoband_line(canonical_open[nrow(canonical_open):1L, ],
+                                config$coordinate_digits)
+), "open contour orientation canonicalizes deterministically")
+canonical_closed <- rbind(
+  c(-120.2, 37.0), c(-120.0, 37.0), c(-120.0, 37.2),
+  c(-120.2, 37.2), c(-120.2, 37.0)
+)
+rotated_closed <- rbind(canonical_closed[3:4, ], canonical_closed[1:3, ])
+check(identical(
+  wsl_canonicalize_isoband_line(canonical_closed, config$coordinate_digits),
+  wsl_canonicalize_isoband_line(rotated_closed, config$coordinate_digits)
+) && identical(
+  wsl_canonicalize_isoband_line(canonical_closed, config$coordinate_digits),
+  wsl_canonicalize_isoband_line(canonical_closed[nrow(canonical_closed):1L, ],
+                                config$coordinate_digits)
+), "closed contour start and direction canonicalize deterministically")
+
+non_simple_coordinates <- rbind(
+  c(-120.2, 37.0), c(-120.0, 37.2), c(-120.2, 37.2), c(-120.0, 37.0)
+)
+non_simple_component <- wsl_prepare_isoband_component(
+  non_simple_coordinates, 10000L, "test-non-simple", config$coordinate_digits
+)
+check(isTRUE(non_simple_component$retained) &&
+        isTRUE(non_simple_component$row$non_simple),
+      "non-simple but structurally valid LineString is retained diagnostically")
+collapsed_component <- wsl_prepare_isoband_component(
+  rbind(c(-120, 37), c(-119.999999, 37)),
+  10000L, "test-collapse", config$coordinate_digits
+)
+check(!isTRUE(collapsed_component$retained) &&
+        identical(collapsed_component$removal$distinct_serialized_positions, 1L),
+      "five-decimal serialization collapse is omitted and accounted")
+check_error(
+  wsl_prepare_isoband_component(
+    rbind(c(-120, 37), c(NA_real_, 37.1)),
+    10000L, "test-non-finite", config$coordinate_digits
+  ),
+  class = "validation_failed", pattern = "Non-finite"
+)
+
+orientation_raster <- rast(
+  nrows = 4, ncols = 5, xmin = 0, xmax = 5000,
+  ymin = 0, ymax = 800, crs = "EPSG:3857"
+)
+orientation_xy <- crds(orientation_raster, df = TRUE)
+values(orientation_raster) <- orientation_xy$y
+orientation_lines <- wsl_isoband_native_lines(orientation_raster, 1000L)
+orientation_coordinates <- st_coordinates(orientation_lines)[, 1:2, drop = FALSE]
+check(nrow(orientation_lines) == 1L &&
+        identical(as.integer(orientation_lines$level_ft_msl), 1000L),
+      "isoband assigns the requested feet level without parsing output names")
+check(max(abs(orientation_coordinates[, 2L] - 1000 / WSL_METERS_TO_FEET)) < 1e-9 &&
+        diff(range(orientation_coordinates[, 1L])) > 0,
+      "terra north-to-south rows are reversed with y and remain geographically oriented")
+orientation_lines_again <- wsl_isoband_native_lines(orientation_raster, 1000L)
+check(identical(st_as_binary(st_geometry(orientation_lines)),
+                st_as_binary(st_geometry(orientation_lines_again))),
+      "native isoband conversion is deterministic")
+
+closed_raster <- rast(
+  nrows = 41, ncols = 41, xmin = -2000, xmax = 2000,
+  ymin = -2000, ymax = 2000, crs = "EPSG:3857"
+)
+closed_xy <- crds(closed_raster, df = TRUE)
+values(closed_raster) <- sqrt(closed_xy$x ^ 2 + closed_xy$y ^ 2)
+closed_lines <- wsl_isoband_native_lines(closed_raster, 1000L)
+check(nrow(closed_lines) >= 1L && any(vapply(st_geometry(closed_lines), function(geometry) {
+  coordinates <- st_coordinates(geometry)[, 1:2, drop = FALSE]
+  all(coordinates[1L, ] == coordinates[nrow(coordinates), ])
+}, logical(1))), "isoband conversion supports closed isolines")
+
+# Legacy rollback-helper coverage. These helpers remain temporarily but are not
+# called by the active wsl_make_contours() production path.
 wsl_test_projected_coordinates <- function(offsets_m) {
   center <- st_coordinates(st_transform(
     st_sfc(st_point(c(-120, 37)), crs = 4326), WSL_CARTOGRAPHIC_CRS
@@ -739,26 +817,28 @@ contour <- wsl_make_contours(source_raster, synthetic_record, config)
 check(contour$feature_count > 0L, "non-empty contour output")
 check(all(contour$contour_levels %% config$contour_interval_ft == 0), "configured contour interval")
 check(all(c(
-  "source_components_before_disposition", "normal_simplified_count",
-  "simplification_fallback_count", "precision_collapse_count",
-  "precision_collapse_b_removed_count", "serialization_degenerate_removed_count",
-  "unrecoverable_geometry_count", "ordinary_b_removed_count",
-  "simplification_fallbacks", "precision_collapses",
-  "precision_collapse_b_removals", "serialization_degenerate_removals"
-) %in% names(contour$cartography)), "pre-S2 robustness diagnostics are complete")
-check(contour$cartography$unrecoverable_geometry_count == 0L &&
-        contour$cartography$precision_collapse_count ==
-          length(contour$cartography$precision_collapses) &&
-        contour$cartography$precision_collapse_b_removed_count ==
-          length(contour$cartography$precision_collapse_b_removals) &&
-        contour$cartography$serialization_degenerate_removed_count ==
-          length(contour$cartography$serialization_degenerate_removals) &&
-        contour$cartography$source_components_before_disposition ==
-          contour$cartography$normal_simplified_count +
-          contour$cartography$simplification_fallback_count +
-          contour$cartography$precision_collapse_b_removed_count +
-          contour$cartography$serialization_degenerate_removed_count,
-      "successful contour output has no unrecoverable or unaccounted precision collapse")
+  "contour_engine", "contour_input_rows", "contour_input_columns",
+  "contour_input_cells", "full_native_source_crop_passed", "raster_resampled",
+  "source_isoline_count", "clipped_component_count", "components_retained",
+  "open_count", "closed_count", "non_simple_count", "vertices",
+  "serialization_collapse_removed_count", "serialization_collapse_removals",
+  "legacy_geometry_chain_active"
+) %in% names(contour$cartography)), "raw-isoband diagnostics are complete")
+check(identical(contour$cartography$contour_engine, "isoband") &&
+        isTRUE(contour$cartography$full_native_source_crop_passed) &&
+        !isTRUE(contour$cartography$raster_resampled) &&
+        !isTRUE(contour$cartography$legacy_geometry_chain_active) &&
+        contour$cartography$contour_input_cells == ncell(source_raster) &&
+        contour$cartography$components_retained == contour$feature_count &&
+        contour$cartography$serialization_collapse_removed_count ==
+          length(contour$cartography$serialization_collapse_removals),
+      "active contour path uses every native source-crop cell and accounts collapses")
+active_contour_body <- paste(deparse(body(wsl_make_contours)), collapse = "\n")
+check(!grepl("terra::as.contour", active_contour_body, fixed = TRUE) &&
+        !grepl("st_simplify", active_contour_body, fixed = TRUE) &&
+        !grepl("wsl_apply_s2_cartography", active_contour_body, fixed = TRUE) &&
+        !grepl("wsl_filter_components_b", active_contour_body, fixed = TRUE),
+      "active contour function does not call Terra contour, simplification, B, or S2")
 check(contour$bbox[1L] >= config$west && contour$bbox[3L] <= config$east &&
       contour$bbox[2L] >= config$south && contour$bbox[4L] <= config$north, "exact output bounds")
 properties <- contour$geojson$features[[1L]]$properties
@@ -831,6 +911,27 @@ on.exit(unlink(temp_root, recursive = TRUE, force = TRUE), add = TRUE)
 working_target_path <- file.path(temp_root, "working.geojson")
 wsl_write_json(contour$geojson, working_target_path)
 wsl_validate_geojson(working_target_path, synthetic_record, config)
+non_simple_output <- contour$geojson
+non_simple_feature <- non_simple_output$features[[1L]]
+non_simple_feature$id <- "synthetic_non_simple_10000_001"
+non_simple_feature$properties$level_ft_msl <- 10000L
+non_simple_feature$properties$label <- "10,000 ft MSL"
+non_simple_feature$properties$segment <- 1L
+non_simple_feature$properties$length_m <- non_simple_component$row$length_m
+non_simple_feature <- wsl_coordinates_to_feature(
+  non_simple_feature, non_simple_component$row$coordinates
+)
+non_simple_output$features <- list(non_simple_feature)
+non_simple_output$bbox <- c(
+  min(non_simple_component$row$coordinates[, 1L]),
+  min(non_simple_component$row$coordinates[, 2L]),
+  max(non_simple_component$row$coordinates[, 1L]),
+  max(non_simple_component$row$coordinates[, 2L])
+)
+non_simple_output_path <- file.path(temp_root, "non-simple-output.geojson")
+wsl_write_json(non_simple_output, non_simple_output_path)
+wsl_validate_geojson(non_simple_output_path, synthetic_record, config)
+check(TRUE, "public validator accepts non-simple structurally valid LineString")
 invalid_output <- contour$geojson
 invalid_output$features[[1L]]$properties$unit <- "m"
 invalid_output_path <- file.path(temp_root, "invalid-output.geojson")
@@ -859,21 +960,22 @@ wsl_write_json(wsl_make_contours(source_raster, synthetic_record, config)$geojso
 second_bytes <- readBin(target_path, "raw", n = file.info(target_path)$size)
 check(identical(first_bytes, second_bytes), "byte-deterministic contour output")
 
-unsimplified_config <- config
-unsimplified_config$simplify_tolerance_m <- 0
-unsimplified_path <- file.path(temp_root, "unsimplified.geojson")
-wsl_write_json(wsl_make_contours(source_raster, synthetic_record, unsimplified_config)$geojson, unsimplified_path)
-simple_sf <- suppressWarnings(st_read(target_path, quiet = TRUE))
-full_sf <- suppressWarnings(st_read(unsimplified_path, quiet = TRUE))
-check(all(st_is_valid(simple_sf)), "simplified output geometries are valid")
-check(nrow(simple_sf) >= 1L && nrow(simple_sf) < 5000L, "synthetic feature-count bounds")
+inactive_simplification_config <- config
+inactive_simplification_config$simplify_tolerance_m <- 0
+inactive_simplification_path <- file.path(temp_root, "inactive-simplification.geojson")
+wsl_write_json(
+  wsl_make_contours(source_raster, synthetic_record, inactive_simplification_config)$geojson,
+  inactive_simplification_path
+)
+check(identical(
+  readBin(target_path, "raw", n = file.info(target_path)$size),
+  readBin(inactive_simplification_path, "raw", n = file.info(inactive_simplification_path)$size)
+), "legacy simplify tolerance is inactive in the raw-isoband path")
+isoband_sf <- suppressWarnings(st_read(target_path, quiet = TRUE))
+check(all(st_is_valid(isoband_sf)), "raw-isoband output geometries are structurally valid")
+check(nrow(isoband_sf) >= 1L && nrow(isoband_sf) < 5000L, "synthetic feature-count bounds")
 check(file.info(target_path)$size > 100 && file.info(target_path)$size < 500000,
       "synthetic target-size bounds")
-hausdorff <- as.numeric(st_distance(
-  st_union(st_transform(full_sf, 5070)), st_union(st_transform(simple_sf, 5070)),
-  which = "Hausdorff"
-))
-check(is.finite(hausdorff) && hausdorff <= config$simplify_tolerance_m + 25, "simplification deviation bound")
 
 entry <- wsl_target_entry(synthetic_record, relative_path,
                           stats, contour, target_path, config)
@@ -890,6 +992,8 @@ check(identical(manifest$schema_version, "1.0.0") &&
 check(identical(manifest$targets[[1L]]$sha256, wsl_sha256(target_path)), "manifest checksum")
 check(grepl("0.5 degrees C", manifest$source$definition, fixed = TRUE),
       "manifest preserves the official derived snow-level definition")
+check(as.numeric(manifest$contour$simplify_tolerance_m) == config$simplify_tolerance_m,
+      "legacy manifest contour field remains contract-compatible")
 published_manifest <- manifest
 published_manifest$publication_time_utc <- "2026-01-15T10:00:00Z"
 published_manifest_path <- file.path(temp_root, "published_manifest.json")
