@@ -7,8 +7,7 @@ on:
     # hh:17 and the hourly GFS writer at hh:47.
     - cron: "29 */3 * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -16,9 +15,14 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_ARTIFACT_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate
+      CANDIDATE_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate/candidate
 
     steps:
       - name: Check out latest branch tip
@@ -58,35 +62,84 @@ jobs:
 
       - name: Build latest CDEC reservoir GeoJSON
         shell: Rscript {0}
+        env:
+          CDEC_RESERVOIR_GEOJSON: ${{ runner.temp }}/cdec-reservoir-candidate/candidate/docs/data/cdec_reservoir_latest.geojson
+          CDEC_RESERVOIR_SUMMARY_JSON: ${{ runner.temp }}/cdec-reservoir-candidate/candidate/docs/data/cdec_reservoir_latest_summary.json
         run: |
           source("scripts/build_cdec_reservoir_latest.R")
 
-      - name: Commit updated feed files
+      - name: Validate and describe candidate artifact
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          python3 scripts/cdec_reservoir_publisher.py validate \
+            --root "${CANDIDATE_ROOT}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/data/cdec_reservoir_latest.geojson \
-            docs/data/cdec_reservoir_latest_summary.json
+          semantic_time="$(jq -er '.feed_build_time_utc' \
+            "${CANDIDATE_ROOT}/docs/data/cdec_reservoir_latest_summary.json")"
 
-          if git diff --cached --quiet; then
-            echo "No CDEC reservoir feed changes to commit."
-            exit 0
-          fi
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${CANDIDATE_ROOT}" \
+            --output "${CANDIDATE_ARTIFACT_ROOT}/candidate-metadata.json" \
+            --product-id cdec-reservoir-feed \
+            --semantic-key-type feed_build_time_utc \
+            --semantic-key "${semantic_time}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/cdec_reservoir_latest.geojson \
+            --allowlist docs/data/cdec_reservoir_latest_summary.json
 
-          git commit -m "Update CDEC reservoir feed"
+      - name: Upload validated CDEC publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdec-reservoir-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cdec-reservoir-candidate
+          if-no-files-found: error
+          retention-days: 2
 
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+    env:
+      CANDIDATE_ARTIFACT_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated CDEC publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: cdec-reservoir-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cdec-reservoir-candidate
+
+      - name: Reconcile and publish CDEC candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${CANDIDATE_ARTIFACT_ROOT}/candidate" \
+            --metadata "${CANDIDATE_ARTIFACT_ROOT}/candidate-metadata.json" \
+            --product-id cdec-reservoir-feed \
+            --target-ref refs/heads/main \
+            --commit-subject "Update CDEC reservoir feed" \
+            --allowlist docs/data/cdec_reservoir_latest.geojson \
+            --allowlist docs/data/cdec_reservoir_latest_summary.json \
+            --candidate-validator scripts/cdec_reservoir_publisher.py \
+            --reconcile-callback scripts/cdec_reservoir_publisher.py \
+            --staged-validator scripts/cdec_reservoir_publisher.py

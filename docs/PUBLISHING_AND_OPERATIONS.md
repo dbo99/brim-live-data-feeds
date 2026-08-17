@@ -15,9 +15,12 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 
 The official product has two stages:
 
-1. A scheduled writer retrieves, transforms and validates data, stages only its
-   declared `docs/data/...` paths, commits them, and pushes to the branch that
-   triggered the run.
+1. A scheduled writer retrieves, transforms and validates data. Thirteen
+   writers still stage their declared `docs/data/...` paths, commit them, and
+   push to the selected branch when their product-specific publication guard
+   allows. The Phase 1 CDEC canary instead
+   prepares a validated two-file candidate artifact; only its separate
+   `main`-authorized publisher job can reconcile and commit that candidate.
 2. GitHub Pages separately deploys `main:/docs`.
 
 The public URL is `https://dbo99.github.io/brim-live-data-feeds/`.
@@ -31,16 +34,30 @@ newer product than the hosted site.
 All fourteen scheduled production writers currently:
 
 - support schedules and manual dispatch;
-- request `contents: write`;
 - use the shared concurrency group
   `live-data-feed-writes-${{ github.ref }}`;
 - set `cancel-in-progress: false` and `queue: max`;
 - follow their documented checkout/ref contract with full history;
-- reject non-branch publication refs;
-- stage declared product paths;
-- commit only when those paths changed;
-- push non-force to `HEAD:${GITHUB_REF}`;
-- fail if the branch advanced unexpectedly.
+- preserve product-specific validation and last-known-good behavior.
+
+Thirteen unmigrated writers still request `contents: write`, reject
+non-branch publication refs, stage their declared product paths, commit only
+when those paths changed, push non-force to `HEAD:${GITHUB_REF}`, and fail if
+the branch advanced unexpectedly.
+
+The CDEC canary has a read-only `prepare-candidate` job and a write-capable
+`publish-to-main` job separated by a short-lived Actions artifact. The artifact
+contains exactly the two CDEC product files plus nonpublic integrity metadata:
+an internal product identifier, source event SHA, preparation time, semantic
+`feed_build_time_utc`, exact inventory, byte counts, and SHA-256 hashes. The
+publisher validates that artifact, fetches current `origin/main` after entering
+the publication queue, and invokes the CDEC callback to classify the candidate
+as new, same, or stale. Only a new candidate is copied byte-for-byte and staged;
+same and stale candidates are successful no-ops. A non-fast-forward push gets
+at most one fresh-main reconciliation retry. A second race, an unexpected path,
+an ambiguous same-time byte change, or any validation failure stops without a
+force push. Feature-branch CDEC dispatches now produce the candidate artifact
+but cannot publish any branch.
 
 They do not pull, merge or rebase generated-product commits.
 
@@ -63,8 +80,9 @@ Consequences:
 
 - Scheduled events run from the default branch and can update official
   `main`.
-- Manual dispatch can target a feature branch and will write the normal product
-  paths on that feature branch.
+- Manual dispatch can target a feature branch. Thirteen unmigrated writers
+  retain their documented branch behavior; the CDEC canary produces only its
+  validated candidate artifact on a feature branch.
 - A feature-branch run cannot update `main` through the writer's push command.
 - GitHub Pages publishes only `main:/docs`, so feature-branch products are not
   official hosted products.
@@ -78,18 +96,27 @@ remaining repository-level controls.
 
 ## Concurrency, cancellation and queueing
 
-All production writers share one group per ref. On `main`, that serializes
-product-writing jobs so two writers do not push at the same time.
+All production writers retain one whole-workflow group per ref. On `main`, that
+continues to serialize the migrated CDEC canary with every unmigrated writer
+during the mixed migration state.
 
 `queue: max` allows multiple pending runs instead of replacing the existing
 pending run. Ordering should not be treated as a data guarantee. Every queued
 writer re-resolves the selected branch when the job begins.
 
-Initial Winter Storm Levels scheduling intentionally holds this lock for its
-whole workflow. That is collision-safe but can serialize inventory, dependency,
-build, and publication work behind unrelated writers. Before NBM QPF is added,
-the required repository-wide follow-on is parallel build work plus one shared
-job-level main publisher queue and product-specific post-lock reconciliation.
+The CDEC `publish-to-main` job additionally uses the constant repository-wide
+group `brim-live-main-publish` with `cancel-in-progress: false` and `queue: max`.
+The new lock applies only to that publisher job. Retaining the old whole-workflow
+lock is deliberate until every main writer uses the new publisher: it prevents a
+migrated publisher from colliding with a still-direct writer. This Phase 1
+canary therefore proves the artifact and fresh-main transaction boundaries but
+does not yet provide parallel builds.
+
+Initial Winter Storm Levels scheduling continues to hold only the established
+whole-workflow lock. It is not migrated in Phase 1. Before NBM QPF is added, the
+remaining writers require product-specific prepare/reconcile migrations; only
+after the mixed state ends may the old whole-workflow lock be removed in a
+separate reviewed change.
 
 The HRRR sandbox and wind watchdog use separate groups and
 `cancel-in-progress: true`; they are safe to supersede because they do not
@@ -177,6 +204,7 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
 | `winter-storm-levels-qa` | Winter Storm Levels writer | Complete manifest/GeoJSON bundle and browser QA when a build starts; concise inventory-preflight diagnostics for guarded no-build outcomes; no full GRIB files | Explicit 14 days |
+| `cdec-reservoir-candidate-<run>-<attempt>` | CDEC production workflow | Validated two-file candidate plus nonpublic inventory/hash/source metadata crossing the prepare/publish job boundary | Explicit 2 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -188,7 +216,10 @@ deployment completed.
 The repository has product-specific, not universal, QA:
 
 - ASOS requires a minimum feature count and valid recent wind observations.
-- CDEC validates usable latest/daily storage and minimum parsed coverage.
+- CDEC validates usable latest/daily storage and minimum parsed coverage. Its
+  canary publisher revalidates feature/count/time/geometry invariants before
+  artifact creation and after fresh-main staging, and proves artifact hashes and
+  the exact two-path allowlist without reserializing product bytes.
 - CoCoRaHS retries and deduplicates, but lacks a strong completeness threshold.
 - Delta validates PDF structure, date and a minimum feature set.
 - GFS validates downloads/JSON and at least one entry, but can retain partial
@@ -425,8 +456,12 @@ Cause classifications:
 
 1. Treat rejection as last-known-good protection.
 2. Do not force, pull, merge or rebase generated output in the runner.
-3. Confirm the remote branch advanced and determine which writer committed.
-4. Run again from the latest branch tip if a fresh product is still needed.
+3. For the CDEC canary, confirm whether its one automatic fresh-main
+   reconciliation retry published or completed as a safe no-op; there is no
+   third attempt.
+4. For an unresolved CDEC retry or an unmigrated writer, confirm the remote
+   branch advanced and determine which writer committed.
+5. Run again from the latest branch tip if a fresh product is still needed.
 
 ### Artifact failure
 
