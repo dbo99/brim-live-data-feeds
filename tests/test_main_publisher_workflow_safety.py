@@ -27,6 +27,23 @@ WRITERS = (
     "build-usgs-streamflow-latest-ca.yml",
     "build-winter-storm-levels.yml",
 )
+MIGRATED = (CANARY,)
+
+
+def job_level_env_blocks(text: str) -> list[str]:
+    """Return job-level env blocks without mistaking step env for job env."""
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if line != "    env:":
+            continue
+        block = [line]
+        for following in lines[index + 1 :]:
+            if following and len(following) - len(following.lstrip()) <= 4:
+                break
+            block.append(following)
+        blocks.append("\n".join(block))
+    return blocks
 
 
 class MainPublisherWorkflowSafetyTests(unittest.TestCase):
@@ -89,6 +106,24 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(
             text.count("--allowlist docs/data/cdec_reservoir_latest_summary.json"), 2
         )
+
+    def test_migrated_workflows_resolve_runner_temp_only_after_allocation(self) -> None:
+        for workflow in MIGRATED:
+            text = workflow.read_text(encoding="utf-8")
+            for block in job_level_env_blocks(text):
+                self.assertNotRegex(block, r"\$\{\{\s*runner\.", workflow.name)
+            self.assertNotIn("/home/runner/", text, workflow.name)
+            self.assertNotRegex(text, r"(?<![A-Z_])/tmp/", workflow.name)
+
+        text = CANARY.read_text(encoding="utf-8")
+        self.assertEqual(
+            text.count(
+                'candidate_artifact_root="${RUNNER_TEMP}/cdec-reservoir-candidate"'
+            ),
+            2,
+        )
+        self.assertIn('candidate_root="${candidate_artifact_root}/candidate"', text)
+        self.assertEqual(text.count("${{ runner.temp }}"), 4)
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
         text = (REPO / "scripts" / "main_publisher.py").read_text(encoding="utf-8")

@@ -20,9 +20,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    env:
-      CANDIDATE_ARTIFACT_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate
-      CANDIDATE_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate/candidate
 
     steps:
       - name: Check out latest branch tip
@@ -73,15 +70,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          candidate_artifact_root="${RUNNER_TEMP}/cdec-reservoir-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+
           python3 scripts/cdec_reservoir_publisher.py validate \
-            --root "${CANDIDATE_ROOT}"
+            --root "${candidate_root}"
 
           semantic_time="$(jq -er '.feed_build_time_utc' \
-            "${CANDIDATE_ROOT}/docs/data/cdec_reservoir_latest_summary.json")"
+            "${candidate_root}/docs/data/cdec_reservoir_latest_summary.json")"
 
           python3 scripts/main_publisher.py prepare \
-            --candidate-root "${CANDIDATE_ROOT}" \
-            --output "${CANDIDATE_ARTIFACT_ROOT}/candidate-metadata.json" \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
             --product-id cdec-reservoir-feed \
             --semantic-key-type feed_build_time_utc \
             --semantic-key "${semantic_time}" \
@@ -108,8 +108,6 @@ jobs:
       group: brim-live-main-publish
       cancel-in-progress: false
       queue: max
-    env:
-      CANDIDATE_ARTIFACT_ROOT: ${{ runner.temp }}/cdec-reservoir-candidate
 
     steps:
       - name: Check out source event
@@ -131,10 +129,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          candidate_artifact_root="${RUNNER_TEMP}/cdec-reservoir-candidate"
+
           python3 scripts/main_publisher.py publish \
             --repo . \
-            --candidate-root "${CANDIDATE_ARTIFACT_ROOT}/candidate" \
-            --metadata "${CANDIDATE_ARTIFACT_ROOT}/candidate-metadata.json" \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
             --product-id cdec-reservoir-feed \
             --target-ref refs/heads/main \
             --commit-subject "Update CDEC reservoir feed" \
