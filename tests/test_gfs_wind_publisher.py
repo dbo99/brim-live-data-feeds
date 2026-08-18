@@ -19,6 +19,8 @@ def stamp(value: datetime) -> str:
 
 
 class GfsWindPublisherTests(unittest.TestCase):
+    SPARSE_OFFSETS = [-3, -2, -1, 0, 1, 2, 3, 21, 24, 27, 30]
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -33,7 +35,23 @@ class GfsWindPublisherTests(unittest.TestCase):
         return (self.base + timedelta(hours=valid_offset), self.base + timedelta(hours=cycle_offset), marker)
 
     @staticmethod
-    def write_product(root: Path, generated: datetime, specs, *, past=3, future=30) -> None:
+    def write_product(root: Path, generated: datetime, specs, *, offsets=None) -> None:
+        specs = list(specs)
+        anchor = generated.replace(minute=0, second=0, microsecond=0)
+        if offsets is None:
+            offset_values = [
+                (valid - anchor).total_seconds() / 3600
+                for valid, _, _ in specs
+            ]
+            if any(not value.is_integer() for value in offset_values):
+                raise ValueError("fixture valid times must align to whole-hour offsets")
+            offsets = sorted({int(value) for value in offset_values})
+        else:
+            offsets = sorted({int(value) for value in offsets})
+        if not offsets:
+            raise ValueError("fixture target offsets must be nonempty")
+        past = abs(min(0, *offsets))
+        future = max(0, *offsets)
         shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True)
         entries = []
@@ -95,7 +113,7 @@ class GfsWindPublisherTests(unittest.TestCase):
                 "selected_entry": copy.deepcopy(selected),
             },
             "stale_after_hours": 9, "supported_browser_lead_hours": [0, 24],
-            "target_offsets_hours": list(range(-past, future + 1)),
+            "target_offsets_hours": offsets,
             "target_past_hours": past, "target_future_hours": future,
             "max_forecast_hour": 42, "entry_count": len(entries), "entries": entries,
         }
@@ -118,7 +136,7 @@ class GfsWindPublisherTests(unittest.TestCase):
             "domain": {"west": -180.125, "east": -179.625, "south": 74.875, "north": 75.125},
             "grid": {"nx": 2, "ny": 1, "dx": 0.25, "dy": 0.25},
             "selected_entry": copy.deepcopy(selected), "available_entry_count": len(entries),
-            "target_offsets_hours": list(range(-past, future + 1)),
+            "target_offsets_hours": offsets,
             "target_past_hours": past, "target_future_hours": future,
             "max_forecast_hour": 42, "output_json_bytes": selected_target.stat().st_size,
             "output_files": {
@@ -146,6 +164,191 @@ class GfsWindPublisherTests(unittest.TestCase):
     def entries(self, root: Path):
         return gfs.validate_product(root).entries
 
+    def valid_times(self, root: Path):
+        return [entry.valid for entry in self.entries(root)]
+
+    def test_hosted_canary_one_hour_sparse_set_shift(self):
+        old_valid_offsets = set(self.SPARSE_OFFSETS)
+        canonical_specs = [self.spec(offset, -6, 1.0) for offset in self.SPARSE_OFFSETS]
+        candidate_specs = [
+            self.spec(
+                1 + offset,
+                -6,
+                1.0 if 1 + offset in old_valid_offsets else 2.0,
+            )
+            for offset in self.SPARSE_OFFSETS
+        ]
+        self.write_product(
+            self.canonical,
+            self.base,
+            canonical_specs,
+            offsets=self.SPARSE_OFFSETS,
+        )
+        old_entries = self.entries(self.canonical)
+        old_bytes = {
+            entry.valid: (self.canonical / entry.relative_path).read_bytes()
+            for entry in old_entries
+        }
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            candidate_specs,
+            offsets=self.SPARSE_OFFSETS,
+        )
+        expected_valid = {
+            self.base + timedelta(hours=1 + offset)
+            for offset in self.SPARSE_OFFSETS
+        }
+
+        self.assertEqual(gfs.reconcile(self.candidate, self.canonical)[0], "new")
+        final = gfs.validate_product(self.canonical)
+        self.assertEqual({entry.valid for entry in final.entries}, expected_valid)
+        self.assertEqual(len(final.entries), len(self.SPARSE_OFFSETS))
+        self.assertEqual(
+            {path.relative_to(self.canonical) for path in (self.canonical / gfs.TARGET_ROOT).iterdir()},
+            {entry.relative_path for entry in final.entries},
+        )
+        for entry in final.entries:
+            if entry.valid in old_bytes:
+                self.assertEqual(
+                    (self.canonical / entry.relative_path).read_bytes(),
+                    old_bytes[entry.valid],
+                )
+        self.assertTrue(
+            all(
+                not (self.canonical / entry.relative_path).exists()
+                for entry in old_entries
+                if entry.valid not in expected_valid
+            )
+        )
+
+    def test_multi_hour_sparse_set_shift_prunes_old_slots(self):
+        offsets = [-2, 0, 2, 22, 24, 26]
+        self.write_product(
+            self.canonical,
+            self.base,
+            [self.spec(offset, -6, 1.0) for offset in offsets],
+            offsets=offsets,
+        )
+        old_paths = {entry.relative_path for entry in self.entries(self.canonical)}
+        generated = self.base + timedelta(hours=4)
+        old_valid_offsets = set(offsets)
+        self.write_product(
+            self.candidate,
+            generated,
+            [
+                self.spec(
+                    4 + offset,
+                    -6,
+                    1.0 if 4 + offset in old_valid_offsets else 2.0,
+                )
+                for offset in offsets
+            ],
+            offsets=offsets,
+        )
+        expected_valid = {generated + timedelta(hours=offset) for offset in offsets}
+
+        gfs.reconcile(self.candidate, self.canonical)
+
+        final = gfs.validate_product(self.canonical)
+        self.assertEqual({entry.valid for entry in final.entries}, expected_valid)
+        self.assertTrue(
+            all(
+                not (self.canonical / path).exists()
+                for path in old_paths - {entry.relative_path for entry in final.entries}
+            )
+        )
+
+    def test_complete_candidate_replaces_exact_sparse_set(self):
+        offsets = [-1, 0, 1, 23, 24, 25]
+        old_valid_offsets = set(offsets)
+        self.write_product(
+            self.canonical,
+            self.base,
+            [self.spec(offset, -6, 1.0) for offset in offsets],
+            offsets=offsets,
+        )
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=2),
+            [
+                self.spec(
+                    2 + offset,
+                    -6,
+                    1.0 if 2 + offset in old_valid_offsets else 2.0,
+                )
+                for offset in offsets
+            ],
+            offsets=offsets,
+        )
+        expected = gfs.semantic_key(self.candidate)
+
+        self.assertEqual(gfs.reconcile(self.candidate, self.canonical)[0], "new")
+        self.assertEqual(gfs.semantic_key(self.canonical), expected)
+
+    def test_partial_candidate_uses_canonical_only_for_same_desired_slot(self):
+        self.write_product(
+            self.canonical,
+            self.base,
+            [self.spec(1, 0, 1.0), self.spec(2, 0, 2.0), self.spec(3, 0, 3.0)],
+            offsets=[1, 2, 3],
+        )
+        canonical_entries = {entry.valid: entry for entry in self.entries(self.canonical)}
+        retained = canonical_entries[self.base + timedelta(hours=3)]
+        retained_bytes = (self.canonical / retained.relative_path).read_bytes()
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(1, 0, 1.0)],
+            offsets=[0, 2],
+        )
+
+        gfs.reconcile(self.candidate, self.canonical)
+
+        final = {entry.valid: entry for entry in self.entries(self.canonical)}
+        self.assertEqual(
+            set(final),
+            {self.base + timedelta(hours=1), self.base + timedelta(hours=3)},
+        )
+        self.assertEqual(
+            (self.canonical / final[self.base + timedelta(hours=3)].relative_path).read_bytes(),
+            retained_bytes,
+        )
+
+    def test_broad_window_canonical_target_outside_sparse_set_is_pruned(self):
+        self.write_product(
+            self.canonical,
+            self.base,
+            [self.spec(1, 0, 1.0), self.spec(2, 0, 2.0)],
+            offsets=[1, 2],
+        )
+        obsolete = next(
+            entry
+            for entry in self.entries(self.canonical)
+            if entry.valid == self.base + timedelta(hours=2)
+        )
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(1, 0, 1.0)],
+            offsets=[0, 3],
+        )
+
+        gfs.reconcile(self.candidate, self.canonical)
+
+        self.assertEqual(self.valid_times(self.canonical), [self.base + timedelta(hours=1)])
+        self.assertFalse((self.canonical / obsolete.relative_path).exists())
+
+    def test_same_cycle_same_valid_conflicting_bytes_fail_closed(self):
+        self.write_product(self.canonical, self.base, [self.spec(2, 0, 1.0)])
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(2, 0, 2.0)],
+        )
+        with self.assertRaisesRegex(gfs.ProductError, "conflicting bytes"):
+            gfs.reconcile(self.candidate, self.canonical)
+
     def test_new_model_cycle_wins_for_same_valid_time(self):
         self.write_product(self.canonical, self.base, [self.spec(6, 0, 1)])
         self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(6, 3, 2)])
@@ -154,7 +357,12 @@ class GfsWindPublisherTests(unittest.TestCase):
 
     def test_partial_target_advancement_preserves_other_coverage(self):
         self.write_product(self.canonical, self.base, [self.spec(2, 0, 1), self.spec(3, 0, 1)])
-        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(2, 1, 2)])
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(2, 1, 2)],
+            offsets=[1, 2],
+        )
         gfs.reconcile(self.candidate, self.canonical)
         self.assertEqual(len(self.entries(self.canonical)), 2)
 
@@ -162,7 +370,12 @@ class GfsWindPublisherTests(unittest.TestCase):
         specs = [self.spec(2, 0, 1)]
         self.write_product(self.canonical, self.base, specs)
         original = (self.canonical / self.entries(self.canonical)[0].relative_path).read_bytes()
-        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(1, 0, 2)])
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(1, 0, 2)],
+            offsets=[0, 1],
+        )
         gfs.reconcile(self.candidate, self.canonical)
         retained = next(entry for entry in self.entries(self.canonical) if entry.valid == self.base + timedelta(hours=2))
         self.assertEqual((self.canonical / retained.relative_path).read_bytes(), original)
@@ -172,9 +385,8 @@ class GfsWindPublisherTests(unittest.TestCase):
             self.canonical,
             self.base,
             [self.spec(-5, -6, 1), self.spec(1, 0, 1)],
-            past=5,
         )
-        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(1, 0, 1)], past=1, future=2)
+        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(1, 0, 1)])
         gfs.reconcile(self.candidate, self.canonical)
         self.assertEqual([entry.valid for entry in self.entries(self.canonical)], [self.base + timedelta(hours=1)])
 
@@ -187,7 +399,12 @@ class GfsWindPublisherTests(unittest.TestCase):
 
     def test_candidate_missing_valid_reusable_target_retains_it(self):
         self.write_product(self.canonical, self.base, [self.spec(1, 0, 1), self.spec(2, 0, 1)])
-        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(1, 0, 1)])
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(1, 0, 1)],
+            offsets=[0, 1],
+        )
         gfs.reconcile(self.candidate, self.canonical)
         self.assertEqual(len(self.entries(self.canonical)), 2)
 
@@ -220,7 +437,12 @@ class GfsWindPublisherTests(unittest.TestCase):
 
     def test_candidate_cannot_delete_target_required_by_fresh_main(self):
         self.write_product(self.canonical, self.base, [self.spec(1, 0, 1), self.spec(2, 0, 2)])
-        self.write_product(self.candidate, self.base + timedelta(hours=1), [self.spec(1, 0, 1)])
+        self.write_product(
+            self.candidate,
+            self.base + timedelta(hours=1),
+            [self.spec(1, 0, 1)],
+            offsets=[0, 1],
+        )
         gfs.reconcile(self.candidate, self.canonical)
         self.assertIn(self.base + timedelta(hours=2), {entry.valid for entry in self.entries(self.canonical)})
 

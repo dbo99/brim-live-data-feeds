@@ -292,25 +292,29 @@ def _same_complete_state(left: ProductState, right: ProductState) -> bool:
     )
 
 
-def _window_bounds(state: ProductState) -> tuple[datetime, datetime]:
+def _desired_valid_times(state: ProductState) -> set[datetime]:
     anchor = state.generated.replace(minute=0, second=0, microsecond=0)
-    return (
-        anchor - timedelta(hours=int(state.manifest["target_past_hours"])),
-        anchor + timedelta(hours=int(state.manifest["target_future_hours"])),
-    )
+    return {
+        anchor + timedelta(hours=int(offset))
+        for offset in state.manifest["target_offsets_hours"]
+    }
 
 
 def _choose_entries(
     candidate: ProductState, canonical: ProductState
 ) -> list[tuple[EntryState, Path]]:
-    start, end = _window_bounds(candidate)
+    # The declared offsets remain authoritative when the candidate is partial.
+    # Fresh canonical data may fill only the same desired valid-time slot.
+    desired = _desired_valid_times(candidate)
     proposed = {entry.valid: entry for entry in candidate.entries}
     current = {
-        entry.valid: entry for entry in canonical.entries if start <= entry.valid <= end
+        entry.valid: entry for entry in canonical.entries if entry.valid in desired
     }
     chosen: list[tuple[EntryState, Path]] = []
-    for valid in sorted(set(proposed) | set(current)):
+    for valid in sorted(desired):
         candidate_entry, canonical_entry = proposed.get(valid), current.get(valid)
+        if candidate_entry is None and canonical_entry is None:
+            continue
         if candidate_entry is None:
             assert canonical_entry is not None
             chosen.append((canonical_entry, canonical.root))
@@ -458,11 +462,11 @@ def reconcile(candidate_root: Path, canonical_root: Path) -> tuple[str, str]:
     if [state for state, source_root in chosen if source_root == candidate.root] == list(candidate.entries) and len(chosen) == len(candidate.entries):
         _apply_complete_candidate(candidate, canonical_root)
         validate_product(canonical_root)
-        return "new", "newer complete candidate controls the rolling window"
+        return "new", "newer candidate controls every available desired sparse slot"
     manifest, summary, selected, selected_root = _rebuild_fixed_files(candidate, chosen)
     _apply_desired_state(canonical_root, manifest, summary, chosen, selected, selected_root)
     validate_product(canonical_root)
-    return "new", "newer rolling window reconciled with fresh canonical target dominance"
+    return "new", "newer exact sparse set reconciled with fresh canonical target dominance"
 
 
 def _callback() -> int:
