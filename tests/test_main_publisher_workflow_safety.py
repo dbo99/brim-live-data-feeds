@@ -18,6 +18,8 @@ STREAMFLOW = WORKFLOWS / "build-usgs-streamflow-latest-ca.yml"
 GROUNDWATER = WORKFLOWS / "build-usgs-groundwater-latest-ca.yml"
 ASOS_AWOS = WORKFLOWS / "build-asos-awos-wind-latest.yml"
 SNOW_PILLOW = WORKFLOWS / "build-snow-pillow-latest.yml"
+CNRFC = WORKFLOWS / "build-major-water-supply-basin-forecasts.yml"
+CBRFC = WORKFLOWS / "build-cbrfc-major-water-supply-forecasts.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -43,6 +45,8 @@ MIGRATED = (
     GROUNDWATER,
     ASOS_AWOS,
     SNOW_PILLOW,
+    CNRFC,
+    CBRFC,
 )
 PRODUCT_PATHS = {
     CDEC: {
@@ -87,6 +91,12 @@ PRODUCT_PATHS = {
         "docs/data/snow_pillow_current_wy_trace.csv",
         "docs/data/snow_pillow_current_wy_trace_summary.json",
     },
+    CNRFC: {
+        "docs/data/major_water_supply_basin_forecasts.json",
+    },
+    CBRFC: {
+        "docs/data/cbrfc_major_water_supply_forecasts.json",
+    },
 }
 
 
@@ -125,7 +135,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 8)
+        self.assertEqual(len(MIGRATED), 10)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -173,6 +183,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         groundwater = GROUNDWATER.read_text(encoding="utf-8")
         asos_awos = ASOS_AWOS.read_text(encoding="utf-8")
         snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")
+        cnrfc = CNRFC.read_text(encoding="utf-8")
+        cbrfc = CBRFC.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -183,6 +195,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertEqual(text.count(callback), 4)
         self.assertEqual(asos_awos.count("scripts/asos_awos_wind_publisher.py"), 5)
         self.assertEqual(snow_pillow.count("scripts/snow_pillow_publisher.py"), 6)
+        self.assertEqual(cnrfc.count("scripts/cnrfc_forecast_publisher.py"), 5)
+        self.assertEqual(cbrfc.count("scripts/cbrfc_forecast_publisher.py"), 5)
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -226,6 +240,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (GROUNDWATER, "usgs-groundwater-candidate"),
             (ASOS_AWOS, "asos-awos-candidate"),
             (SNOW_PILLOW, "snow-pillow-candidate"),
+            (CNRFC, "cnrfc-forecast-candidate"),
+            (CBRFC, "cbrfc-forecast-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -265,6 +281,24 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("data/input/snow_pillow_station_index.csv", snow_pillow)
         self.assertIn("data/input/snow_pillow_swe_normal_medians.csv", snow_pillow)
         self.assertIn("scripts/main_publisher.py publish", snow_pillow)
+
+    def test_phase6_rfc_schedules_manual_defaults_and_record_callbacks_are_unchanged(self) -> None:
+        cnrfc = CNRFC.read_text(encoding="utf-8")
+        cbrfc = CBRFC.read_text(encoding="utf-8")
+        self.assertIn('- cron: "56 10,16 * * *"', cnrfc)
+        self.assertIn('- cron: "14 8 * * *"', cbrfc)
+        for text, callback, semantic_type in (
+            (cnrfc, "scripts/cnrfc_forecast_publisher.py", "cnrfc_record_state_sha256_v1"),
+            (cbrfc, "scripts/cbrfc_forecast_publisher.py", "cbrfc_record_state_sha256_v1"),
+        ):
+            self.assertRegex(
+                text,
+                r"publish:\n\s+description:.*\n\s+required: false\n\s+default: false",
+            )
+            self.assertIn("needs.prepare-candidate.outputs.publish == 'true'", text)
+            self.assertIn(semantic_type, text)
+            self.assertEqual(text.count(callback), 5)
+            self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
         text = (REPO / "scripts" / "main_publisher.py").read_text(encoding="utf-8")
