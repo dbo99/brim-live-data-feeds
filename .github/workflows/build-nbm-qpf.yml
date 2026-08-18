@@ -9,12 +9,11 @@ on:
         default: ""
         type: string
   schedule:
-    # Proposed source-readiness schedule for maintainer review: 138 and 184
-    # minutes after each primary NBM cycle, ten minutes behind the existing
-    # Snow Levels probes to avoid same-minute competition. Do not dispatch or
-    # merge for live publication until this exact timing is approved.
+    # Approved source-readiness schedule: primary +138 minutes remains ten
+    # minutes behind Snow Levels primary; fallback +190 avoids the :04
+    # start-of-hour load period. First live publication remains a separate gate.
     - cron: "18 2,8,14,20 * * *"
-    - cron: "4 3,9,15,21 * * *"
+    - cron: "10 3,9,15,21 * * *"
 
 permissions: {}
 

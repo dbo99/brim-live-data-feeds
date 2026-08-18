@@ -45,7 +45,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | GFS wind | `gfs_surface_wind` | NOAA/NCEP GFS | Hourly at :47 | GFS manifest | Yes |
 | HRRR wind | `hrrr_surface_wind` | NOAA/NCEP HRRR | Hourly at :33 | HRRR manifest | Yes |
 | NBM wind guidance | Not declared | NOAA/NCEP NBM | 01:23, 07:23, 13:23, 19:23 | NBM manifest | Yes |
-| NBM QPF | `nbm_qpf` | NOAA/NWS/NCEP/MDL NBM | Proposed 02:18/08:18/14:18/20:18 and fallback 03:04/09:04/15:04/21:04, pending maintainer approval | Unseeded `docs/data/nbm-qpf/nbm_qpf_manifest.json` | Yes |
+| NBM QPF | `nbm_qpf` | NOAA/NWS/NCEP/MDL NBM | Approved 02:18/08:18/14:18/20:18 and fallback 03:10/09:10/15:10/21:10; first publication remains separately gated | Unseeded `docs/data/nbm-qpf/nbm_qpf_manifest.json` | Yes |
 | ASOS/AWOS observed wind | `asos_awos_wind_obs` | NOAA Aviation Weather Center METAR cache | Twice hourly at :17 and :42 | GeoJSON, summary, and manifest | Yes |
 | USGS streamflow | Not declared | USGS Water Data API | Every 4 hours at :23 | GeoJSON and summary | No |
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
@@ -1067,13 +1067,13 @@ spatial and freshness contracts, cycle-level legend metadata, exact ten-lead
 sets, per-target times/units/bounds/dimensions, bytes and SHA-256. Consumers must
 never select by directory listing or filename time.
 
-The workflow's proposed primary times are +138 minutes after each primary NBM
-cycle, with fallback at +184 minutes. These are a reviewable recommendation ten
-minutes behind the established Snow Levels source-readiness probes, not an
-approved live schedule. Merge, dispatch, first publication, Pages verification,
-and private BRIM integration remain separate maintainer decisions. Until an
-approved first run seeds the canonical manifest, these paths describe an
-unpublished additive contract rather than an available public API.
+The workflow's approved primary times are +138 minutes after each primary NBM
+cycle, with fallback at +190 minutes. The primary remains ten minutes behind the
+established Snow Levels primary source-readiness probe, and the fallback avoids
+the start-of-hour high-load period. Merge, dispatch, first publication, Pages
+verification, and private BRIM integration remain separate maintainer decisions.
+Until an approved first run seeds the canonical manifest, these paths describe
+an unpublished additive contract rather than an available public API.
 
 ## Nonproduction workflows
 

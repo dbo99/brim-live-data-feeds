@@ -148,12 +148,12 @@ producer. There is no internal polling. Manual `publish: true` on `main` uses
 the same guard, while manual `publish: false` preserves diagnostic current-cycle
 rebuild behavior.
 
-The unseeded NBM QPF workflow proposes primary attempts at 02:18, 08:18, 14:18
-and 20:18 (+138 minutes) with fallbacks at 03:04, 09:04, 15:04 and 21:04 (+184
-minutes). This recommendation is ten minutes behind the established Snow Levels
-source-readiness probes. It is not an approved live schedule: do not merge,
-dispatch, or publish QPF until the maintainer approves the exact timing and the
-first-publication decision.
+The unseeded NBM QPF workflow has approved primary attempts at 02:18, 08:18,
+14:18 and 20:18 (+138 minutes) with fallbacks at 03:10, 09:10, 15:10 and 21:10
+(+190 minutes). The primary remains ten minutes behind the established Snow
+Levels source-readiness probe, while the fallback avoids the start-of-hour
+high-load period. Do not merge, dispatch, or publish QPF until the maintainer
+separately approves first live publication.
 
 Before any manual writer dispatch, the operator must record:
 

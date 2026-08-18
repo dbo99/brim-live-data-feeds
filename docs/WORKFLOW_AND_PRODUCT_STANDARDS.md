@@ -27,7 +27,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-hrrr-wind-latest.yml` | Build HRRR wind latest | Manual; hourly :33 | `scripts/build_hrrr_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
-| `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; proposed +138m primary and +184m fallback for 00/06/12/18Z, pending approval | `scripts/build_nbm_qpf_candidate.R` | Unseeded complete-cycle artifact; separate bounded `main` publisher |
+| `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; approved +138m primary and +190m fallback for 00/06/12/18Z; first publication separately gated | `scripts/build_nbm_qpf_candidate.R` | Unseeded complete-cycle artifact; separate bounded `main` publisher |
 | `.github/workflows/build-scan-soil-moisture-latest.yml` | Build SCAN soil moisture latest feed | Manual; daily 14:30 | `scripts/build_scan_soil_moisture_latest.R` | Latest/trace/style |
 | `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
@@ -83,8 +83,8 @@ workflow but is not source-controlled in `.github/workflows`.
   current-cycle rebuilds.
 - The unseeded NBM QPF workflow performs the same ten-lead inventory discovery
   before its unchanged R producer, prepares a bounded candidate on any selected
-  ref, and permits its separate publisher job only on `main`. Its proposed +138/
-  +184-minute timings remain a maintainer decision before any live dispatch.
+  ref, and permits its separate publisher job only on `main`. Its approved +138/
+  +190-minute timing does not authorize merge, dispatch, or first publication.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.

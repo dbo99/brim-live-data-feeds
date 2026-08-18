@@ -354,10 +354,14 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
     def test_nbm_qpf_two_cycle_ownership_schedule_and_callbacks_are_bounded(self) -> None:
         text = NBM_QPF.read_text(encoding="utf-8")
         self.assertIn('- cron: "18 2,8,14,20 * * *"', text)
-        self.assertIn('- cron: "4 3,9,15,21 * * *"', text)
-        self.assertIn("Proposed source-readiness schedule for maintainer review", text)
+        self.assertIn('- cron: "10 3,9,15,21 * * *"', text)
+        self.assertEqual(text.count("- cron:"), 2)
+        self.assertIn("Approved source-readiness schedule", text)
         self.assertIn('source("scripts/build_nbm_qpf_candidate.R")', text)
-        self.assertIn("qpf_discover_cycle(", text)
+        self.assertEqual(text.count("qpf_discover_cycle("), 1)
+        self.assertIn("canonical_cycle=\"$(jq -er '.current_cycle_utc'", text)
+        self.assertIn('"${CANDIDATE_CYCLE}" < "${canonical_cycle}"', text)
+        self.assertIn("should_build=false", text)
         self.assertEqual(
             text.count("--allowlist docs/data/nbm-qpf/nbm_qpf_manifest.json"), 2
         )
