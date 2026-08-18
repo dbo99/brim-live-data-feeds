@@ -34,39 +34,79 @@ class WinterStormLevelsWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(crons, ["8 2,8,14,20 * * *", "54 2,8,14,20 * * *"])
 
     def test_checkout_uses_selected_branch_tip(self) -> None:
-        self.assertIn("ref: ${{ github.ref_name }}", self.text)
+        self.assertIn(
+            "ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}",
+            self.text,
+        )
+        self.assertIn("ref: ${{ needs.prepare-candidate.outputs.source-sha }}", self.text)
         self.assertNotIn("github.sha", self.text)
 
     def test_publication_is_product_allowlisted_and_non_force(self) -> None:
-        staged = re.findall(r"^\s*git add (.+)$", self.text, flags=re.MULTILINE)
-        self.assertEqual(staged, ["-- docs/data/winter-storm-levels"])
-        self.assertIn("git diff --cached --name-only", self.text)
-        self.assertIn("docs/data/winter-storm-levels/*", self.text)
-        self.assertIn('git push origin "HEAD:${GITHUB_REF}"', self.text)
-        self.assertNotIn("HEAD:main", self.text)
+        manifest = "docs/data/winter-storm-levels/winter_storm_levels_manifest.json"
+        owned_root = "docs/data/winter-storm-levels/nbm/snow-level"
+        self.assertEqual(self.text.count(f"--allowlist {manifest}"), 2)
+        self.assertEqual(self.text.count(f"--owned-root {owned_root}"), 2)
+        self.assertIn("scripts/main_publisher.py prepare", self.text)
+        self.assertIn("scripts/main_publisher.py publish", self.text)
+        self.assertEqual(self.text.count("scripts/winter_storm_levels_publisher.py"), 5)
+        self.assertNotRegex(self.text, r"(?m)^\s+git (add|commit|push)\b")
         self.assertNotIn("git pull", self.text)
         self.assertNotRegex(self.text, r"\bgit (merge|rebase)\b")
-        self.assertNotRegex(self.text, r"(?m)^\s*git push\s*$")
         self.assertNotRegex(self.text, r"git push[^\n]*(--force|-f\b)")
 
     def test_validation_precedes_publication(self) -> None:
         build = self.text.index("Build and validate Winter Storm Levels bundle")
-        commit = self.text.index("Commit updated Winter Storm Levels bundle")
-        self.assertLess(build, commit)
+        validate = self.text.index(
+            "Validate and describe Winter Storm Levels publication candidate"
+        )
+        publish_job = self.text.index("  publish-to-main:")
+        self.assertLess(build, validate)
+        self.assertLess(validate, publish_job)
         self.assertIn(
             "if: steps.run-mode.outputs.publish == 'true' && "
             "steps.bundle.outcome == 'success' && "
-            "steps.bundle.outputs.build_started == 'true' && "
-            "steps.upload-bundle.outcome == 'success'",
+            "steps.bundle.outputs.build_started == 'true'",
+            self.text,
+        )
+        self.assertIn(
+            "needs.prepare-candidate.outputs.publish == 'true' && "
+            "needs.prepare-candidate.outputs.build-started == 'true' && "
+            "github.ref == 'refs/heads/main'",
             self.text,
         )
 
     def test_shared_writer_concurrency_queues(self) -> None:
         self.assertIn("group: live-data-feed-writes-${{ github.ref }}", self.text)
-        self.assertIn("cancel-in-progress: false", self.text)
-        self.assertIn("queue: max", self.text)
+        self.assertIn("group: brim-live-main-publish", self.text)
+        self.assertEqual(self.text.count("cancel-in-progress: false"), 2)
+        self.assertEqual(self.text.count("queue: max"), 2)
         groups = re.findall(r"(?m)^\s+group:\s*(.+)$", self.text)
-        self.assertEqual(groups, ["live-data-feed-writes-${{ github.ref }}"])
+        self.assertEqual(
+            groups,
+            ["live-data-feed-writes-${{ github.ref }}", "brim-live-main-publish"],
+        )
+
+    def test_prepare_is_read_only_and_publish_is_the_only_write_job(self) -> None:
+        prepare, publish = self.text.split("  publish-to-main:\n", 1)
+        self.assertIn("permissions: {}", prepare)
+        self.assertIn("  prepare-candidate:\n", prepare)
+        self.assertIn("      contents: read", prepare)
+        self.assertNotIn("contents: write", prepare)
+        self.assertEqual(publish.count("contents: write"), 1)
+        self.assertIn("actions/upload-artifact@v7", prepare)
+        self.assertIn("actions/download-artifact@v8", publish)
+
+    def test_producer_always_builds_runner_temporary_candidate(self) -> None:
+        self.assertIn('BRIM_WSL_PUBLISH: "false"', self.text)
+        self.assertIn(
+            'echo "output_root=${RUNNER_TEMP}/winter-storm-levels-bundle"',
+            self.text,
+        )
+        self.assertIn(
+            'candidate_artifact_root="${RUNNER_TEMP}/winter-storm-levels-candidate"',
+            self.text,
+        )
+        self.assertNotIn("/home/runner/", self.text)
 
     def test_scheduled_publication_is_guarded_by_inventory_preflight(self) -> None:
         run_mode = self.text.index("Resolve publication mode")
@@ -87,12 +127,11 @@ class WinterStormLevelsWorkflowSafetyTests(unittest.TestCase):
 
     def test_guarded_noops_cannot_enter_publication_transaction(self) -> None:
         self.assertIn("steps.bundle.outputs.build_started == 'true'", self.text)
-        self.assertIn("steps.upload-bundle.outcome == 'success'", self.text)
         self.assertIn("Upload guarded no-op diagnostics", self.text)
         self.assertIn("steps.bundle.outputs.build_started != 'true'", self.text)
         self.assertNotRegex(
             self.text,
-            r"(?s)SOURCE_NOT_READY.*git add -- docs/data/winter-storm-levels",
+            r"(?s)SOURCE_NOT_READY.*scripts/main_publisher.py prepare",
         )
 
     def test_manual_dry_run_bypasses_guard_but_manual_publish_is_guarded(self) -> None:
@@ -104,14 +143,19 @@ class WinterStormLevelsWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("Feature branches are dry-run only.", self.text)
 
     def test_final_publication_guard_requires_strictly_newer_cycle(self) -> None:
-        self.assertIn('git show "HEAD:${canonical_manifest}"', self.text)
-        self.assertIn(
-            '[[ "${candidate_cycle}" < "${current_cycle}" || '
-            '"${candidate_cycle}" == "${current_cycle}" ]]',
-            self.text,
-        )
-        self.assertIn("publication_attempted=false", self.text)
-        self.assertIn("Publication guard accepted", self.text)
+        callback = (ROOT / "scripts" / "winter_storm_levels_publisher.py").read_text()
+        self.assertIn("candidate.current_cycle < canonical.current_cycle", callback)
+        self.assertIn("candidate.current_cycle == canonical.current_cycle", callback)
+        self.assertIn("same-cycle Winter Storm Levels states conflict", callback)
+        self.assertIn("newer complete cycle advanced with exact two-cycle retention", callback)
+
+    def test_publication_uses_schema2_fresh_main_transaction(self) -> None:
+        self.assertIn("winter_storm_two_cycle_state_sha256_v1", self.text)
+        self.assertIn("--target-ref refs/heads/main", self.text)
+        self.assertIn("BRIM_LIVE_MAIN_PUBLISH: \"true\"", self.text)
+        self.assertIn("--candidate-validator scripts/winter_storm_levels_publisher.py", self.text)
+        self.assertIn("--reconcile-callback scripts/winter_storm_levels_publisher.py", self.text)
+        self.assertIn("--staged-validator scripts/winter_storm_levels_publisher.py", self.text)
 
     def test_preflight_is_inventory_only_and_machine_readable(self) -> None:
         preflight = PREFLIGHT.read_text()
