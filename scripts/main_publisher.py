@@ -24,6 +24,7 @@ from typing import Dict, Iterable, List, Mapping, Sequence, Set
 
 MAIN_REF = "refs/heads/main"
 METADATA_SCHEMA_VERSION = 1
+OWNED_ROOT_METADATA_SCHEMA_VERSION = 2
 
 
 class PublisherError(RuntimeError):
@@ -76,6 +77,94 @@ def _normalize_allowlist(values: Iterable[str]) -> List[str]:
     if len(paths) != len(set(paths)):
         raise PublisherError("the product allowlist contains duplicate paths")
     return paths
+
+
+def _normalize_owned_roots(
+    values: Iterable[str], *, fixed_paths: Sequence[str]
+) -> List[str]:
+    roots = [_normalize_relpath(value) for value in values]
+    if len(roots) != len(set(roots)):
+        raise PublisherError("the product owned-root list contains duplicate paths")
+    for root in roots:
+        parts = PurePosixPath(root).parts
+        if len(parts) < 4:
+            raise PublisherError(f"owned root is too broad for one product: {root}")
+        if root in fixed_paths:
+            raise PublisherError(f"owned root overlaps a fixed product file: {root}")
+    for index, root in enumerate(roots):
+        prefix = f"{root}/"
+        for other in roots[index + 1 :]:
+            if other.startswith(prefix) or root.startswith(f"{other}/"):
+                raise PublisherError(
+                    f"owned roots must not overlap or nest: {root}, {other}"
+                )
+    for fixed in fixed_paths:
+        if any(fixed.startswith(f"{root}/") for root in roots):
+            raise PublisherError(
+                f"fixed product path must not be nested in an owned root: {fixed}"
+            )
+    return roots
+
+
+def _path_is_owned(
+    path: str, fixed_paths: Set[str], owned_roots: Sequence[str]
+) -> bool:
+    return path in fixed_paths or any(path.startswith(f"{root}/") for root in owned_roots)
+
+
+def _require_owned(
+    paths: Set[str],
+    fixed_paths: Set[str],
+    owned_roots: Sequence[str],
+    stage: str,
+) -> None:
+    unexpected = sorted(
+        path
+        for path in paths
+        if not _path_is_owned(path, fixed_paths, owned_roots)
+    )
+    if unexpected:
+        raise PublisherError(
+            f"{stage} touched paths outside the allowlist/declared owned roots: "
+            f"{unexpected}"
+        )
+
+
+def _validate_desired_inventory(
+    inventory: Sequence[str],
+    *,
+    fixed_paths: Sequence[str],
+    owned_roots: Sequence[str],
+) -> None:
+    fixed = set(fixed_paths)
+    missing = sorted(fixed - set(inventory))
+    if missing:
+        raise PublisherError(f"candidate is missing fixed product files: {missing}")
+    _require_owned(set(inventory), fixed, owned_roots, "candidate artifact")
+
+
+def _ensure_ownership_tree_safe(
+    repo: Path, fixed_paths: Sequence[str], owned_roots: Sequence[str]
+) -> None:
+    for declared in (*fixed_paths, *owned_roots):
+        current = repo
+        for part in PurePosixPath(declared).parts:
+            current /= part
+            if current.is_symlink():
+                raise PublisherError(
+                    f"declared product ownership traverses a symlink: {declared}"
+                )
+    for root in owned_roots:
+        path = repo / root
+        if path.exists() and not path.is_dir():
+            raise PublisherError(f"owned product root is not a directory: {root}")
+        if path.is_dir():
+            for member in path.rglob("*"):
+                if member.is_symlink():
+                    raise PublisherError(
+                        f"owned product root contains a symlink: "
+                        f"{member.relative_to(repo).as_posix()}"
+                    )
 
 
 def _sha256(path: Path) -> str:
@@ -137,6 +226,9 @@ def prepare_metadata(args: argparse.Namespace) -> int:
     root = Path(args.candidate_root).resolve()
     output = Path(args.output).resolve()
     allowlist = _normalize_allowlist(args.allowlist)
+    owned_roots = _normalize_owned_roots(
+        getattr(args, "owned_root", None) or (), fixed_paths=allowlist
+    )
     product_id = _validate_product_id(args.product_id)
     source_sha = _validate_source_sha(args.source_event_sha)
     if (
@@ -155,14 +247,19 @@ def prepare_metadata(args: argparse.Namespace) -> int:
         raise PublisherError("semantic key must be nonempty")
 
     inventory = _candidate_inventory(root)
-    if inventory != sorted(allowlist):
+    if owned_roots:
+        _validate_desired_inventory(
+            inventory, fixed_paths=allowlist, owned_roots=owned_roots
+        )
+    elif inventory != sorted(allowlist):
         raise PublisherError(
             "candidate inventory does not exactly match allowlist: "
             f"candidate={inventory!r}, allowlist={sorted(allowlist)!r}"
         )
 
     files = []
-    for relative_path in allowlist:
+    file_inventory = inventory if owned_roots else allowlist
+    for relative_path in file_inventory:
         path = root / relative_path
         files.append(
             {
@@ -173,7 +270,11 @@ def prepare_metadata(args: argparse.Namespace) -> int:
         )
 
     metadata = {
-        "schema_version": METADATA_SCHEMA_VERSION,
+        "schema_version": (
+            OWNED_ROOT_METADATA_SCHEMA_VERSION
+            if owned_roots
+            else METADATA_SCHEMA_VERSION
+        ),
         "product_id": product_id,
         "semantic_key": {
             "type": args.semantic_key_type,
@@ -186,6 +287,8 @@ def prepare_metadata(args: argparse.Namespace) -> int:
         .replace("+00:00", "Z"),
         "files": files,
     }
+    if owned_roots:
+        metadata["owned_roots"] = owned_roots
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -201,19 +304,29 @@ def validate_candidate_metadata(
     product_id: str,
     allowlist: Sequence[str],
     expected_source_sha: str,
+    owned_roots: Sequence[str] = (),
 ) -> Dict[str, object]:
     metadata = _read_metadata(metadata_path)
-    if set(metadata) != {
+    expected_fields = {
         "schema_version",
         "product_id",
         "semantic_key",
         "source_event_sha",
         "prepared_at_utc",
         "files",
-    }:
+    }
+    expected_schema = METADATA_SCHEMA_VERSION
+    if owned_roots:
+        expected_fields.add("owned_roots")
+        expected_schema = OWNED_ROOT_METADATA_SCHEMA_VERSION
+    if set(metadata) != expected_fields:
         raise PublisherError("candidate metadata contains missing or unexpected fields")
-    if metadata.get("schema_version") != METADATA_SCHEMA_VERSION:
+    if metadata.get("schema_version") != expected_schema:
         raise PublisherError("unsupported candidate metadata schema version")
+    if owned_roots and metadata.get("owned_roots") != list(owned_roots):
+        raise PublisherError(
+            "candidate metadata owned roots do not match static publisher ownership"
+        )
     if metadata.get("product_id") != product_id:
         raise PublisherError("candidate product ID does not match publisher request")
     if str(metadata.get("source_event_sha", "")).lower() != expected_source_sha:
@@ -233,10 +346,24 @@ def validate_candidate_metadata(
     if not isinstance(file_entries, list) or not file_entries:
         raise PublisherError("candidate file inventory must be a nonempty array")
     paths = [entry.get("path") if isinstance(entry, dict) else None for entry in file_entries]
-    if paths != list(allowlist):
-        raise PublisherError("candidate metadata allowlist does not match publisher allowlist")
-    if _candidate_inventory(root) != sorted(allowlist):
-        raise PublisherError("downloaded candidate inventory does not exactly match allowlist")
+    inventory = _candidate_inventory(root)
+    if owned_roots:
+        _validate_desired_inventory(
+            inventory, fixed_paths=allowlist, owned_roots=owned_roots
+        )
+        if paths != inventory:
+            raise PublisherError(
+                "candidate metadata is not the complete desired-state inventory"
+            )
+    else:
+        if paths != list(allowlist):
+            raise PublisherError(
+                "candidate metadata allowlist does not match publisher allowlist"
+            )
+        if inventory != sorted(allowlist):
+            raise PublisherError(
+                "downloaded candidate inventory does not exactly match allowlist"
+            )
 
     for entry in file_entries:
         if not isinstance(entry, dict):
@@ -260,7 +387,7 @@ def validate_candidate_metadata(
         raise PublisherError("candidate artifact must use the candidate/ plus metadata layout")
     expected_artifact_files = {
         "candidate-metadata.json",
-        *{f"candidate/{path}" for path in allowlist},
+        *{f"candidate/{path}" for path in inventory},
     }
     artifact_files = set(_candidate_inventory(root.parent))
     if artifact_files != expected_artifact_files:
@@ -314,9 +441,8 @@ def _staged_paths(repo: Path) -> Set[str]:
 
 
 def _require_allowed(paths: Set[str], allowlist: Set[str], stage: str) -> None:
-    unexpected = sorted(paths - allowlist)
-    if unexpected:
-        raise PublisherError(f"{stage} touched paths outside the allowlist: {unexpected}")
+    """Backward-compatible fixed-path assertion used by product test fixtures."""
+    _require_owned(paths, allowlist, (), stage)
 
 
 def _callback_command(path: Path) -> List[str]:
@@ -375,6 +501,7 @@ def _publish_attempt(
     metadata_path: Path,
     product_id: str,
     allowlist: Sequence[str],
+    owned_roots: Sequence[str],
     source_sha: str,
     candidate_validator: Path,
     reconcile_callback: Path,
@@ -387,6 +514,7 @@ def _publish_attempt(
         metadata_path=metadata_path,
         product_id=product_id,
         allowlist=allowlist,
+        owned_roots=owned_roots,
         expected_source_sha=source_sha,
     )
 
@@ -425,6 +553,7 @@ def _publish_attempt(
             ],
             cwd=worktree,
         )
+        _ensure_ownership_tree_safe(worktree, allowlist, owned_roots)
 
         callback_environment = dict(os.environ)
         callback_environment.update(
@@ -435,6 +564,8 @@ def _publish_attempt(
                 "BRIM_PUBLISH_PRODUCT_ID": product_id,
                 "BRIM_PUBLISH_RESULT": str(result_path),
                 "BRIM_PUBLISH_WORKTREE": str(worktree),
+                "BRIM_PUBLISH_FIXED_PATHS": json.dumps(list(allowlist)),
+                "BRIM_PUBLISH_OWNED_ROOTS": json.dumps(list(owned_roots)),
             }
         )
 
@@ -474,7 +605,8 @@ def _publish_attempt(
 
         allowed = set(allowlist)
         changed = _unstaged_and_untracked_paths(worktree) | _staged_paths(worktree)
-        _require_allowed(changed, allowed, "reconciliation")
+        _ensure_ownership_tree_safe(worktree, allowlist, owned_roots)
+        _require_owned(changed, allowed, owned_roots, "reconciliation")
         if decision == "no-op":
             if changed:
                 raise PublisherError("no-op reconciliation modified product paths")
@@ -490,9 +622,12 @@ def _publish_attempt(
             print(f"Publisher no-op for {product_id}: candidate produced an empty diff")
             return "no-op"
 
-        _run(["git", "add", "-A", "--", *allowlist], cwd=worktree)
+        _run(
+            ["git", "add", "-A", "--", *allowlist, *owned_roots],
+            cwd=worktree,
+        )
         staged = _staged_paths(worktree)
-        _require_allowed(staged, allowed, "staging")
+        _require_owned(staged, allowed, owned_roots, "staging")
         if _unstaged_and_untracked_paths(worktree):
             raise PublisherError("reconciliation left unstaged or untracked changes")
         if not staged:
@@ -510,7 +645,8 @@ def _publish_attempt(
         staged_after = _staged_paths(worktree)
         if staged_after != staged or _unstaged_and_untracked_paths(worktree):
             raise PublisherError("staged validator modified the publication transaction")
-        _require_allowed(staged_after, allowed, "post-validation staging")
+        _ensure_ownership_tree_safe(worktree, allowlist, owned_roots)
+        _require_owned(staged_after, allowed, owned_roots, "post-validation staging")
 
         _run(["git", "commit", "-m", commit_subject], cwd=worktree)
         push = _run(
@@ -538,6 +674,9 @@ def publish(args: argparse.Namespace) -> int:
     source_sha = _verify_main_authorization(args.target_ref)
     product_id = _validate_product_id(args.product_id)
     allowlist = _normalize_allowlist(args.allowlist)
+    owned_roots = _normalize_owned_roots(
+        getattr(args, "owned_root", None) or (), fixed_paths=allowlist
+    )
     if not args.commit_subject.strip() or "\n" in args.commit_subject:
         raise PublisherError("commit subject must be one nonempty line")
 
@@ -580,6 +719,7 @@ def publish(args: argparse.Namespace) -> int:
             metadata_path=metadata_path,
             product_id=product_id,
             allowlist=allowlist,
+            owned_roots=owned_roots,
             source_sha=source_sha,
             candidate_validator=callbacks[0],
             reconcile_callback=callbacks[1],
@@ -612,6 +752,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--semantic-key", required=True)
     prepare_parser.add_argument("--source-event-sha", required=True)
     prepare_parser.add_argument("--allowlist", action="append", required=True)
+    prepare_parser.add_argument("--owned-root", action="append")
     prepare_parser.set_defaults(handler=prepare_metadata)
 
     publish_parser = subparsers.add_parser(
@@ -624,6 +765,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish_parser.add_argument("--target-ref", default=MAIN_REF)
     publish_parser.add_argument("--commit-subject", required=True)
     publish_parser.add_argument("--allowlist", action="append", required=True)
+    publish_parser.add_argument("--owned-root", action="append")
     publish_parser.add_argument("--candidate-validator", required=True)
     publish_parser.add_argument("--reconcile-callback", required=True)
     publish_parser.add_argument("--staged-validator", required=True)
