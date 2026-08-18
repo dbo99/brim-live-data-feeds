@@ -6,8 +6,7 @@ on:
     # Every 4 hours. GitHub schedules are UTC and may not run exactly on the minute.
     - cron: "23 */4 * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -15,9 +14,11 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
 
     steps:
       - name: Check out latest branch tip
@@ -60,43 +61,94 @@ jobs:
             any::purrr
             any::curl
 
-      - name: Build latest USGS CA streamflow GeoJSON
+      - name: Build isolated USGS streamflow candidate
         shell: Rscript {0}
         env:
           USGS_STREAMFLOW_HISTORY_MODE: none
           USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH: "100"
           USGS_STREAMFLOW_ALLOW_DEGRADED_PUBLISH: "false"
+          USGS_STREAMFLOW_GEOJSON: ${{ runner.temp }}/usgs-streamflow-candidate/candidate/docs/data/usgs_streamflow_latest_ca.geojson
+          USGS_STREAMFLOW_SUMMARY_JSON: ${{ runner.temp }}/usgs-streamflow-candidate/candidate/docs/data/usgs_streamflow_latest_ca_summary.json
           # Optional: create this repository secret for higher USGS Water Data API rate limits.
           API_USGS_PAT: ${{ secrets.API_USGS_PAT }}
         run: |
           source("scripts/build_usgs_streamflow_latest_ca.R")
 
-      - name: Commit updated feed files
+      - name: Validate and describe USGS streamflow candidate artifact
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/usgs-streamflow-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/data/usgs_streamflow_latest_ca.geojson \
-            docs/data/usgs_streamflow_latest_ca_summary.json
+          python3 scripts/usgs_streamflow_publisher.py validate \
+            --root "${candidate_root}"
 
-          if git diff --cached --quiet; then
-            echo "No USGS streamflow feed changes to commit."
-            exit 0
-          fi
+          semantic_time="$(jq -er '.feed_build_time_utc' \
+            "${candidate_root}/docs/data/usgs_streamflow_latest_ca_summary.json")"
 
-          git commit -m "Update USGS CA streamflow latest feed"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id usgs-streamflow-latest-ca \
+            --semantic-key-type feed_build_time_utc \
+            --semantic-key "${semantic_time}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/usgs_streamflow_latest_ca.geojson \
+            --allowlist docs/data/usgs_streamflow_latest_ca_summary.json
 
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+      - name: Upload validated USGS streamflow publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: usgs-streamflow-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/usgs-streamflow-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated USGS streamflow publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: usgs-streamflow-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/usgs-streamflow-candidate
+
+      - name: Reconcile and publish USGS streamflow candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+
+          candidate_artifact_root="${RUNNER_TEMP}/usgs-streamflow-candidate"
+
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id usgs-streamflow-latest-ca \
+            --target-ref refs/heads/main \
+            --commit-subject "Update USGS CA streamflow latest feed" \
+            --allowlist docs/data/usgs_streamflow_latest_ca.geojson \
+            --allowlist docs/data/usgs_streamflow_latest_ca_summary.json \
+            --candidate-validator scripts/usgs_streamflow_publisher.py \
+            --reconcile-callback scripts/usgs_streamflow_publisher.py \
+            --staged-validator scripts/usgs_streamflow_publisher.py

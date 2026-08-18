@@ -7,8 +7,7 @@ on:
     # 16:37 UTC is roughly morning California time, when many daily reports are available.
     - cron: "37 0,8,16 * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -16,9 +15,11 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
       - name: Check out latest branch tip
@@ -49,39 +50,95 @@ jobs:
             repos = "https://cloud.r-project.org"
           )
 
-      - name: Build latest CoCoRaHS daily precip GeoJSON
+      - name: Build isolated CoCoRaHS candidate
         shell: Rscript {0}
+        env:
+          COCORAHS_CA_DAILY_PRECIP_GEOJSON: ${{ runner.temp }}/cocorahs-candidate/candidate/docs/data/cocorahs_daily_precip_ca_latest.geojson
+          COCORAHS_CA_DAILY_PRECIP_SUMMARY_JSON: ${{ runner.temp }}/cocorahs-candidate/candidate/docs/data/cocorahs_daily_precip_ca_latest_summary.json
+          COCORAHS_CONUS_DAILY_PRECIP_GEOJSON: ${{ runner.temp }}/cocorahs-candidate/candidate/docs/data/cocorahs_daily_precip_conus_latest.geojson
+          COCORAHS_CONUS_DAILY_PRECIP_SUMMARY_JSON: ${{ runner.temp }}/cocorahs-candidate/candidate/docs/data/cocorahs_daily_precip_conus_latest_summary.json
         run: |
           source("scripts/build_cocorahs_daily_precip_latest.R")
 
-      - name: Commit updated feed files
+      - name: Validate and describe CoCoRaHS candidate artifact
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/cocorahs-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/data/cocorahs_daily_precip_ca_latest.geojson \
-            docs/data/cocorahs_daily_precip_ca_latest_summary.json \
-            docs/data/cocorahs_daily_precip_conus_latest.geojson \
-            docs/data/cocorahs_daily_precip_conus_latest_summary.json
+          python3 scripts/cocorahs_publisher.py validate \
+            --root "${candidate_root}"
 
-          if git diff --cached --quiet; then
-            echo "No CoCoRaHS feed changes to commit."
-            exit 0
-          fi
+          semantic_time="$(jq -er '.feed_build_time_utc' \
+            "${candidate_root}/docs/data/cocorahs_daily_precip_conus_latest_summary.json")"
 
-          git commit -m "Update CoCoRaHS daily precip feed"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id cocorahs-daily-precip \
+            --semantic-key-type feed_build_time_utc \
+            --semantic-key "${semantic_time}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/cocorahs_daily_precip_ca_latest.geojson \
+            --allowlist docs/data/cocorahs_daily_precip_ca_latest_summary.json \
+            --allowlist docs/data/cocorahs_daily_precip_conus_latest.geojson \
+            --allowlist docs/data/cocorahs_daily_precip_conus_latest_summary.json
 
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+      - name: Upload validated CoCoRaHS publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: cocorahs-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cocorahs-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated CoCoRaHS publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: cocorahs-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cocorahs-candidate
+
+      - name: Reconcile and publish CoCoRaHS candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+
+          candidate_artifact_root="${RUNNER_TEMP}/cocorahs-candidate"
+
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id cocorahs-daily-precip \
+            --target-ref refs/heads/main \
+            --commit-subject "Update CoCoRaHS daily precip feed" \
+            --allowlist docs/data/cocorahs_daily_precip_ca_latest.geojson \
+            --allowlist docs/data/cocorahs_daily_precip_ca_latest_summary.json \
+            --allowlist docs/data/cocorahs_daily_precip_conus_latest.geojson \
+            --allowlist docs/data/cocorahs_daily_precip_conus_latest_summary.json \
+            --candidate-validator scripts/cocorahs_publisher.py \
+            --reconcile-callback scripts/cocorahs_publisher.py \
+            --staged-validator scripts/cocorahs_publisher.py
