@@ -61,7 +61,8 @@ class WorkflowSafetyTests(unittest.TestCase):
             'elif [[ "${PUBLISH_INPUT}" == "true" && "${REF_NAME}" == "main" ]]',
             self.text,
         )
-        self.assertIn("major_water_supply_basin_forecasts_dry_run.json", self.text)
+        self.assertIn("${RUNNER_TEMP}/cnrfc-forecast-candidate", self.text)
+        self.assertIn("needs.prepare-candidate.outputs.publish == 'true'", self.text)
 
     def test_scheduled_run_selects_main_tip_and_manual_run_selects_branch_tip(self) -> None:
         self.assertIn(
@@ -70,20 +71,23 @@ class WorkflowSafetyTests(unittest.TestCase):
         )
         self.assertNotIn("github.sha", self.text)
 
-    def test_publication_is_allowlisted_and_non_fast_forward_fails_safely(self) -> None:
+    def test_publication_uses_the_exact_shared_transaction_allowlist(self) -> None:
         staged = re.findall(r"^\s*git add (.+)$", self.text, flags=re.MULTILINE)
-        self.assertEqual(staged, ["docs/data/major_water_supply_basin_forecasts.json"])
-        self.assertIn('git push origin "HEAD:${GITHUB_REF}"', self.text)
-        self.assertNotIn("HEAD:main", self.text)
-        self.assertNotIn("git pull --rebase", self.text)
-        self.assertNotRegex(self.text, r"git push[^\n]*(--force|-f\b)")
-        self.assertIn("if ! git push", self.text)
+        self.assertEqual(staged, [])
+        self.assertIn("scripts/main_publisher.py prepare", self.text)
+        self.assertIn("scripts/main_publisher.py publish", self.text)
+        self.assertEqual(
+            self.text.count("--allowlist docs/data/major_water_supply_basin_forecasts.json"),
+            2,
+        )
+        self.assertIn("group: brim-live-main-publish", self.text)
+        self.assertNotRegex(self.text, r"(?m)^\s+git (add|commit|push)\b")
 
     def test_failed_validation_cannot_reach_publish_step(self) -> None:
-        build_index = self.text.index("Build and validate major water-supply basin forecast feed")
-        commit_index = self.text.index("Commit updated feed file")
-        self.assertLess(build_index, commit_index)
-        self.assertIn("if: steps.run-mode.outputs.publish == 'true'", self.text)
+        build_index = self.text.index("Build and validate isolated CNRFC candidate")
+        publish_index = self.text.index("Reconcile and publish CNRFC candidate")
+        self.assertLess(build_index, publish_index)
+        self.assertIn("if: ${{ needs.prepare-candidate.outputs.publish == 'true'", self.text)
 
     def test_writer_concurrency_queues_instead_of_cancelling(self) -> None:
         match = re.search(

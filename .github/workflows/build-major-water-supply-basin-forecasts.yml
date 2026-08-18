@@ -16,8 +16,7 @@ on:
     - cron: "56 10,16 * * *"
       timezone: "America/Los_Angeles"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -25,9 +24,14 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.run-mode.outputs.publish }}
+      source-sha: ${{ steps.source.outputs.sha }}
 
     steps:
       - name: Check out selected branch tip
@@ -35,6 +39,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
           fetch-depth: 0
+
+      - name: Record candidate source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve publication mode and logical slot
         id: run-mode
@@ -63,12 +72,8 @@ jobs:
             slot_args=(--override "${LOGICAL_SLOT_INPUT}")
           fi
           logical_slot="$(python3 scripts/cnrfc_forecast_slot.py "${slot_args[@]}")"
-
-          if [[ "${publish}" == "true" ]]; then
-            output_path="docs/data/major_water_supply_basin_forecasts.json"
-          else
-            output_path="${RUNNER_TEMP}/major_water_supply_basin_forecasts_dry_run.json"
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/cnrfc-forecast-candidate"
+          output_path="${candidate_artifact_root}/candidate/docs/data/major_water_supply_basin_forecasts.json"
 
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "logical_slot=${logical_slot}" >> "${GITHUB_OUTPUT}"
@@ -100,7 +105,21 @@ jobs:
             any::jsonlite
             any::xml2
 
-      - name: Build and validate major water-supply basin forecast feed
+      - name: Seed isolated CNRFC candidate path
+        shell: bash
+        env:
+          OUTPUT_PATH: ${{ steps.run-mode.outputs.output_path }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$(dirname "${OUTPUT_PATH}")"
+          if [[ -f docs/data/major_water_supply_basin_forecasts.json ]]; then
+            install -m 0644 \
+              docs/data/major_water_supply_basin_forecasts.json \
+              "${OUTPUT_PATH}"
+          fi
+
+      - name: Build and validate isolated CNRFC candidate
         shell: Rscript {0}
         env:
           CNRFC_FORECAST_OUTPUT_JSON: ${{ steps.run-mode.outputs.output_path }}
@@ -114,6 +133,38 @@ jobs:
         run: |
           source("scripts/build_major_water_supply_basin_forecasts.R")
 
+      - name: Validate and describe CNRFC candidate artifact
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          candidate_artifact_root="${RUNNER_TEMP}/cnrfc-forecast-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+
+          python3 scripts/cnrfc_forecast_publisher.py validate \
+            --root "${candidate_root}"
+          semantic_state="$(python3 scripts/cnrfc_forecast_publisher.py semantic-key \
+            --root "${candidate_root}")"
+
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id cnrfc-major-water-supply-forecasts \
+            --semantic-key-type cnrfc_record_state_sha256_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${SOURCE_SHA}" \
+            --allowlist docs/data/major_water_supply_basin_forecasts.json
+
+      - name: Upload validated CNRFC publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: cnrfc-forecast-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cnrfc-forecast-candidate
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Upload CNRFC forecast run diagnostics
         if: always()
         uses: actions/upload-artifact@v7
@@ -123,30 +174,50 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Commit updated feed file
-        if: steps.run-mode.outputs.publish == 'true'
+  publish-to-main:
+    if: ${{ needs.prepare-candidate.outputs.publish == 'true' && github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out candidate source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-candidate.outputs.source-sha }}
+          fetch-depth: 0
+
+      - name: Download validated CNRFC publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: cnrfc-forecast-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cnrfc-forecast-candidate
+
+      - name: Reconcile and publish CNRFC candidate onto current main
         shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source-sha }}
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_REF_TYPE}" != "branch" ]]; then
-            echo "Refusing to publish outside the main branch: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/cnrfc-forecast-candidate"
+          export GITHUB_SHA="${CANDIDATE_SOURCE_SHA}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/data/major_water_supply_basin_forecasts.json
-
-          if git diff --cached --quiet; then
-            echo "No substantive major water-supply basin forecast changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update major water-supply basin forecast feed"
-
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id cnrfc-major-water-supply-forecasts \
+            --target-ref refs/heads/main \
+            --commit-subject "Update major water-supply basin forecast feed" \
+            --allowlist docs/data/major_water_supply_basin_forecasts.json \
+            --candidate-validator scripts/cnrfc_forecast_publisher.py \
+            --reconcile-callback scripts/cnrfc_forecast_publisher.py \
+            --staged-validator scripts/cnrfc_forecast_publisher.py
