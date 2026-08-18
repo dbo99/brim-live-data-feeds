@@ -45,6 +45,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | GFS wind | `gfs_surface_wind` | NOAA/NCEP GFS | Hourly at :47 | GFS manifest | Yes |
 | HRRR wind | `hrrr_surface_wind` | NOAA/NCEP HRRR | Hourly at :33 | HRRR manifest | Yes |
 | NBM wind guidance | Not declared | NOAA/NCEP NBM | 01:23, 07:23, 13:23, 19:23 | NBM manifest | Yes |
+| NBM QPF | `nbm_qpf` | NOAA/NWS/NCEP/MDL NBM | Proposed 02:18/08:18/14:18/20:18 and fallback 03:04/09:04/15:04/21:04, pending maintainer approval | Unseeded `docs/data/nbm-qpf/nbm_qpf_manifest.json` | Yes |
 | ASOS/AWOS observed wind | `asos_awos_wind_obs` | NOAA Aviation Weather Center METAR cache | Twice hourly at :17 and :42 | GeoJSON, summary, and manifest | Yes |
 | USGS streamflow | Not declared | USGS Water Data API | Every 4 hours at :23 | GeoJSON and summary | No |
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
@@ -98,6 +99,7 @@ It does not mean every such file is a canonical consumer product.
 | GFS wind | `docs/data/wind/gfs_surface_wind_feed_manifest.json`<br>`docs/data/wind/gfs/surface/*.json`<br>`docs/data/wind/gfs_surface_wind_latest.json`<br>`docs/data/wind/gfs_surface_wind_latest_summary.json` | Manifest and selected rolling target are canonical; latest JSON/summary are compatibility outputs |
 | HRRR wind | `docs/data/wind/hrrr_surface_wind_feed_manifest.json`<br>`docs/data/wind/hrrr/surface/*.json`<br>`docs/data/wind/hrrr_surface_wind_latest.json`<br>`docs/data/wind/hrrr_surface_wind_latest_summary.json` | Manifest and selected rolling target are canonical; latest JSON/summary are compatibility outputs |
 | NBM wind guidance | `docs/data/wind/nbm_wind_guidance_feed_manifest.json`<br>`docs/data/wind/nbm/guidance/*.geojson`<br>`docs/data/wind/nbm_wind_guidance_latest_summary.json` | Manifest and selected target are canonical; summary is producer/QA metadata |
+| NBM QPF | `docs/data/nbm-qpf/nbm_qpf_manifest.json`<br>`docs/data/nbm-qpf/nbm/qpf/*.webp` | Approved future manifest and immutable-target root. The product is unseeded, is not yet hosted, and has no private BRIM consumer; implementation does not grant publication authority. |
 | ASOS/AWOS | `docs/data/wind/asos_awos_wind_latest.geojson`<br>`docs/data/wind/asos_awos_wind_latest_summary.json`<br>`docs/data/wind/asos_awos_wind_feed_manifest.json` | All three are canonical consumer/status products |
 | USGS streamflow | `docs/data/usgs_streamflow_latest_ca.geojson`<br>`docs/data/usgs_streamflow_latest_ca_summary.json` | Both are canonical consumer products |
 | USGS groundwater | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | Both are canonical consumer products |
@@ -989,16 +991,22 @@ ownership.
   fallbacks. Detailed source evidence is in
   [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
 
-## Offline NBM QPF candidate producer (not published)
+## NBM QPF publication implementation (unseeded; not published)
 
-`nbm_qpf` has an offline, R-centric complete-cycle candidate producer, but it
-is not yet a public product and has no workflow, canonical manifest, Pages
-path, publisher callback, schedule, or BRIM consumer contract. The producer is
+`nbm_qpf` has an R-centric complete-cycle candidate producer plus a bounded
+publication workflow and product-specific Python validator/reconciler. No QPF
+manifest or WebP is tracked under `docs/data`, no workflow has been dispatched,
+and the product is not yet hosted or consumed by private BRIM. The producer is
 [`scripts/build_nbm_qpf_candidate.R`](../scripts/build_nbm_qpf_candidate.R),
 with validation and transformation helpers in
 [`scripts/nbm_qpf_helpers.R`](../scripts/nbm_qpf_helpers.R) and the locked
 palette in
 [`data/input/nbm_qpf_palette.csv`](../data/input/nbm_qpf_palette.csv).
+The publication adapter is
+[`scripts/nbm_qpf_publisher.py`](../scripts/nbm_qpf_publisher.py), and
+[`.github/workflows/build-nbm-qpf.yml`](../.github/workflows/build-nbm-qpf.yml)
+separates read-only preparation from the shared `brim-live-main-publish`
+transaction.
 
 The candidate requires exactly ten deterministic NBM Core CONUS surface APCP
 records from one 00/06/12/18 UTC cycle: native preceding-six-hour
@@ -1011,7 +1019,7 @@ then applies the global fixed `brim_nbm_qpf_6h_west_v1` palette. Nodata and
 finite QPF below 0.01 inch are transparent; painted pixels have alpha 255.
 Targets are lossless VP8L RGBA WebPs with content-addressed names.
 
-One candidate root contains `nbm_qpf_candidate.json`, `validation.json`,
+One R candidate root contains `nbm_qpf_candidate.json`, `validation.json`,
 `preflight.csv`, and exactly ten referenced WebPs under the future product path
 shape `docs/data/nbm-qpf/nbm/qpf/`. The candidate manifest has no wall-clock
 generation field and declares itself nonpublication output. The validator
@@ -1040,12 +1048,32 @@ source set once, produces it twice, and requires 10/10 WebP byte/hash/name
 identity plus semantic candidate-manifest, palette, cycle maximum, and legend
 identity before delivering the first candidate.
 
-Two-cycle current/previous reconciliation, controlled deletion, canonical root
-manifest construction, Git publication, workflows, scheduling, Pages exposure,
-and BRIM consumption remain outside this producer gate. They require the shared
-publisher migration and separate maintainer review. No file from an offline
-candidate is a public API until that later publication/consumer contract is
-approved and implemented.
+The separate publication candidate has public schema `1.0.0`, one complete
+cycle, and only the approved manifest and immutable-target paths. On fresh
+`origin/main`, the callback classifies a complete candidate as NEW, SAME, STALE,
+or conflicting same-cycle state. An absent canonical product establishes an
+explicit ten-target `bootstrap` state. The next newer cycle establishes
+`steady` state with current and previous complete cycles and exactly 20 targets;
+every later advancement retains old current as previous and prunes only the old
+previous files within `docs/data/nbm-qpf/nbm/qpf/`. SAME and STALE are successful
+no-ops; malformed canonical state or conflicting same-cycle identity fails
+closed. The strict public validator rejects a one-cycle tree unless bootstrap is
+explicitly allowed for initial seeding.
+
+The only mutable path is `docs/data/nbm-qpf/nbm_qpf_manifest.json`; immutable
+targets are owned only beneath `docs/data/nbm-qpf/nbm/qpf/`. The public manifest
+selects targets and records current/previous cycles, the locked source, palette,
+spatial and freshness contracts, cycle-level legend metadata, exact ten-lead
+sets, per-target times/units/bounds/dimensions, bytes and SHA-256. Consumers must
+never select by directory listing or filename time.
+
+The workflow's proposed primary times are +138 minutes after each primary NBM
+cycle, with fallback at +184 minutes. These are a reviewable recommendation ten
+minutes behind the established Snow Levels source-readiness probes, not an
+approved live schedule. Merge, dispatch, first publication, Pages verification,
+and private BRIM integration remain separate maintainer decisions. Until an
+approved first run seeds the canonical manifest, these paths describe an
+unpublished additive contract rather than an available public API.
 
 ## Nonproduction workflows
 

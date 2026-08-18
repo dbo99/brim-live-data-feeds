@@ -1,0 +1,244 @@
+name: Build NBM QPF live feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycle_utc:
+        description: Optional explicit complete NBM cycle (YYYY-MM-DDTHH:00:00Z)
+        required: false
+        default: ""
+        type: string
+  schedule:
+    # Proposed source-readiness schedule for maintainer review: 138 and 184
+    # minutes after each primary NBM cycle, ten minutes behind the existing
+    # Snow Levels probes to avoid same-minute competition. Do not dispatch or
+    # merge for live publication until this exact timing is approved.
+    - cron: "18 2,8,14,20 * * *"
+    - cron: "4 3,9,15,21 * * *"
+
+permissions: {}
+
+concurrency:
+  group: live-data-feed-writes-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  prepare-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      should_build: ${{ steps.decision.outputs.should_build }}
+
+    steps:
+      - name: Check out selected branch tip
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Record candidate source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Install lightweight preflight dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: nbm-qpf-preflight-v1
+          packages: |
+            any::digest
+            any::httr2
+
+      - name: Discover one complete ten-lead NBM QPF cycle
+        id: preflight
+        shell: Rscript {0}
+        env:
+          EXPLICIT_CYCLE: ${{ inputs.cycle_utc || '' }}
+        run: |
+          source("scripts/nbm_qpf_helpers.R")
+          explicit <- Sys.getenv("EXPLICIT_CYCLE", unset = "")
+          discovery <- qpf_discover_cycle(
+            now = Sys.time(),
+            lookback_hours = 36,
+            explicit_cycle = if (nzchar(explicit)) explicit else NULL
+          )
+          cat(
+            "cycle=", qpf_iso_utc(discovery$cycle), "\n",
+            sep = "", file = Sys.getenv("GITHUB_OUTPUT"), append = TRUE
+          )
+
+      - name: Compare preflight cycle with branch-tip canonical state
+        id: decision
+        shell: bash
+        env:
+          CANDIDATE_CYCLE: ${{ steps.preflight.outputs.cycle }}
+        run: |
+          set -euo pipefail
+          manifest="docs/data/nbm-qpf/nbm_qpf_manifest.json"
+          should_build=true
+          if [[ -f "${manifest}" ]]; then
+            canonical_cycle="$(jq -er '.current_cycle_utc' "${manifest}")"
+            if [[ "${CANDIDATE_CYCLE}" < "${canonical_cycle}" ||
+                  "${CANDIDATE_CYCLE}" == "${canonical_cycle}" ]]; then
+              should_build=false
+            fi
+          fi
+          echo "should_build=${should_build}" >> "${GITHUB_OUTPUT}"
+          echo "Selected QPF cycle ${CANDIDATE_CYCLE}; should-build=${should_build}."
+
+      - name: Install geospatial and WebP system libraries
+        if: steps.decision.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gdal-bin \
+            libgdal-dev \
+            libgeos-dev \
+            libproj-dev \
+            libudunits2-dev \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libxml2-dev \
+            webp
+
+      - name: Install full QPF producer dependencies
+        if: steps.decision.outputs.should_build == 'true'
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: nbm-qpf-producer-v1
+          packages: |
+            any::digest
+            any::httr2
+            any::jsonlite
+            any::png
+            any::terra
+
+      - name: Build one complete NBM QPF cycle in isolation
+        if: steps.decision.outputs.should_build == 'true'
+        shell: Rscript {0}
+        env:
+          BRIM_NBM_QPF_PROJECT_ROOT: ${{ github.workspace }}
+          BRIM_NBM_QPF_OUTPUT_ROOT: ${{ runner.temp }}/nbm-qpf-r-candidate
+          BRIM_NBM_QPF_CYCLE_UTC: ${{ steps.preflight.outputs.cycle }}
+          BRIM_NBM_QPF_LOOKBACK_HOURS: "36"
+          BRIM_NBM_QPF_REPEAT_BUILD: "false"
+        run: |
+          source("scripts/build_nbm_qpf_candidate.R")
+
+      - name: Revalidate R candidate and assemble public publication candidate
+        if: steps.decision.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          r_candidate="${RUNNER_TEMP}/nbm-qpf-r-candidate"
+          candidate_artifact_root="${RUNNER_TEMP}/nbm-qpf-publication-candidate"
+          R_CANDIDATE="${r_candidate}" Rscript -e \
+            'source("scripts/nbm_qpf_helpers.R"); qpf_validate_candidate(Sys.getenv("R_CANDIDATE"), "data/input/nbm_qpf_palette.csv")'
+          python3 scripts/nbm_qpf_publisher.py assemble-candidate \
+            --r-candidate-root "${r_candidate}" \
+            --output-root "${candidate_artifact_root}/candidate"
+
+      - name: Validate and describe QPF publication candidate
+        if: steps.decision.outputs.should_build == 'true'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          candidate_artifact_root="${RUNNER_TEMP}/nbm-qpf-publication-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+          python3 scripts/nbm_qpf_publisher.py validate-candidate --root "${candidate_root}"
+          semantic_state="$(python3 scripts/nbm_qpf_publisher.py semantic-key --root "${candidate_root}")"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id nbm-qpf \
+            --semantic-key-type nbm_qpf_cycle_state_sha256_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${SOURCE_SHA}" \
+            --allowlist docs/data/nbm-qpf/nbm_qpf_manifest.json \
+            --owned-root docs/data/nbm-qpf/nbm/qpf
+
+      - name: Upload validated QPF publication candidate
+        if: steps.decision.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nbm-qpf-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nbm-qpf-publication-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Upload QPF producer diagnostics
+        if: always() && steps.decision.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nbm-qpf-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/nbm-qpf-r-candidate/preflight.csv
+            ${{ runner.temp }}/nbm-qpf-r-candidate/validation.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.should_build == 'true' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out candidate source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-candidate.outputs.source-sha }}
+          fetch-depth: 0
+
+      - name: Install WebP validation tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends webp
+
+      - name: Download validated QPF publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: nbm-qpf-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nbm-qpf-publication-candidate
+
+      - name: Reconcile and publish QPF candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source-sha }}
+        run: |
+          set -euo pipefail
+          candidate_artifact_root="${RUNNER_TEMP}/nbm-qpf-publication-candidate"
+          export GITHUB_SHA="${CANDIDATE_SOURCE_SHA}"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id nbm-qpf \
+            --target-ref refs/heads/main \
+            --commit-subject "Update NBM QPF live feed" \
+            --allowlist docs/data/nbm-qpf/nbm_qpf_manifest.json \
+            --owned-root docs/data/nbm-qpf/nbm/qpf \
+            --candidate-validator scripts/nbm_qpf_publisher.py \
+            --reconcile-callback scripts/nbm_qpf_publisher.py \
+            --staged-validator scripts/nbm_qpf_publisher.py

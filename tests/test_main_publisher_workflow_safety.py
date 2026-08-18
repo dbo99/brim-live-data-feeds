@@ -22,6 +22,7 @@ CNRFC = WORKFLOWS / "build-major-water-supply-basin-forecasts.yml"
 CBRFC = WORKFLOWS / "build-cbrfc-major-water-supply-forecasts.yml"
 GFS = WORKFLOWS / "build-gfs-wind-latest.yml"
 HRRR = WORKFLOWS / "build-hrrr-wind-latest.yml"
+NBM_QPF = WORKFLOWS / "build-nbm-qpf.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -32,6 +33,7 @@ WRITERS = (
     "build-hrrr-wind-latest.yml",
     "build-major-water-supply-basin-forecasts.yml",
     "build-nbm-wind-guidance-latest.yml",
+    "build-nbm-qpf.yml",
     "build-scan-soil-moisture-latest.yml",
     "build-snow-pillow-latest.yml",
     "build-usgs-groundwater-latest-ca.yml",
@@ -51,6 +53,7 @@ MIGRATED = (
     CBRFC,
     GFS,
     HRRR,
+    NBM_QPF,
 )
 PRODUCT_PATHS = {
     CDEC: {
@@ -130,8 +133,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         }
         self.assertEqual(discovered, set(WRITERS))
 
-    def test_all_fourteen_writers_retain_the_old_whole_workflow_lock(self) -> None:
-        self.assertEqual(len(WRITERS), 14)
+    def test_all_fifteen_writers_retain_the_old_whole_workflow_lock(self) -> None:
+        self.assertEqual(len(WRITERS), 15)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             self.assertIn("group: live-data-feed-writes-${{ github.ref }}", text, filename)
@@ -139,7 +142,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 12)
+        self.assertEqual(len(MIGRATED), 13)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -191,6 +194,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         cbrfc = CBRFC.read_text(encoding="utf-8")
         gfs = GFS.read_text(encoding="utf-8")
         hrrr = HRRR.read_text(encoding="utf-8")
+        nbm_qpf = NBM_QPF.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -205,6 +209,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(cbrfc.count("scripts/cbrfc_forecast_publisher.py"), 5)
         self.assertEqual(gfs.count("scripts/gfs_wind_publisher.py"), 5)
         self.assertEqual(hrrr.count("scripts/hrrr_wind_publisher.py"), 5)
+        self.assertEqual(nbm_qpf.count("scripts/nbm_qpf_publisher.py"), 6)
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -252,6 +257,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (CBRFC, "cbrfc-forecast-candidate"),
             (GFS, "gfs-wind-candidate"),
             (HRRR, "hrrr-wind-candidate"),
+            (NBM_QPF, "nbm-qpf-publication-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -343,6 +349,24 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertEqual(text.count(f"--allowlist {path}"), 2)
         self.assertEqual(text.count("--owned-root docs/data/wind/hrrr/surface"), 2)
         self.assertIn("hrrr_rolling_state_sha256_v1", text)
+        self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
+
+    def test_nbm_qpf_two_cycle_ownership_schedule_and_callbacks_are_bounded(self) -> None:
+        text = NBM_QPF.read_text(encoding="utf-8")
+        self.assertIn('- cron: "18 2,8,14,20 * * *"', text)
+        self.assertIn('- cron: "4 3,9,15,21 * * *"', text)
+        self.assertIn("Proposed source-readiness schedule for maintainer review", text)
+        self.assertIn('source("scripts/build_nbm_qpf_candidate.R")', text)
+        self.assertIn("qpf_discover_cycle(", text)
+        self.assertEqual(
+            text.count("--allowlist docs/data/nbm-qpf/nbm_qpf_manifest.json"), 2
+        )
+        self.assertEqual(text.count("--owned-root docs/data/nbm-qpf/nbm/qpf"), 2)
+        self.assertIn("nbm_qpf_cycle_state_sha256_v1", text)
+        self.assertIn("needs.prepare-candidate.outputs.should_build == 'true'", text)
+        self.assertNotIn("--owned-root docs/data/nbm-qpf", text.replace(
+            "--owned-root docs/data/nbm-qpf/nbm/qpf", ""
+        ))
         self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:

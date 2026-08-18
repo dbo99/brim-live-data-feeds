@@ -15,12 +15,11 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 
 The official product has two stages:
 
-1. A scheduled writer retrieves, transforms and validates data. Thirteen
-   writers still stage their declared `docs/data/...` paths, commit them, and
-   push to the selected branch when their product-specific publication guard
-   allows. The Phase 1 CDEC canary instead
-   prepares a validated two-file candidate artifact; only its separate
-   `main`-authorized publisher job can reconcile and commit that candidate.
+1. A scheduled writer retrieves, transforms and validates data. Thirteen writers,
+   including the unseeded NBM QPF integration, prepare validated candidate
+   artifacts and delegate bounded fresh-main reconciliation to a separate
+   `main`-authorized publisher job. Two writers—NBM wind guidance and Winter
+   Storm Levels—still stage and push their own declared paths.
 2. GitHub Pages separately deploys `main:/docs`.
 
 The public URL is `https://dbo99.github.io/brim-live-data-feeds/`.
@@ -31,7 +30,7 @@ newer product than the hosted site.
 
 ## Branch-safe writer behavior
 
-All fourteen scheduled production writers currently:
+All fifteen scheduled production writers currently:
 
 - support schedules and manual dispatch;
 - use the shared concurrency group
@@ -40,24 +39,21 @@ All fourteen scheduled production writers currently:
 - follow their documented checkout/ref contract with full history;
 - preserve product-specific validation and last-known-good behavior.
 
-Thirteen unmigrated writers still request `contents: write`, reject
+The two direct writers still request `contents: write`, reject
 non-branch publication refs, stage their declared product paths, commit only
 when those paths changed, push non-force to `HEAD:${GITHUB_REF}`, and fail if
 the branch advanced unexpectedly.
 
-The CDEC canary has a read-only `prepare-candidate` job and a write-capable
-`publish-to-main` job separated by a short-lived Actions artifact. The artifact
-contains exactly the two CDEC product files plus nonpublic integrity metadata:
-an internal product identifier, source event SHA, preparation time, semantic
-`feed_build_time_utc`, exact inventory, byte counts, and SHA-256 hashes. The
-publisher validates that artifact, fetches current `origin/main` after entering
-the publication queue, and invokes the CDEC callback to classify the candidate
-as new, same, or stale. Only a new candidate is copied byte-for-byte and staged;
-same and stale candidates are successful no-ops. A non-fast-forward push gets
-at most one fresh-main reconciliation retry. A second race, an unexpected path,
-an ambiguous same-time byte change, or any validation failure stops without a
-force push. Feature-branch CDEC dispatches now produce the candidate artifact
-but cannot publish any branch.
+The thirteen migrated workflows have a read-only `prepare-candidate` job and a
+write-capable `publish-to-main` job separated by a short-lived Actions artifact.
+The shared schema-2 publisher validates inventory and hashes, enters
+`brim-live-main-publish`, fetches current `origin/main`, runs the product callback,
+stages only statically declared fixed paths and owned roots, and validates the
+staged result. Same and stale candidates are successful no-ops. A non-fast-
+forward push gets at most one fresh-main reconciliation retry. A second race,
+unexpected path, ambiguous same-time identity, or validation failure stops
+without a force push. Feature-branch dispatches can prepare artifacts but the
+publisher job cannot update any branch.
 
 They do not pull, merge or rebase generated-product commits.
 
@@ -80,9 +76,9 @@ Consequences:
 
 - Scheduled events run from the default branch and can update official
   `main`.
-- Manual dispatch can target a feature branch. Thirteen unmigrated writers
-  retain their documented branch behavior; the CDEC canary produces only its
-  validated candidate artifact on a feature branch.
+- Manual dispatch can target a feature branch. The two direct writers retain
+  their documented branch behavior; migrated writers produce only validated
+  candidate artifacts on a feature branch.
 - A feature-branch run cannot update `main` through the writer's push command.
 - GitHub Pages publishes only `main:/docs`, so feature-branch products are not
   official hosted products.
@@ -97,26 +93,23 @@ remaining repository-level controls.
 ## Concurrency, cancellation and queueing
 
 All production writers retain one whole-workflow group per ref. On `main`, that
-continues to serialize the migrated CDEC canary with every unmigrated writer
-during the mixed migration state.
+continues to serialize the thirteen migrated workflows with the two direct
+writers during the mixed migration state.
 
 `queue: max` allows multiple pending runs instead of replacing the existing
 pending run. Ordering should not be treated as a data guarantee. Every queued
 writer re-resolves the selected branch when the job begins.
 
-The CDEC `publish-to-main` job additionally uses the constant repository-wide
-group `brim-live-main-publish` with `cancel-in-progress: false` and `queue: max`.
-The new lock applies only to that publisher job. Retaining the old whole-workflow
-lock is deliberate until every main writer uses the new publisher: it prevents a
-migrated publisher from colliding with a still-direct writer. This Phase 1
-canary therefore proves the artifact and fresh-main transaction boundaries but
-does not yet provide parallel builds.
+Every migrated `publish-to-main` job additionally uses the constant repository-
+wide group `brim-live-main-publish` with `cancel-in-progress: false` and
+`queue: max`. The new lock applies only to that publisher job. Retaining the old
+whole-workflow lock prevents a migrated publisher from colliding with a direct
+writer; parallel builds remain deferred while the mixed state exists.
 
-Initial Winter Storm Levels scheduling continues to hold only the established
-whole-workflow lock. It is not migrated in Phase 1. Before NBM QPF is added, the
-remaining writers require product-specific prepare/reconcile migrations; only
-after the mixed state ends may the old whole-workflow lock be removed in a
-separate reviewed change.
+Winter Storm Levels and NBM wind guidance continue to hold only the established
+whole-workflow lock. Only after those remaining product-specific
+migrations are complete may the old whole-workflow lock be removed in a separate
+reviewed change.
 
 The HRRR sandbox and wind watchdog use separate groups and
 `cancel-in-progress: true`; they are safe to supersede because they do not
@@ -154,6 +147,13 @@ no-op after primary success. `SOURCE_ERROR` fails visibly without starting the
 producer. There is no internal polling. Manual `publish: true` on `main` uses
 the same guard, while manual `publish: false` preserves diagnostic current-cycle
 rebuild behavior.
+
+The unseeded NBM QPF workflow proposes primary attempts at 02:18, 08:18, 14:18
+and 20:18 (+138 minutes) with fallbacks at 03:04, 09:04, 15:04 and 21:04 (+184
+minutes). This recommendation is ten minutes behind the established Snow Levels
+source-readiness probes. It is not an approved live schedule: do not merge,
+dispatch, or publish QPF until the maintainer approves the exact timing and the
+first-publication decision.
 
 Before any manual writer dispatch, the operator must record:
 
@@ -205,6 +205,8 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
 | `winter-storm-levels-qa` | Winter Storm Levels writer | Complete manifest/GeoJSON bundle and browser QA when a build starts; concise inventory-preflight diagnostics for guarded no-build outcomes; no full GRIB files | Explicit 14 days |
 | `cdec-reservoir-candidate-<run>-<attempt>` | CDEC production workflow | Validated two-file candidate plus nonpublic inventory/hash/source metadata crossing the prepare/publish job boundary | Explicit 2 days |
+| `nbm-qpf-candidate-<run>-<attempt>` | Unseeded NBM QPF workflow | Validated one-cycle public-shape candidate plus schema-2 integrity metadata crossing the prepare/publish boundary | Explicit 2 days |
+| `nbm-qpf-qa-<run>-<attempt>` | Unseeded NBM QPF workflow | R producer preflight and validation diagnostics; no official publication status | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -297,6 +299,13 @@ The repository has product-specific, not universal, QA:
   produces exactly two complete cycles; malformed, unsafe, missing,
   checksum-invalid, or uncopyable retained state fails instead of publishing a
   one-cycle degradation.
+- NBM QPF requires one complete 10-lead deterministic surface-APCP cycle. The R
+  producer and Python publication validator independently verify temporal/source
+  identity, exact lead closure, lossless WebP decode/dimensions/palette/alpha,
+  bounds, content-addressed paths, hashes, cycle legend metadata and bounded
+  inventory. Initial bootstrap may contain one explicitly labeled complete
+  cycle; the second and every later advancement must validate exactly current
+  plus previous complete cycles and 20 targets.
 
 The CoCoRaHS completeness gap and streamflow current-value gap mean "workflow
 success" is not universally equivalent to "complete current product."
@@ -317,6 +326,8 @@ success" is not universally equivalent to "complete current product."
 | Winter Storm Levels source is unavailable, its variable is missing, fetch/decode/validation/publication fails, or any of 11 horizons is missing | Attempt diagnostics preserve the distinct failure class; no manifest promotion or commit step | Prior manifest and referenced contours remain unchanged and age naturally into delayed, stale LKG, then expired states |
 | Winter Storm Levels scheduled preflight finds no newer complete cycle | `NO_NEW_CYCLE` or `SOURCE_NOT_READY`; geospatial setup, producer, and publication transaction do not run | Prior manifest and referenced contours remain unchanged; fallback may make one later inventory-only attempt |
 | Winter Storm Levels candidate is unchanged except retrieval time | Semantic no-op; no data commit | Prior accepted bytes remain authoritative |
+| NBM QPF preflight/candidate/public validation fails, is incomplete, or conflicts with the same canonical cycle | No publication transaction or commit | Prior manifest and exact referenced WebPs remain unchanged; an unseeded product remains absent |
+| NBM QPF candidate is SAME or STALE relative to fresh canonical `main` | Shared publisher succeeds as a no-op | Current and previous canonical cycles do not regress |
 | Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
 | Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |
 | Transformation error stops the script | No commit step | Remains |
