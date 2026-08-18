@@ -17,6 +17,7 @@ COCORAHS = WORKFLOWS / "build-cocorahs-daily-precip-feed.yml"
 STREAMFLOW = WORKFLOWS / "build-usgs-streamflow-latest-ca.yml"
 GROUNDWATER = WORKFLOWS / "build-usgs-groundwater-latest-ca.yml"
 ASOS_AWOS = WORKFLOWS / "build-asos-awos-wind-latest.yml"
+SNOW_PILLOW = WORKFLOWS / "build-snow-pillow-latest.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -33,7 +34,16 @@ WRITERS = (
     "build-usgs-streamflow-latest-ca.yml",
     "build-winter-storm-levels.yml",
 )
-MIGRATED = (CDEC, DELTA_OPS, SCAN, COCORAHS, STREAMFLOW, GROUNDWATER, ASOS_AWOS)
+MIGRATED = (
+    CDEC,
+    DELTA_OPS,
+    SCAN,
+    COCORAHS,
+    STREAMFLOW,
+    GROUNDWATER,
+    ASOS_AWOS,
+    SNOW_PILLOW,
+)
 PRODUCT_PATHS = {
     CDEC: {
         "docs/data/cdec_reservoir_latest.geojson",
@@ -70,6 +80,12 @@ PRODUCT_PATHS = {
         "docs/data/wind/asos_awos_wind_latest.geojson",
         "docs/data/wind/asos_awos_wind_latest_summary.json",
         "docs/data/wind/asos_awos_wind_feed_manifest.json",
+    },
+    SNOW_PILLOW: {
+        "docs/data/snow_pillow_latest.geojson",
+        "docs/data/snow_pillow_latest_summary.json",
+        "docs/data/snow_pillow_current_wy_trace.csv",
+        "docs/data/snow_pillow_current_wy_trace_summary.json",
     },
 }
 
@@ -109,7 +125,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 7)
+        self.assertEqual(len(MIGRATED), 8)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -156,6 +172,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         streamflow = STREAMFLOW.read_text(encoding="utf-8")
         groundwater = GROUNDWATER.read_text(encoding="utf-8")
         asos_awos = ASOS_AWOS.read_text(encoding="utf-8")
+        snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -165,6 +182,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         ):
             self.assertEqual(text.count(callback), 4)
         self.assertEqual(asos_awos.count("scripts/asos_awos_wind_publisher.py"), 5)
+        self.assertEqual(snow_pillow.count("scripts/snow_pillow_publisher.py"), 6)
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -178,6 +196,9 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("USGS_GW_SUMMARY_JSON:", groundwater)
         self.assertIn("BRIM_OBS_PROJECT_ROOT: ${{ runner.temp }}/asos-awos-build-root", asos_awos)
         self.assertIn('candidate_root="${candidate_artifact_root}/candidate"', asos_awos)
+        self.assertIn('candidate_root="${candidate_artifact_root}/candidate"', snow_pillow)
+        self.assertIn("snow_provider_state_v1", snow_pillow)
+        self.assertIn("SNOW_PILLOW_BUILD_ROOT:", snow_pillow)
 
     def test_migrated_workflows_resolve_runner_temp_only_after_allocation(self) -> None:
         for workflow in MIGRATED:
@@ -204,6 +225,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (STREAMFLOW, "usgs-streamflow-candidate"),
             (GROUNDWATER, "usgs-groundwater-candidate"),
             (ASOS_AWOS, "asos-awos-candidate"),
+            (SNOW_PILLOW, "snow-pillow-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -233,6 +255,16 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn('"workflow": "build-asos-awos-wind-latest.yml"', watchdog)
         self.assertIn('"hourly_slots": [17, 42]', watchdog)
         self.assertIn('"cooldown": 20', watchdog)
+
+    def test_phase5_snow_pillow_schedule_and_provider_boundary_are_unchanged(self) -> None:
+        snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")
+        self.assertIn('cron: "52 5,13,21 * * *"', snow_pillow)
+        self.assertIn('source(file.path(', snow_pillow)
+        self.assertIn('"build_snow_pillow_latest.R"', snow_pillow)
+        self.assertIn("scripts/snow_pillow_partial_refresh_helpers.R", snow_pillow)
+        self.assertIn("data/input/snow_pillow_station_index.csv", snow_pillow)
+        self.assertIn("data/input/snow_pillow_swe_normal_medians.csv", snow_pillow)
+        self.assertIn("scripts/main_publisher.py publish", snow_pillow)
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
         text = (REPO / "scripts" / "main_publisher.py").read_text(encoding="utf-8")

@@ -7,20 +7,20 @@ on:
     # Approx. 10:52 PM, 6:52 AM, and 2:52 PM PDT during daylight time.
     - cron: "52 5,13,21 * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
-  # Shared with the other BRIM live-data workflows so multiple scheduled feeds
-  # do not try to commit/push docs/data updates at the same time.
+  # Retain the established whole-workflow writer lock during the migration.
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
 
     steps:
       - name: Check out latest branch tip
@@ -60,39 +60,151 @@ jobs:
             any::purrr
             any::sharpshootR
 
-      - name: Build latest snow pillow SWE feed
-        shell: Rscript {0}
-        run: |
-          source("scripts/build_snow_pillow_latest.R")
-
-      - name: Commit updated feed files
+      - name: Prepare isolated Snow Pillow build root
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          build_root="${RUNNER_TEMP}/snow-pillow-build-root"
+          mkdir -p \
+            "${build_root}/scripts" \
+            "${build_root}/data/input" \
+            "${build_root}/docs/data"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
+          install -m 0644 \
+            scripts/snow_pillow_partial_refresh_helpers.R \
+            "${build_root}/scripts/snow_pillow_partial_refresh_helpers.R"
+          install -m 0644 \
+            data/input/snow_pillow_station_index.csv \
+            "${build_root}/data/input/snow_pillow_station_index.csv"
+          install -m 0644 \
+            data/input/snow_pillow_swe_normal_medians.csv \
+            "${build_root}/data/input/snow_pillow_swe_normal_medians.csv"
+
+          # The unchanged R producer may use these event-checkout files for its
+          # local partial-refresh construction. The PUBLISH callback records
+          # that status and replaces every carried provider from fresh main.
+          install -m 0644 \
             docs/data/snow_pillow_latest.geojson \
+            "${build_root}/docs/data/snow_pillow_latest.geojson"
+          install -m 0644 \
             docs/data/snow_pillow_latest_summary.json \
+            "${build_root}/docs/data/snow_pillow_latest_summary.json"
+          install -m 0644 \
             docs/data/snow_pillow_current_wy_trace.csv \
-            docs/data/snow_pillow_current_wy_trace_summary.json
+            "${build_root}/docs/data/snow_pillow_current_wy_trace.csv"
+          install -m 0644 \
+            docs/data/snow_pillow_current_wy_trace_summary.json \
+            "${build_root}/docs/data/snow_pillow_current_wy_trace_summary.json"
 
-          if git diff --cached --quiet; then
-            echo "No snow pillow SWE latest-feed changes to commit."
-            exit 0
-          fi
+      - name: Build isolated Snow Pillow candidate
+        shell: Rscript {0}
+        env:
+          SNOW_PILLOW_BUILD_ROOT: ${{ runner.temp }}/snow-pillow-build-root
+        run: |
+          setwd(Sys.getenv("SNOW_PILLOW_BUILD_ROOT"))
+          source(file.path(
+            Sys.getenv("GITHUB_WORKSPACE"),
+            "scripts",
+            "build_snow_pillow_latest.R"
+          ))
 
-          git commit -m "Update snow pillow SWE latest feed"
+      - name: Validate and describe Snow Pillow candidate artifact
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+          build_root="${RUNNER_TEMP}/snow-pillow-build-root"
+          candidate_artifact_root="${RUNNER_TEMP}/snow-pillow-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+
+          python3 scripts/snow_pillow_publisher.py validate \
+            --root "${build_root}"
+
+          mkdir -p "${candidate_root}/docs/data"
+          install -m 0644 \
+            "${build_root}/docs/data/snow_pillow_latest.geojson" \
+            "${candidate_root}/docs/data/snow_pillow_latest.geojson"
+          install -m 0644 \
+            "${build_root}/docs/data/snow_pillow_latest_summary.json" \
+            "${candidate_root}/docs/data/snow_pillow_latest_summary.json"
+          install -m 0644 \
+            "${build_root}/docs/data/snow_pillow_current_wy_trace.csv" \
+            "${candidate_root}/docs/data/snow_pillow_current_wy_trace.csv"
+          install -m 0644 \
+            "${build_root}/docs/data/snow_pillow_current_wy_trace_summary.json" \
+            "${candidate_root}/docs/data/snow_pillow_current_wy_trace_summary.json"
+
+          python3 scripts/snow_pillow_publisher.py validate \
+            --root "${candidate_root}"
+          semantic_state="$(python3 scripts/snow_pillow_publisher.py semantic-key \
+            --root "${candidate_root}")"
+
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id snow-pillow-latest \
+            --semantic-key-type snow_provider_state_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/snow_pillow_latest.geojson \
+            --allowlist docs/data/snow_pillow_latest_summary.json \
+            --allowlist docs/data/snow_pillow_current_wy_trace.csv \
+            --allowlist docs/data/snow_pillow_current_wy_trace_summary.json
+
+      - name: Upload validated Snow Pillow publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: snow-pillow-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snow-pillow-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated Snow Pillow publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: snow-pillow-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snow-pillow-candidate
+
+      - name: Reconcile and publish Snow Pillow candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+
+          candidate_artifact_root="${RUNNER_TEMP}/snow-pillow-candidate"
+
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id snow-pillow-latest \
+            --target-ref refs/heads/main \
+            --commit-subject "Update snow pillow SWE latest feed" \
+            --allowlist docs/data/snow_pillow_latest.geojson \
+            --allowlist docs/data/snow_pillow_latest_summary.json \
+            --allowlist docs/data/snow_pillow_current_wy_trace.csv \
+            --allowlist docs/data/snow_pillow_current_wy_trace_summary.json \
+            --candidate-validator scripts/snow_pillow_publisher.py \
+            --reconcile-callback scripts/snow_pillow_publisher.py \
+            --staged-validator scripts/snow_pillow_publisher.py
