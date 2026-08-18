@@ -4,32 +4,36 @@ on:
   workflow_dispatch:
   schedule:
     # Hourly, away from :00 GitHub scheduled-workflow congestion and away from
-    # the common BRIM feed minutes already in this repo. The script publishes a
-    # sparse Current/+24-hour GFS time set and keeps only wind-specific files under
-    # docs/data/wind/gfs/surface/.
+    # the common BRIM feed minutes already in this repo.
     - cron: "47 * * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
-  # Shared with the other BRIM live-data writers so scheduled feed jobs do not
-  # try to commit/push docs/data updates at the same time.
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
 
     steps:
-      - name: Check out repository
+      - name: Check out selected branch tip
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
           fetch-depth: 0
-          ref: ${{ github.ref }}
+
+      - name: Record candidate source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -60,19 +64,73 @@ jobs:
             any::jsonlite
             any::terra
 
-      - name: Build GFS wind time-set feed
+      - name: Seed isolated GFS build root
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_root="${RUNNER_TEMP}/gfs-wind-build-root"
+          mkdir -p "${build_root}/docs/data/wind/gfs"
+          install -m 0644 docs/data/wind/gfs_surface_wind_latest.json \
+            "${build_root}/docs/data/wind/gfs_surface_wind_latest.json"
+          install -m 0644 docs/data/wind/gfs_surface_wind_latest_summary.json \
+            "${build_root}/docs/data/wind/gfs_surface_wind_latest_summary.json"
+          install -m 0644 docs/data/wind/gfs_surface_wind_feed_manifest.json \
+            "${build_root}/docs/data/wind/gfs_surface_wind_feed_manifest.json"
+          cp -R docs/data/wind/gfs/surface "${build_root}/docs/data/wind/gfs/surface"
+
+      - name: Build GFS wind time-set feed in isolation
         shell: Rscript {0}
         env:
+          BRIM_RTW_PROJECT_ROOT: ${{ runner.temp }}/gfs-wind-build-root
           BRIM_RTW_BUILD_SANDBOX: "false"
           BRIM_RTW_BUILD_QA_ZIP: "true"
           BRIM_RTW_FORCE_REFRESH: "false"
           BRIM_RTW_LOCAL_TZ: "America/Los_Angeles"
-          # Sparse support around Current and +24 hr. The wider edge fields
-          # keep both buttons usable through several missed hourly dispatches.
           BRIM_RTW_TARGET_OFFSETS_HOURS: "-3,-2,-1,0,1,2,3,21,24,27,30"
           BRIM_RTW_MAX_FORECAST_HOUR: "42"
         run: |
           source("scripts/build_gfs_wind_latest.R")
+
+      - name: Validate and describe GFS publication candidate
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          build_root="${RUNNER_TEMP}/gfs-wind-build-root"
+          candidate_artifact_root="${RUNNER_TEMP}/gfs-wind-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+          mkdir -p "${candidate_root}/docs/data/wind/gfs"
+          install -m 0644 "${build_root}/docs/data/wind/gfs_surface_wind_latest.json" \
+            "${candidate_root}/docs/data/wind/gfs_surface_wind_latest.json"
+          install -m 0644 "${build_root}/docs/data/wind/gfs_surface_wind_latest_summary.json" \
+            "${candidate_root}/docs/data/wind/gfs_surface_wind_latest_summary.json"
+          install -m 0644 "${build_root}/docs/data/wind/gfs_surface_wind_feed_manifest.json" \
+            "${candidate_root}/docs/data/wind/gfs_surface_wind_feed_manifest.json"
+          cp -R "${build_root}/docs/data/wind/gfs/surface" \
+            "${candidate_root}/docs/data/wind/gfs/surface"
+
+          python3 scripts/gfs_wind_publisher.py validate --root "${candidate_root}"
+          semantic_state="$(python3 scripts/gfs_wind_publisher.py semantic-key --root "${candidate_root}")"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id gfs-wind-latest \
+            --semantic-key-type gfs_rolling_state_sha256_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${SOURCE_SHA}" \
+            --allowlist docs/data/wind/gfs_surface_wind_latest.json \
+            --allowlist docs/data/wind/gfs_surface_wind_latest_summary.json \
+            --allowlist docs/data/wind/gfs_surface_wind_feed_manifest.json \
+            --owned-root docs/data/wind/gfs/surface
+
+      - name: Upload validated GFS publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: gfs-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gfs-wind-candidate
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Upload QA artifact
         if: always()
@@ -81,39 +139,54 @@ jobs:
           name: gfs-wind-qa
           if-no-files-found: ignore
           path: |
-            qa/wind/RTW_latest_QA_upload.zip
-            debug/wind/*.log
+            ${{ runner.temp }}/gfs-wind-build-root/qa/wind/RTW_latest_QA_upload.zip
+            ${{ runner.temp }}/gfs-wind-build-root/debug/wind/*.log
 
-      - name: Publish updated wind feed
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out candidate source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-candidate.outputs.source-sha }}
+          fetch-depth: 0
+
+      - name: Download validated GFS publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: gfs-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gfs-wind-candidate
+
+      - name: Reconcile and publish GFS candidate onto current main
         shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source-sha }}
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            docs/data/wind/gfs_surface_wind_latest.json \
-            docs/data/wind/gfs_surface_wind_latest_summary.json \
-            docs/data/wind/gfs_surface_wind_feed_manifest.json \
-            docs/data/wind/gfs/surface/
-
-          if git diff --cached --quiet; then
-            echo "No GFS wind feed changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update GFS wind time-set live feed"
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
-
-          echo "Published GFS wind feed to ${GITHUB_REF}."
+          candidate_artifact_root="${RUNNER_TEMP}/gfs-wind-candidate"
+          export GITHUB_SHA="${CANDIDATE_SOURCE_SHA}"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id gfs-wind-latest \
+            --target-ref refs/heads/main \
+            --commit-subject "Update GFS wind time-set live feed" \
+            --allowlist docs/data/wind/gfs_surface_wind_latest.json \
+            --allowlist docs/data/wind/gfs_surface_wind_latest_summary.json \
+            --allowlist docs/data/wind/gfs_surface_wind_feed_manifest.json \
+            --owned-root docs/data/wind/gfs/surface \
+            --candidate-validator scripts/gfs_wind_publisher.py \
+            --reconcile-callback scripts/gfs_wind_publisher.py \
+            --staged-validator scripts/gfs_wind_publisher.py
