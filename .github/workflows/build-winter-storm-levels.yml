@@ -12,8 +12,7 @@ on:
         default: false
         type: boolean
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -21,16 +20,27 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      publish: ${{ steps.run-mode.outputs.publish }}
+      build-started: ${{ steps.bundle.outputs.build_started }}
 
     steps:
       - name: Check out selected branch tip
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
           fetch-depth: 0
+
+      - name: Record candidate source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve publication mode
         id: run-mode
@@ -141,7 +151,7 @@ jobs:
         if: steps.run-mode.outputs.guard_preflight != 'true' || steps.preflight.outputs.outcome == 'NEW_CYCLE'
         shell: bash
         env:
-          BRIM_WSL_PUBLISH: ${{ steps.run-mode.outputs.publish }}
+          BRIM_WSL_PUBLISH: "false"
           BRIM_WSL_OUTPUT_ROOT: ${{ steps.run-mode.outputs.output_root }}
           BRIM_WSL_QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
         run: |
@@ -153,6 +163,45 @@ jobs:
             mv "${preflight_tmp}" "${{ steps.run-mode.outputs.preflight_json }}"
           fi
           Rscript scripts/build_winter_storm_levels.R
+
+      - name: Validate and describe Winter Storm Levels publication candidate
+        id: publication-candidate
+        if: steps.run-mode.outputs.publish == 'true' && steps.bundle.outcome == 'success' && steps.bundle.outputs.build_started == 'true'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          OUTPUT_ROOT: ${{ steps.run-mode.outputs.output_root }}
+        run: |
+          set -euo pipefail
+          candidate_artifact_root="${RUNNER_TEMP}/winter-storm-levels-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+          candidate_product_root="${candidate_root}/docs/data/winter-storm-levels"
+          mkdir -p "${candidate_product_root}/nbm"
+          install -m 0644 "${OUTPUT_ROOT}/winter_storm_levels_manifest.json" \
+            "${candidate_product_root}/winter_storm_levels_manifest.json"
+          cp -R "${OUTPUT_ROOT}/nbm/snow-level" \
+            "${candidate_product_root}/nbm/snow-level"
+
+          python3 scripts/winter_storm_levels_publisher.py validate --root "${candidate_root}"
+          semantic_state="$(python3 scripts/winter_storm_levels_publisher.py semantic-key --root "${candidate_root}")"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id winter-storm-levels \
+            --semantic-key-type winter_storm_two_cycle_state_sha256_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${SOURCE_SHA}" \
+            --allowlist docs/data/winter-storm-levels/winter_storm_levels_manifest.json \
+            --owned-root docs/data/winter-storm-levels/nbm/snow-level
+
+      - name: Upload validated Winter Storm Levels publication candidate
+        if: steps.publication-candidate.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: winter-storm-levels-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/winter-storm-levels-candidate
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Prepare standalone browser QA artifact
         if: always() && steps.bundle.outputs.build_started == 'true'
@@ -187,67 +236,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Commit updated Winter Storm Levels bundle
-        id: publish
-        if: steps.run-mode.outputs.publish == 'true' && steps.bundle.outcome == 'success' && steps.bundle.outputs.build_started == 'true' && steps.upload-bundle.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_REF_TYPE}" != "branch" ]]; then
-            echo "Refusing to publish outside the main branch: ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
-          canonical_manifest="docs/data/winter-storm-levels/winter_storm_levels_manifest.json"
-          candidate_cycle="$(jq -er '.cycle_time_utc' "${canonical_manifest}")"
-          current_cycle="$(git show "HEAD:${canonical_manifest}" | jq -er '.cycle_time_utc')"
-          if [[ ! "${candidate_cycle}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00Z$ ||
-                ! "${current_cycle}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00Z$ ]]; then
-            echo "Candidate or canonical cycle is not a comparable UTC cycle." >&2
-            exit 1
-          fi
-          if [[ "${candidate_cycle}" < "${current_cycle}" || "${candidate_cycle}" == "${current_cycle}" ]]; then
-            echo "publication_attempted=false" >> "${GITHUB_OUTPUT}"
-            echo "Candidate cycle ${candidate_cycle} is not newer than canonical ${current_cycle}; no publication."
-            exit 0
-          fi
-          echo "publication_attempted=true" >> "${GITHUB_OUTPUT}"
-          echo "Publication guard accepted ${candidate_cycle} > ${current_cycle}."
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- docs/data/winter-storm-levels
-
-          while IFS= read -r staged_path; do
-            case "${staged_path}" in
-              docs/data/winter-storm-levels/*) ;;
-              *)
-                echo "Unexpected staged path: ${staged_path}" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git diff --cached --name-only)
-
-          if git diff --cached --quiet; then
-            echo "No substantive Winter Storm Levels changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update Winter Storm Levels feed"
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
-
       - name: Write build summary
         if: always()
         shell: bash
         env:
           BUILD_STARTED: ${{ steps.bundle.outputs.build_started || 'false' }}
           PREFLIGHT_JSON: ${{ steps.run-mode.outputs.preflight_json }}
-          PUBLICATION_ATTEMPTED: ${{ steps.publish.outputs.publication_attempted || 'false' }}
+          PUBLICATION_CANDIDATE_PREPARED: ${{ steps.publication-candidate.outcome == 'success' }}
           QA_JSON: ${{ runner.temp }}/winter-storm-levels-attempt.json
         run: |
           set -euo pipefail
@@ -259,19 +254,78 @@ jobs:
             if [[ -f "${PREFLIGHT_JSON}" ]]; then
               preflight_tmp="${PREFLIGHT_JSON}.tmp"
               jq --argjson build_started "${BUILD_STARTED}" \
-                 --argjson publication_attempted "${PUBLICATION_ATTEMPTED}" \
-                 '.build_started = $build_started | .publication_attempted = $publication_attempted' \
+                 '.build_started = $build_started | .publication_attempted = false' \
                  "${PREFLIGHT_JSON}" > "${preflight_tmp}"
               mv "${preflight_tmp}" "${PREFLIGHT_JSON}"
-              jq -r '"| Trigger | `\(.trigger_type)` |", "| Observation time | `\(.observation_time_utc)` |", "| Canonical cycle | `\(.canonical_current_cycle // "none")` |", "| Candidate cycles | `\(.candidate_cycles | join(", "))` |", "| Newest complete cycle | `\(.newest_complete_cycle // "none")` |", "| Preflight outcome | `\(.preflight_outcome)` |", "| Build started | `\(.build_started)` |", "| Publication attempted | `\(.publication_attempted)` |"' "${PREFLIGHT_JSON}"
+              jq -r '"| Trigger | `\(.trigger_type)` |", "| Observation time | `\(.observation_time_utc)` |", "| Canonical cycle | `\(.canonical_current_cycle // "none")` |", "| Candidate cycles | `\(.candidate_cycles | join(", "))` |", "| Newest complete cycle | `\(.newest_complete_cycle // "none")` |", "| Preflight outcome | `\(.preflight_outcome)` |", "| Build started | `\(.build_started)` |"' "${PREFLIGHT_JSON}"
             else
               echo "| Preflight | `not_required_for_manual_dry_run` |"
               echo "| Build started | `${BUILD_STARTED}` |"
-              echo "| Publication attempted | `${PUBLICATION_ATTEMPTED}` |"
             fi
+            echo "| Publication candidate prepared | `${PUBLICATION_CANDIDATE_PREPARED}` |"
             if [[ -f "${QA_JSON}" ]]; then
-              jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Publication outcome | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
+              jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Producer output | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
             else
               echo "| Producer attempt | `not_started` |"
             fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  publish-to-main:
+    if: ${{ needs.prepare-candidate.outputs.publish == 'true' && needs.prepare-candidate.outputs.build-started == 'true' && github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out candidate source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-candidate.outputs.source-sha }}
+          fetch-depth: 0
+
+      - name: Download validated Winter Storm Levels publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: winter-storm-levels-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/winter-storm-levels-candidate
+
+      - name: Reconcile and publish Winter Storm Levels candidate onto current main
+        id: publish
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source-sha }}
+        run: |
+          set -euo pipefail
+          candidate_artifact_root="${RUNNER_TEMP}/winter-storm-levels-candidate"
+          export GITHUB_SHA="${CANDIDATE_SOURCE_SHA}"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id winter-storm-levels \
+            --target-ref refs/heads/main \
+            --commit-subject "Update Winter Storm Levels feed" \
+            --allowlist docs/data/winter-storm-levels/winter_storm_levels_manifest.json \
+            --owned-root docs/data/winter-storm-levels/nbm/snow-level \
+            --candidate-validator scripts/winter_storm_levels_publisher.py \
+            --reconcile-callback scripts/winter_storm_levels_publisher.py \
+            --staged-validator scripts/winter_storm_levels_publisher.py
+
+      - name: Write publication summary
+        if: always()
+        shell: bash
+        env:
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: |
+          {
+            echo "## Winter Storm Levels publication"
+            echo
+            echo "Shared main publisher outcome: \`${PUBLISH_OUTCOME}\`"
           } >> "${GITHUB_STEP_SUMMARY}"

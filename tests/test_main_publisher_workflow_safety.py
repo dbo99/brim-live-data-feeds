@@ -24,6 +24,7 @@ GFS = WORKFLOWS / "build-gfs-wind-latest.yml"
 HRRR = WORKFLOWS / "build-hrrr-wind-latest.yml"
 NBM_WIND = WORKFLOWS / "build-nbm-wind-guidance-latest.yml"
 NBM_QPF = WORKFLOWS / "build-nbm-qpf.yml"
+WINTER_STORM = WORKFLOWS / "build-winter-storm-levels.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -56,6 +57,7 @@ MIGRATED = (
     HRRR,
     NBM_WIND,
     NBM_QPF,
+    WINTER_STORM,
 )
 PRODUCT_PATHS = {
     CDEC: {
@@ -144,7 +146,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 14)
+        self.assertEqual(len(MIGRATED), 15)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -198,6 +200,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         hrrr = HRRR.read_text(encoding="utf-8")
         nbm_wind = NBM_WIND.read_text(encoding="utf-8")
         nbm_qpf = NBM_QPF.read_text(encoding="utf-8")
+        winter_storm = WINTER_STORM.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -214,6 +217,9 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(hrrr.count("scripts/hrrr_wind_publisher.py"), 5)
         self.assertEqual(nbm_wind.count("scripts/nbm_wind_publisher.py"), 5)
         self.assertEqual(nbm_qpf.count("scripts/nbm_qpf_publisher.py"), 6)
+        self.assertEqual(
+            winter_storm.count("scripts/winter_storm_levels_publisher.py"), 5
+        )
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -263,6 +269,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (HRRR, "hrrr-wind-candidate"),
             (NBM_WIND, "nbm-wind-candidate"),
             (NBM_QPF, "nbm-qpf-publication-candidate"),
+            (WINTER_STORM, "winter-storm-levels-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -397,6 +404,20 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("--owned-root docs/data/nbm-qpf", text.replace(
             "--owned-root docs/data/nbm-qpf/nbm/qpf", ""
         ))
+        self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
+
+    def test_phase10_winter_storm_two_cycle_ownership_and_schedule_are_bounded(self) -> None:
+        text = WINTER_STORM.read_text(encoding="utf-8")
+        manifest = "docs/data/winter-storm-levels/winter_storm_levels_manifest.json"
+        target_root = "docs/data/winter-storm-levels/nbm/snow-level"
+        self.assertIn('- cron: "8 2,8,14,20 * * *"', text)
+        self.assertIn('- cron: "54 2,8,14,20 * * *"', text)
+        self.assertIn("Rscript scripts/preflight_winter_storm_levels.R", text)
+        self.assertIn("Rscript scripts/build_winter_storm_levels.R", text)
+        self.assertIn('BRIM_WSL_PUBLISH: "false"', text)
+        self.assertEqual(text.count(f"--allowlist {manifest}"), 2)
+        self.assertEqual(text.count(f"--owned-root {target_root}"), 2)
+        self.assertIn("winter_storm_two_cycle_state_sha256_v1", text)
         self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
