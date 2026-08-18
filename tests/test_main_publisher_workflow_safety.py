@@ -16,6 +16,7 @@ SCAN = WORKFLOWS / "build-scan-soil-moisture-latest.yml"
 COCORAHS = WORKFLOWS / "build-cocorahs-daily-precip-feed.yml"
 STREAMFLOW = WORKFLOWS / "build-usgs-streamflow-latest-ca.yml"
 GROUNDWATER = WORKFLOWS / "build-usgs-groundwater-latest-ca.yml"
+ASOS_AWOS = WORKFLOWS / "build-asos-awos-wind-latest.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -32,7 +33,7 @@ WRITERS = (
     "build-usgs-streamflow-latest-ca.yml",
     "build-winter-storm-levels.yml",
 )
-MIGRATED = (CDEC, DELTA_OPS, SCAN, COCORAHS, STREAMFLOW, GROUNDWATER)
+MIGRATED = (CDEC, DELTA_OPS, SCAN, COCORAHS, STREAMFLOW, GROUNDWATER, ASOS_AWOS)
 PRODUCT_PATHS = {
     CDEC: {
         "docs/data/cdec_reservoir_latest.geojson",
@@ -64,6 +65,11 @@ PRODUCT_PATHS = {
     GROUNDWATER: {
         "docs/data/usgs_groundwater_latest_ca.geojson",
         "docs/data/usgs_groundwater_latest_ca_summary.json",
+    },
+    ASOS_AWOS: {
+        "docs/data/wind/asos_awos_wind_latest.geojson",
+        "docs/data/wind/asos_awos_wind_latest_summary.json",
+        "docs/data/wind/asos_awos_wind_feed_manifest.json",
     },
 }
 
@@ -103,6 +109,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
+        self.assertEqual(len(MIGRATED), 7)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -148,6 +155,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         cocorahs = COCORAHS.read_text(encoding="utf-8")
         streamflow = STREAMFLOW.read_text(encoding="utf-8")
         groundwater = GROUNDWATER.read_text(encoding="utf-8")
+        asos_awos = ASOS_AWOS.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -156,6 +164,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (groundwater, "scripts/usgs_groundwater_publisher.py"),
         ):
             self.assertEqual(text.count(callback), 4)
+        self.assertEqual(asos_awos.count("scripts/asos_awos_wind_publisher.py"), 5)
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -167,6 +176,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("USGS_STREAMFLOW_SUMMARY_JSON:", streamflow)
         self.assertIn("USGS_GW_GEOJSON:", groundwater)
         self.assertIn("USGS_GW_SUMMARY_JSON:", groundwater)
+        self.assertIn("BRIM_OBS_PROJECT_ROOT: ${{ runner.temp }}/asos-awos-build-root", asos_awos)
+        self.assertIn('candidate_root="${candidate_artifact_root}/candidate"', asos_awos)
 
     def test_migrated_workflows_resolve_runner_temp_only_after_allocation(self) -> None:
         for workflow in MIGRATED:
@@ -192,6 +203,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (COCORAHS, "cocorahs-candidate"),
             (STREAMFLOW, "usgs-streamflow-candidate"),
             (GROUNDWATER, "usgs-groundwater-candidate"),
+            (ASOS_AWOS, "asos-awos-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -208,6 +220,19 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn('USGS_GW_MIN_API_SITES_TO_PUBLISH: "300"', groundwater)
         self.assertIn('USGS_GW_MIN_FEATURES_TO_PUBLISH: "300"', groundwater)
         self.assertIn('USGS_GW_ALLOW_INDEX_FALLBACK: "true"', groundwater)
+
+    def test_phase4_asos_freshness_and_watchdog_contract_are_unchanged(self) -> None:
+        asos_awos = ASOS_AWOS.read_text(encoding="utf-8")
+        watchdog = (WORKFLOWS / "check-wind-feeds.yml").read_text(encoding="utf-8")
+        self.assertIn('cron: "17,42 * * * *"', asos_awos)
+        self.assertIn("age_minutes >= 45.0", asos_awos)
+        self.assertIn("manual dispatch always runs", asos_awos)
+        self.assertIn("needs.prepare-candidate.outputs.should_publish == 'true'", asos_awos)
+        self.assertIn('BRIM_OBS_MAX_AGE_HOURS: "3.0"', asos_awos)
+        self.assertIn('BRIM_OBS_STALE_AFTER_HOURS: "2.0"', asos_awos)
+        self.assertIn('"workflow": "build-asos-awos-wind-latest.yml"', watchdog)
+        self.assertIn('"hourly_slots": [17, 42]', watchdog)
+        self.assertIn('"cooldown": 20', watchdog)
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
         text = (REPO / "scripts" / "main_publisher.py").read_text(encoding="utf-8")

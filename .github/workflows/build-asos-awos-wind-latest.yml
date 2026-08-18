@@ -8,12 +8,10 @@ on:
     # successfully within the previous 45 minutes.
     - cron: "17,42 * * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
-  # Shared with the other BRIM live-data writers so feed jobs do not try to
-  # commit/push docs/data updates at the same time.
+  # Retain the established whole-workflow writer lock during the migration.
   group: live-data-feed-writes-${{ github.ref }}
   cancel-in-progress: false
 
@@ -22,9 +20,13 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      should_publish: ${{ steps.freshness.outputs.should_run }}
 
     steps:
       - name: Report trigger
@@ -34,7 +36,7 @@ jobs:
           echo "Workflow start UTC: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           echo "Configured schedule: primary hh:17 UTC; backup hh:42 UTC"
 
-      - name: Check out repository
+      - name: Check out latest branch tip
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -134,17 +136,60 @@ jobs:
             any::jsonlite
             any::readr
 
-      - name: Build observed wind speed + gusts feed
+      - name: Build isolated observed wind speed + gusts candidate
         if: steps.freshness.outputs.should_run == 'true'
         shell: Rscript {0}
         env:
+          BRIM_OBS_PROJECT_ROOT: ${{ runner.temp }}/asos-awos-build-root
           BRIM_OBS_BUILD_SANDBOX: "false"
           BRIM_OBS_BUILD_QA_ZIP: "true"
           BRIM_OBS_LOCAL_TZ: "America/Los_Angeles"
           BRIM_OBS_MAX_AGE_HOURS: "3.0"
           BRIM_OBS_STALE_AFTER_HOURS: "2.0"
         run: |
-          source("scripts/build_asos_awos_wind_latest.R")
+          dir.create(Sys.getenv("BRIM_OBS_PROJECT_ROOT"), recursive = TRUE, showWarnings = FALSE)
+          source(file.path(Sys.getenv("GITHUB_WORKSPACE"), "scripts", "build_asos_awos_wind_latest.R"))
+
+      - name: Validate and describe ASOS/AWOS publication candidate
+        if: steps.freshness.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_root="${RUNNER_TEMP}/asos-awos-build-root"
+          candidate_artifact_root="${RUNNER_TEMP}/asos-awos-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+
+          python3 scripts/asos_awos_wind_publisher.py validate \
+            --root "${build_root}"
+
+          mkdir -p "$(dirname "${candidate_root}/docs/data/wind/asos_awos_wind_latest.geojson")"
+          install -m 0644 \
+            "${build_root}/docs/data/wind/asos_awos_wind_latest.geojson" \
+            "${candidate_root}/docs/data/wind/asos_awos_wind_latest.geojson"
+          install -m 0644 \
+            "${build_root}/docs/data/wind/asos_awos_wind_latest_summary.json" \
+            "${candidate_root}/docs/data/wind/asos_awos_wind_latest_summary.json"
+          install -m 0644 \
+            "${build_root}/docs/data/wind/asos_awos_wind_feed_manifest.json" \
+            "${candidate_root}/docs/data/wind/asos_awos_wind_feed_manifest.json"
+
+          python3 scripts/asos_awos_wind_publisher.py validate \
+            --root "${candidate_root}"
+
+          semantic_time="$(jq -er '.build_time_utc' \
+            "${candidate_root}/docs/data/wind/asos_awos_wind_feed_manifest.json")"
+
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id asos-awos-wind-latest \
+            --semantic-key-type build_time_utc \
+            --semantic-key "${semantic_time}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/wind/asos_awos_wind_latest.geojson \
+            --allowlist docs/data/wind/asos_awos_wind_latest_summary.json \
+            --allowlist docs/data/wind/asos_awos_wind_feed_manifest.json
 
       - name: Upload QA artifact
         if: always() && steps.freshness.outputs.should_run == 'true'
@@ -153,39 +198,62 @@ jobs:
           name: asos-awos-wind-qa
           if-no-files-found: ignore
           path: |
-            qa/wind/asos_awos/RTW_ASOS_latest_QA_upload.zip
-            debug/wind/asos_awos/*.log
+            ${{ runner.temp }}/asos-awos-build-root/qa/wind/asos_awos/RTW_ASOS_latest_QA_upload.zip
+            ${{ runner.temp }}/asos-awos-build-root/debug/wind/asos_awos/*.log
 
-      - name: Publish updated observed wind feed
+      - name: Upload validated ASOS/AWOS publication candidate
         if: steps.freshness.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: asos-awos-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/asos-awos-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ needs.prepare-candidate.outputs.should_publish == 'true' && github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated ASOS/AWOS publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: asos-awos-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/asos-awos-candidate
+
+      - name: Reconcile and publish ASOS/AWOS candidate onto current main
         shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/asos-awos-candidate"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            docs/data/wind/asos_awos_wind_latest.geojson \
-            docs/data/wind/asos_awos_wind_latest_summary.json \
-            docs/data/wind/asos_awos_wind_feed_manifest.json
-
-          if git diff --cached --quiet; then
-            echo "No observed wind feed changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update observed wind speed and gusts feed"
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
-
-          echo "Published observed wind feed to ${GITHUB_REF}."
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id asos-awos-wind-latest \
+            --target-ref refs/heads/main \
+            --commit-subject "Update observed wind speed and gusts feed" \
+            --allowlist docs/data/wind/asos_awos_wind_latest.geojson \
+            --allowlist docs/data/wind/asos_awos_wind_latest_summary.json \
+            --allowlist docs/data/wind/asos_awos_wind_feed_manifest.json \
+            --candidate-validator scripts/asos_awos_wind_publisher.py \
+            --reconcile-callback scripts/asos_awos_wind_publisher.py \
+            --staged-validator scripts/asos_awos_wind_publisher.py
