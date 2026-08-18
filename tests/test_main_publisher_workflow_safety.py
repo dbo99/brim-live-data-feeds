@@ -22,6 +22,7 @@ CNRFC = WORKFLOWS / "build-major-water-supply-basin-forecasts.yml"
 CBRFC = WORKFLOWS / "build-cbrfc-major-water-supply-forecasts.yml"
 GFS = WORKFLOWS / "build-gfs-wind-latest.yml"
 HRRR = WORKFLOWS / "build-hrrr-wind-latest.yml"
+NBM_WIND = WORKFLOWS / "build-nbm-wind-guidance-latest.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -51,6 +52,7 @@ MIGRATED = (
     CBRFC,
     GFS,
     HRRR,
+    NBM_WIND,
 )
 PRODUCT_PATHS = {
     CDEC: {
@@ -139,7 +141,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
     def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 12)
+        self.assertEqual(len(MIGRATED), 13)
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
             expected = 1 if WORKFLOWS / filename in MIGRATED else 0
@@ -191,6 +193,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         cbrfc = CBRFC.read_text(encoding="utf-8")
         gfs = GFS.read_text(encoding="utf-8")
         hrrr = HRRR.read_text(encoding="utf-8")
+        nbm_wind = NBM_WIND.read_text(encoding="utf-8")
         for text, callback in (
             (delta, "scripts/delta_ops_publisher.py"),
             (scan, "scripts/scan_soil_moisture_publisher.py"),
@@ -205,6 +208,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(cbrfc.count("scripts/cbrfc_forecast_publisher.py"), 5)
         self.assertEqual(gfs.count("scripts/gfs_wind_publisher.py"), 5)
         self.assertEqual(hrrr.count("scripts/hrrr_wind_publisher.py"), 5)
+        self.assertEqual(nbm_wind.count("scripts/nbm_wind_publisher.py"), 5)
         self.assertIn("DELTA_OPS_OUT_DIR:", delta)
         self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
         self.assertIn("scan-soil-moisture-candidate/candidate", scan)
@@ -252,6 +256,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             (CBRFC, "cbrfc-forecast-candidate"),
             (GFS, "gfs-wind-candidate"),
             (HRRR, "hrrr-wind-candidate"),
+            (NBM_WIND, "nbm-wind-candidate"),
         ):
             text = workflow.read_text(encoding="utf-8")
             self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
@@ -343,6 +348,27 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertEqual(text.count(f"--allowlist {path}"), 2)
         self.assertEqual(text.count("--owned-root docs/data/wind/hrrr/surface"), 2)
         self.assertIn("hrrr_rolling_state_sha256_v1", text)
+        self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
+
+    def test_phase9_nbm_complete_cycle_ownership_and_schedule_are_bounded(self) -> None:
+        text = NBM_WIND.read_text(encoding="utf-8")
+        fixed = {
+            "docs/data/wind/nbm_wind_guidance_feed_manifest.json",
+            "docs/data/wind/nbm_wind_guidance_latest_summary.json",
+        }
+        self.assertIn('- cron: "23 1,7,13,19 * * *"', text)
+        self.assertIn("Rscript scripts/build_nbm_wind_guidance_latest.R", text)
+        self.assertIn(
+            "BRIM_NBM_PROJECT_ROOT: ${{ runner.temp }}/nbm-wind-build-root",
+            text,
+        )
+        self.assertIn('BRIM_NBM_TARGET_LEAD_HOURS: "6,12,24,48"', text)
+        self.assertIn('BRIM_NBM_SUPPORT_WINDOW_HOURS: "6"', text)
+        self.assertIn('BRIM_NBM_RETAIN_HOURS: "18"', text)
+        for path in fixed:
+            self.assertEqual(text.count(f"--allowlist {path}"), 2)
+        self.assertEqual(text.count("--owned-root docs/data/wind/nbm/guidance"), 2)
+        self.assertIn("nbm_wind_complete_cycle_state_sha256_v1", text)
         self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
