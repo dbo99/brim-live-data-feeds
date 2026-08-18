@@ -989,6 +989,64 @@ ownership.
   fallbacks. Detailed source evidence is in
   [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
 
+## Offline NBM QPF candidate producer (not published)
+
+`nbm_qpf` has an offline, R-centric complete-cycle candidate producer, but it
+is not yet a public product and has no workflow, canonical manifest, Pages
+path, publisher callback, schedule, or BRIM consumer contract. The producer is
+[`scripts/build_nbm_qpf_candidate.R`](../scripts/build_nbm_qpf_candidate.R),
+with validation and transformation helpers in
+[`scripts/nbm_qpf_helpers.R`](../scripts/nbm_qpf_helpers.R) and the locked
+palette in
+[`data/input/nbm_qpf_palette.csv`](../data/input/nbm_qpf_palette.csv).
+
+The candidate requires exactly ten deterministic NBM Core CONUS surface APCP
+records from one 00/06/12/18 UTC cycle: native preceding-six-hour
+accumulations ending at f006, f012, f018, f024, f030, f036, f042, f048, f060,
+and f072. It validates exact inventory and GRIB source/time/unit metadata,
+refuses incomplete or mixed cycles, crops the native numeric source with a
+two-cell buffer, bilinearly reprojects numeric millimetres to the fixed 720 by
+733 EPSG:3857 grid over WGS84 `[-130, 30, -112, 44.5]`, converts to inches,
+then applies the global fixed `brim_nbm_qpf_6h_west_v1` palette. Nodata and
+finite QPF below 0.01 inch are transparent; painted pixels have alpha 255.
+Targets are lossless VP8L RGBA WebPs with content-addressed names.
+
+One candidate root contains `nbm_qpf_candidate.json`, `validation.json`,
+`preflight.csv`, and exactly ten referenced WebPs under the future product path
+shape `docs/data/nbm-qpf/nbm/qpf/`. The candidate manifest has no wall-clock
+generation field and declares itself nonpublication output. The validator
+recomputes time relationships, target closure, byte counts, SHA-256 values,
+palette/alpha membership, WebP encoding and dimensions, cycle maximum, and the
+cycle-level displayed legend cap. It rejects missing, duplicate, unexpected,
+hash-mismatched, wrong-duration, wrong-cycle, wrong-CRS, or dimension-mismatched
+state. The entry point refuses any output root under canonical `docs/data` and
+requires a new absent output directory.
+
+Run offline tests and a candidate build from the repository root:
+
+```sh
+Rscript tests/test_nbm_qpf.R
+Rscript tests/test_nbm_qpf_controlled_samples.R
+BRIM_NBM_QPF_OUTPUT_ROOT=/tmp/nbm-qpf-candidate \
+BRIM_NBM_QPF_CYCLE_UTC=2026-08-17T18:00:00Z \
+BRIM_NBM_QPF_REPEAT_BUILD=true \
+Rscript scripts/build_nbm_qpf_candidate.R
+```
+
+The controlled-sample test uses the separately retained research workspace when
+available and otherwise reports a skip. The explicit cycle above is an example,
+not a scheduled or freshness promise. Repeat-build mode downloads one validated
+source set once, produces it twice, and requires 10/10 WebP byte/hash/name
+identity plus semantic candidate-manifest, palette, cycle maximum, and legend
+identity before delivering the first candidate.
+
+Two-cycle current/previous reconciliation, controlled deletion, canonical root
+manifest construction, Git publication, workflows, scheduling, Pages exposure,
+and BRIM consumption remain outside this producer gate. They require the shared
+publisher migration and separate maintainer review. No file from an offline
+candidate is a public API until that later publication/consumer contract is
+approved and implemented.
+
 ## Nonproduction workflows
 
 The manual HRRR sandbox writes diagnostic files and an Actions artifact only.
