@@ -46,6 +46,7 @@ from Pages-relative `data/...` paths. Their repository counterparts are under
 | GFS wind | `.github/workflows/build-gfs-wind-latest.yml` | `scripts/build_gfs_wind_latest.R` | `docs/data/wind/gfs_surface_wind_feed_manifest.json` and selected target | Yes | Shared wind helper |
 | HRRR wind | `.github/workflows/build-hrrr-wind-latest.yml` | `scripts/build_hrrr_wind_latest.R` | `docs/data/wind/hrrr_surface_wind_feed_manifest.json` and selected target | Yes | HRRR wind helper |
 | NBM guidance | `.github/workflows/build-nbm-wind-guidance-latest.yml` | `scripts/build_nbm_wind_guidance_latest.R` | `docs/data/wind/nbm_wind_guidance_feed_manifest.json` and selected target | Yes | NBM wind helper |
+| NBM QPF | `.github/workflows/build-nbm-qpf.yml` | `scripts/build_nbm_qpf_candidate.R` | Unseeded `docs/data/nbm-qpf/nbm_qpf_manifest.json` and selected WebP targets under `docs/data/nbm-qpf/nbm/qpf/` | Yes | Not implemented; public contract and first publication both await separate maintainer approval |
 | ASOS/AWOS | `.github/workflows/build-asos-awos-wind-latest.yml` | `scripts/build_asos_awos_wind_latest.R` | `docs/data/wind/asos_awos_wind_latest.geojson`, summary, and manifest | Both | Observed-wind helper |
 | USGS streamflow | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | `scripts/build_usgs_streamflow_latest_ca.R` | `docs/data/usgs_streamflow_latest_ca.geojson`<br>`docs/data/usgs_streamflow_latest_ca_summary.json` | No | Streamflow helper |
 | USGS groundwater | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | `scripts/build_usgs_groundwater_latest_ca.R` | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | No | Groundwater helper |
@@ -64,14 +65,16 @@ files, is maintained in [PRODUCTS.md](PRODUCTS.md).
 
 ### Format and compression
 
-- Official browser products are uncompressed JSON, GeoJSON, or CSV served by
-  GitHub Pages.
+- Official browser products are uncompressed JSON, GeoJSON, CSV, or
+  product-specific lossless WebP served by GitHub Pages.
 - Actions QA artifacts are ZIP archives and are not product URLs.
 - GFS and HRRR wind grids are arrays of U and V records with grid headers and
   data arrays.
 - NBM guidance and point products are GeoJSON FeatureCollections. Winter Storm
   Levels targets are GeoJSON line FeatureCollections selected only through their
   manifest.
+- NBM QPF targets are lossless VP8L RGBA8 WebPs selected only through their
+  manifest; the QPF product is not yet seeded or available on Pages.
 - CSV context products must retain a header row and product-specific key
   columns used by the consumer.
 
@@ -82,8 +85,9 @@ filename is a contract change.
 
 Point GeoJSON and context coordinates are longitude/latitude compatible with
 WGS84/EPSG:4326 display. GFS/HRRR grid headers describe their
-longitude/latitude grid. Current products do not share a formal machine CRS
-field, so documentation must not claim a universal serialized `crs` property.
+longitude/latitude grid. The unseeded NBM QPF contract explicitly declares an
+EPSG:3857 raster plus WGS84/Leaflet bounds. Products do not share a universal
+machine CRS field.
 
 Changing coordinate order, longitude convention, geometry type, grid scan
 orientation or CRS requires coordinated consumer support.
@@ -164,6 +168,7 @@ defines a formal limit.
 | HRRR<br>`docs/data/wind/hrrr_surface_wind_feed_manifest.json` | Root `entries:array`; entries require `product_id:string`, `requested_lead_hours:number`, `target_valid_time_utc:string`, `target_distance_minutes:number`, `model_cycle_utc:string`, `forecast_hour:number`, `valid_time_utc:string`, `relative_url:string`, `file_bytes:number`. `browser_selection.supported_lead_hours:array` defines Current/+6/+12; `stale_after_hours:number`. | Selected target is the same two-record U/V JSON structure and header fields as GFS, with numeric component arrays in m/s. `domain:object`, `grid:object`, and `earth_relative_winds_confirmed:boolean` carry spatial/vector state. | Target time and actual valid time remain distinct; the consumer rejects entries outside its target tolerance. Root `target_failures:array` can report unavailable targets. A load failure may retain the previous in-session field. | `docs/data/wind/hrrr_surface_wind_latest.json` and its summary are compatibility outputs; current BRIM selection is manifest-driven. |
 | NBM<br>`docs/data/wind/nbm_wind_guidance_feed_manifest.json` | Root `entries:array`; each entry requires `feed_version:string`, `target_lead_hours:number`, `model_cycle_utc:string`, `forecast_hour:number`, `valid_time_utc:string`, `relative_url:string`, `feature_count:number`. Root `target_lead_hours:array`, `published_support_lead_hours:array`, and `support_window_hours:number` describe selection support. | Selected target is a GeoJSON `FeatureCollection` of Points. Minimum properties are `grid_i:number`, `grid_j:number`, `wind_dir_degrees:number`, `wind_p10_mph:number`, `wind_p50_mph:number`, `wind_p90_mph:number`, `gust_p10_mph:number`, `gust_p50_mph:number`, `gust_p90_mph:number`. | Init, forecast hour, valid time, and manifest `generated_at_utc` are distinct. The current manifest has no common `product_id`, stale field, or universal error/status envelope. Missing/unresolvable entries are unusable; the browser may retain its prior in-session field. | `docs/data/wind/nbm_wind_guidance_latest_summary.json` is producer/QA metadata, not a compatibility latest field. |
 | Winter Storm Levels<br>`docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Root requires `product_id:"winter_storm_levels"`, supported `schema_version` and `contract_version`, accepted `status`, `source`, `domain`, `contour`, `freshness`, `cycle_time_utc`, retrieval/publication times, `target_count`, complete-set `diagnostics`, and `targets`. Each target requires source/cycle/valid/validity-window/lead, exact provenance URLs/inventory record, relative `path`, media type, SHA-256, bytes, feature count, contour levels, source-grid diagnostics, and output bounds. Consumers select the newest supported cycle and explicit valid-time entry; never list the directory. | Target is a GeoJSON `FeatureCollection` of `LineString` features in WGS84. Required properties are `product_id`, `source_id`, `parameter:"snow_level"`, `definition`, numeric `level_ft_msl`, `label`, `unit:"ft_msl"`, `cycle_time_utc`, `valid_time_utc`, numeric `lead_hours`, segment, and length. Contour elevations are configured 1,000-foot multiples; absence of a level is not zero. | Consumer recomputes active target windows and cycle status: current through 9 h, delayed usable through 15 h, stale LKG through 24 h, then expired; no active target also expires. Target validity is ±3 h. Missing/unresolvable/checksum-invalid targets are load failures. `source_unavailable`, `variable_missing`, `fetch_failed`, `decode_failed`, `validation_failed`, and `publication_failed` are attempt diagnostics and never make prior values look current. | No compatibility latest file. The canonical manifest currently retains two complete cycles and 22 targets. Browser integration must accept the manifest contract before any later removal or breaking change. |
+| NBM QPF (unseeded)<br>`docs/data/nbm-qpf/nbm_qpf_manifest.json` | Public schema `1.0.0` requires `product_id:"nbm_qpf"`, generation time, exact source/palette/spatial/freshness contracts, explicit `retention_mode`, current/previous cycle identities, and one bootstrap or two steady complete cycle objects. Each complete cycle has the exact leads 6, 12, 18, 24, 30, 36, 42, 48, 60, 72 and cycle-level maximum/cap/overflow. Each target carries cycle, lead, preceding-six-hour start/end/valid times, source semantics, units, content-addressed path, media/encoding, 720x733 dimensions, WGS84 bounds, bytes, SHA-256, and palette identity. | Selected target is a lossless VP8L RGBA8 WebP on the fixed 720x733 EPSG:3857 grid for WGS84 `[-130, 30, -112, 44.5]`. Transparent pixels are exactly RGBA 0,0,0,0; painted pixels are alpha 255 and use only `brim_nbm_qpf_6h_west_v1` colors. Values represent deterministic surface APCP normalized through mm to displayed inches; below 0.01 inch and NoData are transparent. | Source-cycle age is current through 9 h, delayed through 15 h, stale through 24 h, and expired afterward. Consumers resolve only manifest targets, verify supported schema/path/time/hash/dimensions, keep source cycle separate from valid time, and reject missing, mixed-cycle, incomplete, malformed, checksum-invalid or decode-invalid state. One explicit bootstrap cycle is a temporary seeding state; mature state is exactly current plus previous. | No compatibility file and no directory-listing fallback. No canonical file is tracked and no private consumer exists yet; first publication and consumer integration are separately approved changes. |
 
 ### NoData, null, empty, and error representation
 
@@ -612,6 +617,28 @@ and producer scripts.
   into this repository, and no consumer change is required to validate this
   public producer. Guarded producer scheduling is independent of the later
   consumer release, which remains a separate coordinated maintainer decision.
+
+### NBM QPF (unseeded public contract)
+
+- Load only `docs/data/nbm-qpf/nbm_qpf_manifest.json`, require supported public
+  schema `1.0.0` and product ID `nbm_qpf`, then resolve exact target paths from
+  the manifest. Never select by directory listing, filename sorting, Git time,
+  or object modification time.
+- Require one explicitly labeled bootstrap cycle or exactly two complete steady
+  cycles in newest-to-oldest order. Each cycle must contain all ten unique locked
+  leads and every target must agree on cycle, preceding-six-hour accumulation,
+  valid time, source identity, units, bounds, dimensions, palette and hash.
+- Render the fixed EPSG:3857 raster within WGS84/Leaflet bounds
+  `[-130, 30, -112, 44.5]`. It is deterministic NBM Core surface APCP for a
+  six-hour accumulation, displayed in inches. Transparent means NoData or less
+  than 0.01 inch; it does not imply an observed dry condition.
+- Recompute freshness from `cycle_utc`, not generation, retrieval, commit or
+  Pages time. Missing, expired, checksum-invalid, undecodable, wrong-sized,
+  mixed-cycle or incomplete state is unavailable and must not be silently
+  replaced by filename discovery.
+- This contract is additive but not live: no canonical QPF manifest or target is
+  tracked and private BRIM has no QPF reader. First official publication and
+  consumer rollout remain distinct coordinated maintainer decisions.
 
 ## Compatibility and fallback
 

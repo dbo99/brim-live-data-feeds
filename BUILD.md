@@ -40,7 +40,9 @@ Additional command-line dependencies include:
 
 - `wgrib2` for HRRR and NBM wind GRIB2 extraction.
 - GDAL/GEOS/PROJ and the geospatial libraries needed by the R spatial packages
-  used by GFS, HRRR, and Winter Storm Levels.
+  used by GFS, HRRR, Winter Storm Levels, and NBM QPF.
+- `cwebp`, `dwebp`, and `webpinfo` for NBM QPF production and independent
+  lossless-RGBA validation.
 - Poppler utilities for the Delta operations PDF workflow.
 - Network and TLS access to each product's public upstream services.
 
@@ -57,6 +59,7 @@ package or operating system is equivalent to the hosted runner.
 | GFS wind | `scripts/build_gfs_wind_latest.R` |
 | HRRR wind | `scripts/build_hrrr_wind_latest.R` |
 | NBM wind guidance | `scripts/build_nbm_wind_guidance_latest.R` |
+| NBM QPF | `scripts/build_nbm_qpf_candidate.R` |
 | ASOS/AWOS observed wind | `scripts/build_asos_awos_wind_latest.R` |
 | SCAN soil moisture | `scripts/build_scan_soil_moisture_latest.R` |
 | Snow-pillow SWE | `scripts/build_snow_pillow_latest.R` |
@@ -155,6 +158,30 @@ The extracted bundle can be served with any local static HTTP server beside
 `qa/winter_storm_levels/index.html`, or all bundle JSON/GeoJSON files can be
 selected through that page's local-file control. Do not set
 `BRIM_WSL_PUBLISH=true` for local evidence generation.
+
+NBM QPF production is also isolated from `docs/data/`. Use new absent output
+directories for each run; the producer deliberately refuses canonical or reused
+delivery roots:
+
+```sh
+cd "$HOME/Documents/brim-live-data-feeds_source_repo"
+Rscript tests/test_nbm_qpf.R
+Rscript tests/test_nbm_qpf_controlled_samples.R
+python3 -m unittest -v tests/test_nbm_qpf_publisher.py
+BRIM_NBM_QPF_OUTPUT_ROOT=/tmp/nbm-qpf-r-candidate \
+BRIM_NBM_QPF_CYCLE_UTC=2026-08-17T18:00:00Z \
+BRIM_NBM_QPF_REPEAT_BUILD=true \
+Rscript scripts/build_nbm_qpf_candidate.R
+python3 scripts/nbm_qpf_publisher.py assemble-candidate \
+  --r-candidate-root /tmp/nbm-qpf-r-candidate \
+  --output-root /tmp/nbm-qpf-publication-candidate
+python3 scripts/nbm_qpf_publisher.py validate-candidate \
+  --root /tmp/nbm-qpf-publication-candidate
+```
+
+The explicit cycle is an example, not a freshness or schedule promise. These
+commands create offline evidence only. Do not point them at `docs/data`, invoke
+the shared publisher, or treat a candidate artifact as an official feed.
 
 ## Inspect changes
 

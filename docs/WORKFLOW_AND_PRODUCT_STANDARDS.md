@@ -27,6 +27,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-hrrr-wind-latest.yml` | Build HRRR wind latest | Manual; hourly :33 | `scripts/build_hrrr_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
+| `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; approved +138m primary and +190m fallback for 00/06/12/18Z; first publication separately gated | `scripts/build_nbm_qpf_candidate.R` | Unseeded complete-cycle artifact; separate bounded `main` publisher |
 | `.github/workflows/build-scan-soil-moisture-latest.yml` | Build SCAN soil moisture latest feed | Manual; daily 14:30 | `scripts/build_scan_soil_moisture_latest.R` | Latest/trace/style |
 | `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
@@ -36,7 +37,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
 
-GitHub's dynamic `pages build and deployment` workflow is an eighteenth active
+GitHub's dynamic `pages build and deployment` workflow is a nineteenth active
 workflow but is not source-controlled in `.github/workflows`.
 
 ## Names and entry points
@@ -63,7 +64,7 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Fourteen writers have schedules and `workflow_dispatch`.
+- Fifteen writers have schedules and `workflow_dispatch`.
 - The CNRFC forecast writer uses GitHub Actions' native
   `America/Los_Angeles` timezone at 10:56 and 16:56. It has no runtime
   exact-minute guard, records a stable Pacific AM/PM logical slot, defaults
@@ -80,6 +81,10 @@ workflow but is not source-controlled in `.github/workflows`.
   run the shared-logic, inventory-only cycle preflight; only `NEW_CYCLE` reaches
   the full producer. Manual `publish: false` remains available for diagnostic
   current-cycle rebuilds.
+- The unseeded NBM QPF workflow performs the same ten-lead inventory discovery
+  before its unchanged R producer, prepares a bounded candidate on any selected
+  ref, and permits its separate publisher job only on `main`. Its approved +138/
+  +190-minute timing does not authorize merge, dispatch, or first publication.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
@@ -106,7 +111,9 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Writers request `contents: write`.
+- Two direct writers request `contents: write`. Thirteen migrated workflows use
+  `contents: read` for preparation and `contents: write` only in their
+  `publish-to-main` job.
 - Wind watchdog requests `contents: read` to inspect wind manifests/state and
   `actions: write` to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the
   selected ref; it does not itself commit or publish repository data.
@@ -114,8 +121,9 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Gap**
 
-The build and publication steps share the writer's write-capable token; there
-is no separate least-privilege build job.
+The two remaining direct writers share build and publication under a write-
+capable token; migrated workflows have separate least-privilege build and
+publisher jobs.
 
 **Recommended**
 
@@ -131,9 +139,10 @@ is no separate least-privilege build job.
 
 - Writers use `live-data-feed-writes-${{ github.ref }}`,
   `cancel-in-progress: false`, and `queue: max`.
-- Writers check out the current selected ref and push non-force to the same
-  branch.
-- Unexpected branch advancement fails the run.
+- Migrated publisher jobs additionally use `brim-live-main-publish`, reconcile
+  against fresh `origin/main`, and push normally only to `main`.
+- Direct writers check out the selected ref and push non-force under their
+  product-specific branch rules. Unexpected branch advancement fails the run.
 
 **Recommended**
 
@@ -142,10 +151,9 @@ is no separate least-privilege build job.
 - Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
   feature-to-main publication.
 - Re-evaluate queue behavior when schedules or runtime increase materially.
-- Winter Storm Levels intentionally starts scheduled operation inside the
-  existing whole-workflow queue. Migrating all main writers to parallel builds,
-  one job-level main publisher queue, and post-lock reconciliation remains a
-  required repository-wide optimization before NBM QPF.
+- Winter Storm Levels and NBM wind guidance remain direct writers
+  inside the existing whole-workflow queue. Their migration and later removal
+  of the compatibility lock require separate review.
 
 ## Runner and action versions
 
@@ -306,6 +314,11 @@ directory and atomically promoted locally.
   the prior root cycle, producing exactly two complete cycles and 22 targets;
   failed retention rejects the candidate. Old accepted values age through
   explicit delayed, stale-LKG, and expired states without restamping.
+- NBM QPF rejects every partial or mixed-cycle candidate. Its public adapter
+  validates one explicit bootstrap cycle or exactly two steady cycles, ten
+  targets per cycle, locked six-hour timing/science/spatial/palette identity,
+  WebP decode and content hashes. Fresh-main NEW advances and prunes only the old
+  previous cycle; SAME and STALE do not rewrite or regress canonical state.
 
 **Gaps**
 
@@ -392,6 +405,8 @@ directory and atomically promoted locally.
 **Implemented**
 
 - ASOS, GFS, HRRR, NBM, and Winter Storm Levels have product manifests.
+- NBM QPF has an implemented schema-1 manifest contract and validator but no
+  tracked or hosted manifest until a separately approved first publication.
 - Other families have ad hoc summaries.
 
 **Gaps**
