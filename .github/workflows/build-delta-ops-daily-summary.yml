@@ -13,8 +13,7 @@ on:
     - cron: "11,41 16 * * *"
     - cron: "11,41 17 * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -22,9 +21,13 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      should_publish: ${{ steps.delta_ops_precheck.outputs.should_run }}
 
     steps:
       - name: Check out latest branch tip
@@ -126,38 +129,92 @@ jobs:
       - name: Build latest Delta Ops daily summary GeoJSON
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: Rscript {0}
+        env:
+          DELTA_OPS_OUT_DIR: ${{ runner.temp }}/delta-ops-candidate/candidate/docs/data
         run: |
           source("scripts/build_delta_ops_daily_summary.R")
 
-      - name: Commit updated feed files
+      - name: Validate and describe Delta Ops candidate artifact
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/delta-ops-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/data/delta_ops_daily_summary_features.geojson \
-            docs/data/delta_ops_daily_summary_summary.json \
-            docs/data/delta_ops_daily_summary.json \
-            docs/data/delta_ops_x2_reference.geojson
+          python3 scripts/delta_ops_publisher.py validate \
+            --root "${candidate_root}"
 
-          if git diff --cached --quiet; then
-            echo "No Delta Ops feed changes to commit."
-            exit 0
-          fi
+          semantic_date="$(jq -er '.report_date' \
+            "${candidate_root}/docs/data/delta_ops_daily_summary_summary.json")"
 
-          git commit -m "Update Delta Ops daily summary feed"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id delta-ops-daily-summary \
+            --semantic-key-type report_date \
+            --semantic-key "${semantic_date}" \
+            --source-event-sha "${GITHUB_SHA}" \
+            --allowlist docs/data/delta_ops_daily_summary.json \
+            --allowlist docs/data/delta_ops_daily_summary_features.geojson \
+            --allowlist docs/data/delta_ops_daily_summary_summary.json \
+            --allowlist docs/data/delta_ops_x2_reference.geojson
 
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+      - name: Upload validated Delta Ops publication candidate
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: delta-ops-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/delta-ops-candidate
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.should_publish == 'true' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download validated Delta Ops publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: delta-ops-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/delta-ops-candidate
+
+      - name: Reconcile and publish Delta Ops candidate onto current main
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+
+          candidate_artifact_root="${RUNNER_TEMP}/delta-ops-candidate"
+
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id delta-ops-daily-summary \
+            --target-ref refs/heads/main \
+            --commit-subject "Update Delta Ops daily summary feed" \
+            --allowlist docs/data/delta_ops_daily_summary.json \
+            --allowlist docs/data/delta_ops_daily_summary_features.geojson \
+            --allowlist docs/data/delta_ops_daily_summary_summary.json \
+            --allowlist docs/data/delta_ops_x2_reference.geojson \
+            --candidate-validator scripts/delta_ops_publisher.py \
+            --reconcile-callback scripts/delta_ops_publisher.py \
+            --staged-validator scripts/delta_ops_publisher.py

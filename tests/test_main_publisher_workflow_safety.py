@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static mixed-state lock and CDEC workflow safety checks."""
+"""Static mixed-state lock and migrated-writer workflow safety checks."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO / ".github" / "workflows"
-CANARY = WORKFLOWS / "build-cdec-reservoir-feed.yml"
+CDEC = WORKFLOWS / "build-cdec-reservoir-feed.yml"
+DELTA_OPS = WORKFLOWS / "build-delta-ops-daily-summary.yml"
+SCAN = WORKFLOWS / "build-scan-soil-moisture-latest.yml"
 WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
@@ -27,7 +29,26 @@ WRITERS = (
     "build-usgs-streamflow-latest-ca.yml",
     "build-winter-storm-levels.yml",
 )
-MIGRATED = (CANARY,)
+MIGRATED = (CDEC, DELTA_OPS, SCAN)
+PRODUCT_PATHS = {
+    CDEC: {
+        "docs/data/cdec_reservoir_latest.geojson",
+        "docs/data/cdec_reservoir_latest_summary.json",
+    },
+    DELTA_OPS: {
+        "docs/data/delta_ops_daily_summary.json",
+        "docs/data/delta_ops_daily_summary_features.geojson",
+        "docs/data/delta_ops_daily_summary_summary.json",
+        "docs/data/delta_ops_x2_reference.geojson",
+    },
+    SCAN: {
+        "docs/data/scan_soil_moisture_latest.geojson",
+        "docs/data/scan_soil_moisture_latest_summary.json",
+        "docs/data/scan_soil_moisture_current_wy_trace.csv",
+        "docs/data/scan_soil_moisture_current_wy_trace_summary.json",
+        "docs/data/scan_depth_style.csv",
+    },
+}
 
 
 def job_level_env_blocks(text: str) -> list[str]:
@@ -64,48 +85,56 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertRegex(text, r"(?m)^  cancel-in-progress: false$", filename)
             self.assertRegex(text, r"(?m)^  queue: max$", filename)
 
-    def test_only_canary_uses_the_new_main_publication_lock(self) -> None:
+    def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
         for filename in WRITERS:
             text = (WORKFLOWS / filename).read_text(encoding="utf-8")
-            expected = 1 if filename == CANARY.name else 0
+            expected = 1 if WORKFLOWS / filename in MIGRATED else 0
             self.assertEqual(text.count("group: brim-live-main-publish"), expected, filename)
-        text = CANARY.read_text(encoding="utf-8")
-        publish_job = text.split("  publish-to-main:\n", 1)[1]
-        self.assertIn("    concurrency:\n      group: brim-live-main-publish", publish_job)
-        self.assertIn("      cancel-in-progress: false", publish_job)
-        self.assertIn("      queue: max", publish_job)
+        for workflow in MIGRATED:
+            text = workflow.read_text(encoding="utf-8")
+            publish_job = text.split("  publish-to-main:\n", 1)[1]
+            self.assertIn("    concurrency:\n      group: brim-live-main-publish", publish_job)
+            self.assertIn("      cancel-in-progress: false", publish_job)
+            self.assertIn("      queue: max", publish_job)
 
-    def test_canary_has_read_only_prepare_and_main_only_write_publisher(self) -> None:
-        text = CANARY.read_text(encoding="utf-8")
-        prepare, publish = text.split("  publish-to-main:\n", 1)
-        self.assertIn("  prepare-candidate:\n", prepare)
-        self.assertIn("      contents: read", prepare)
-        self.assertNotIn("contents: write", prepare)
-        self.assertIn("    if: ${{ github.ref == 'refs/heads/main' }}", publish)
-        self.assertIn("      contents: write", publish)
-        self.assertIn("actions/upload-artifact@v7", prepare)
-        self.assertIn("actions/download-artifact@v8", publish)
-        self.assertIn('source("scripts/build_cdec_reservoir_latest.R")', prepare)
-        self.assertIn("CDEC_RESERVOIR_GEOJSON:", prepare)
-        self.assertIn("CDEC_RESERVOIR_SUMMARY_JSON:", prepare)
-        self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b")
+    def test_migrated_writers_have_read_only_prepare_and_main_only_publish(self) -> None:
+        for workflow in MIGRATED:
+            text = workflow.read_text(encoding="utf-8")
+            prepare, publish = text.split("  publish-to-main:\n", 1)
+            self.assertIn("  prepare-candidate:\n", prepare, workflow.name)
+            self.assertIn("      contents: read", prepare, workflow.name)
+            self.assertNotIn("contents: write", prepare, workflow.name)
+            self.assertIn("github.ref == 'refs/heads/main'", publish, workflow.name)
+            self.assertIn("      contents: write", publish, workflow.name)
+            self.assertIn("actions/upload-artifact@v7", prepare, workflow.name)
+            self.assertIn("actions/download-artifact@v8", publish, workflow.name)
+            self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b", workflow.name)
 
-    def test_canary_declares_only_its_two_exact_product_paths(self) -> None:
-        text = CANARY.read_text(encoding="utf-8")
-        paths = set(re.findall(r"docs/data/[A-Za-z0-9_./-]+", text))
-        self.assertEqual(
-            paths,
-            {
-                "docs/data/cdec_reservoir_latest.geojson",
-                "docs/data/cdec_reservoir_latest_summary.json",
-            },
-        )
-        self.assertIn("scripts/main_publisher.py prepare", text)
-        self.assertIn("scripts/main_publisher.py publish", text)
-        self.assertEqual(text.count("--allowlist docs/data/cdec_reservoir_latest.geojson"), 2)
-        self.assertEqual(
-            text.count("--allowlist docs/data/cdec_reservoir_latest_summary.json"), 2
-        )
+        cdec_text = CDEC.read_text(encoding="utf-8")
+        self.assertIn('source("scripts/build_cdec_reservoir_latest.R")', cdec_text)
+        self.assertIn("CDEC_RESERVOIR_GEOJSON:", cdec_text)
+        self.assertIn("CDEC_RESERVOIR_SUMMARY_JSON:", cdec_text)
+
+    def test_migrated_writers_declare_only_exact_product_paths(self) -> None:
+        for workflow, expected_paths in PRODUCT_PATHS.items():
+            text = workflow.read_text(encoding="utf-8")
+            paths = set(re.findall(r"docs/data/[A-Za-z0-9_./-]+", text))
+            self.assertEqual(paths, expected_paths, workflow.name)
+            self.assertIn("scripts/main_publisher.py prepare", text, workflow.name)
+            self.assertIn("scripts/main_publisher.py publish", text, workflow.name)
+            for path in expected_paths:
+                self.assertEqual(text.count(f"--allowlist {path}"), 2, workflow.name)
+
+    def test_phase2_callbacks_and_candidate_roots_are_product_specific(self) -> None:
+        delta = DELTA_OPS.read_text(encoding="utf-8")
+        scan = SCAN.read_text(encoding="utf-8")
+        self.assertEqual(delta.count("scripts/delta_ops_publisher.py"), 4)
+        self.assertEqual(scan.count("scripts/scan_soil_moisture_publisher.py"), 4)
+        self.assertIn("DELTA_OPS_OUT_DIR:", delta)
+        self.assertIn("delta-ops-candidate/candidate/docs/data", delta)
+        self.assertIn("scan-soil-moisture-candidate/candidate", scan)
+        self.assertIn("SCAN_STATION_INDEX_CSV: ${{ github.workspace }}", scan)
+        self.assertNotIn("SCAN_SMS_GEOJSON:", scan)
 
     def test_migrated_workflows_resolve_runner_temp_only_after_allocation(self) -> None:
         for workflow in MIGRATED:
@@ -115,7 +144,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertNotIn("/home/runner/", text, workflow.name)
             self.assertNotRegex(text, r"(?<![A-Z_])/tmp/", workflow.name)
 
-        text = CANARY.read_text(encoding="utf-8")
+        text = CDEC.read_text(encoding="utf-8")
         self.assertEqual(
             text.count(
                 'candidate_artifact_root="${RUNNER_TEMP}/cdec-reservoir-candidate"'
@@ -124,6 +153,13 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         )
         self.assertIn('candidate_root="${candidate_artifact_root}/candidate"', text)
         self.assertEqual(text.count("${{ runner.temp }}"), 4)
+
+        for workflow, root_name in (
+            (DELTA_OPS, "delta-ops-candidate"),
+            (SCAN, "scan-soil-moisture-candidate"),
+        ):
+            text = workflow.read_text(encoding="utf-8")
+            self.assertIn(f'candidate_artifact_root="${{RUNNER_TEMP}}/{root_name}"', text)
 
     def test_shared_publisher_has_no_force_push_or_merge_strategy(self) -> None:
         text = (REPO / "scripts" / "main_publisher.py").read_text(encoding="utf-8")
