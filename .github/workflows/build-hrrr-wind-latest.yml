@@ -8,8 +8,7 @@ on:
     # +12 hr targets into the same rolling manifest.
     - cron: "33 * * * *"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: live-data-feed-writes-${{ github.ref }}
@@ -17,16 +16,25 @@ concurrency:
   queue: max
 
 jobs:
-  build-feed:
+  prepare-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
 
     steps:
-      - name: Check out latest branch tip
+      - name: Check out selected branch tip
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref_name }}
           fetch-depth: 0
+
+      - name: Record candidate source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -67,9 +75,25 @@ jobs:
             any::jsonlite
             any::terra
 
-      - name: Build HRRR Current/+6/+12 time-set feed
+      - name: Seed isolated HRRR build root
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_root="${RUNNER_TEMP}/hrrr-wind-build-root"
+          mkdir -p "${build_root}/docs/data/wind/hrrr"
+          install -m 0644 docs/data/wind/hrrr_surface_wind_latest.json \
+            "${build_root}/docs/data/wind/hrrr_surface_wind_latest.json"
+          install -m 0644 docs/data/wind/hrrr_surface_wind_latest_summary.json \
+            "${build_root}/docs/data/wind/hrrr_surface_wind_latest_summary.json"
+          install -m 0644 docs/data/wind/hrrr_surface_wind_feed_manifest.json \
+            "${build_root}/docs/data/wind/hrrr_surface_wind_feed_manifest.json"
+          cp -R docs/data/wind/hrrr/surface \
+            "${build_root}/docs/data/wind/hrrr/surface"
+
+      - name: Build HRRR Current/+6/+12 time-set feed in isolation
         shell: bash -el {0}
         env:
+          BRIM_HRRR_PROJECT_ROOT: ${{ runner.temp }}/hrrr-wind-build-root
           BRIM_HRRR_LOCAL_TZ: "America/Los_Angeles"
           BRIM_HRRR_FORCE_REFRESH: "false"
           BRIM_HRRR_WEST: "-125.5"
@@ -88,6 +112,47 @@ jobs:
           wgrib2 -version || true
           Rscript scripts/build_hrrr_wind_latest.R
 
+      - name: Validate and describe HRRR publication candidate
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          build_root="${RUNNER_TEMP}/hrrr-wind-build-root"
+          candidate_artifact_root="${RUNNER_TEMP}/hrrr-wind-candidate"
+          candidate_root="${candidate_artifact_root}/candidate"
+          mkdir -p "${candidate_root}/docs/data/wind/hrrr"
+          install -m 0644 "${build_root}/docs/data/wind/hrrr_surface_wind_latest.json" \
+            "${candidate_root}/docs/data/wind/hrrr_surface_wind_latest.json"
+          install -m 0644 "${build_root}/docs/data/wind/hrrr_surface_wind_latest_summary.json" \
+            "${candidate_root}/docs/data/wind/hrrr_surface_wind_latest_summary.json"
+          install -m 0644 "${build_root}/docs/data/wind/hrrr_surface_wind_feed_manifest.json" \
+            "${candidate_root}/docs/data/wind/hrrr_surface_wind_feed_manifest.json"
+          cp -R "${build_root}/docs/data/wind/hrrr/surface" \
+            "${candidate_root}/docs/data/wind/hrrr/surface"
+
+          python3 scripts/hrrr_wind_publisher.py validate --root "${candidate_root}"
+          semantic_state="$(python3 scripts/hrrr_wind_publisher.py semantic-key --root "${candidate_root}")"
+          python3 scripts/main_publisher.py prepare \
+            --candidate-root "${candidate_root}" \
+            --output "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id hrrr-wind-latest \
+            --semantic-key-type hrrr_rolling_state_sha256_v1 \
+            --semantic-key "${semantic_state}" \
+            --source-event-sha "${SOURCE_SHA}" \
+            --allowlist docs/data/wind/hrrr_surface_wind_latest.json \
+            --allowlist docs/data/wind/hrrr_surface_wind_latest_summary.json \
+            --allowlist docs/data/wind/hrrr_surface_wind_feed_manifest.json \
+            --owned-root docs/data/wind/hrrr/surface
+
+      - name: Upload validated HRRR publication candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: hrrr-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hrrr-wind-candidate
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Upload HRRR QA artifact
         if: always()
         uses: actions/upload-artifact@v7
@@ -96,37 +161,54 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: |
-            qa/wind/hrrr/HRRR_latest_QA_upload.zip
-            debug/wind/hrrr/*.log
+            ${{ runner.temp }}/hrrr-wind-build-root/qa/wind/hrrr/HRRR_latest_QA_upload.zip
+            ${{ runner.temp }}/hrrr-wind-build-root/debug/wind/hrrr/*.log
 
-      - name: Commit updated HRRR wind feed
+  publish-to-main:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: prepare-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+
+    steps:
+      - name: Check out candidate source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-candidate.outputs.source-sha }}
+          fetch-depth: 0
+
+      - name: Download validated HRRR publication candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: hrrr-wind-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hrrr-wind-candidate
+
+      - name: Reconcile and publish HRRR candidate onto current main
         shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source-sha }}
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_REF_TYPE}" != "branch" || \
-                "${GITHUB_REF}" != refs/heads/* ]]; then
-            echo "Refusing to publish from non-branch ref: ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/data/wind/hrrr_surface_wind_latest.json \
-            docs/data/wind/hrrr_surface_wind_latest_summary.json \
-            docs/data/wind/hrrr_surface_wind_feed_manifest.json \
-            docs/data/wind/hrrr/surface/
-
-          if git diff --cached --quiet; then
-            echo "No HRRR wind feed changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update HRRR wind rolling live feed"
-
-          if ! git push origin "HEAD:${GITHUB_REF}"; then
-            echo "The selected branch advanced unexpectedly; nothing was published." >&2
-            echo "Rerun this workflow from the latest branch tip." >&2
-            exit 1
-          fi
+          candidate_artifact_root="${RUNNER_TEMP}/hrrr-wind-candidate"
+          export GITHUB_SHA="${CANDIDATE_SOURCE_SHA}"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "${candidate_artifact_root}/candidate" \
+            --metadata "${candidate_artifact_root}/candidate-metadata.json" \
+            --product-id hrrr-wind-latest \
+            --target-ref refs/heads/main \
+            --commit-subject "Update HRRR wind rolling live feed" \
+            --allowlist docs/data/wind/hrrr_surface_wind_latest.json \
+            --allowlist docs/data/wind/hrrr_surface_wind_latest_summary.json \
+            --allowlist docs/data/wind/hrrr_surface_wind_feed_manifest.json \
+            --owned-root docs/data/wind/hrrr/surface \
+            --candidate-validator scripts/hrrr_wind_publisher.py \
+            --reconcile-callback scripts/hrrr_wind_publisher.py \
+            --staged-validator scripts/hrrr_wind_publisher.py
