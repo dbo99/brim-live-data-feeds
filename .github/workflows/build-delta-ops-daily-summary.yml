@@ -91,6 +91,11 @@ jobs:
           echo "Delta Ops feed already has report date ${{ steps.delta_ops_precheck.outputs.existing }} for Pacific date ${{ steps.delta_ops_precheck.outputs.today }}."
           echo "Skipping R setup, package install, PDF scrape, and commit."
 
+      - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        shell: bash
+        run: sudo bash scripts/configure_apt_mirror_order.sh
+
       - name: Set up R
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         uses: r-lib/actions/setup-r@v2
