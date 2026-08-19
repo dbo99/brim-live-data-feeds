@@ -32,9 +32,10 @@ clone_value <- function(value) unserialize(serialize(value, NULL))
 palette_path <- file.path("data", "input", "nbm_qpf_palette.csv")
 palette <- qpf_read_palette(palette_path)
 check(nrow(palette) == 22L, "locked palette includes transparency plus 21 painted classes")
-check(identical(QPF_SUPPORTED_LEADS,
-                c(6L, 12L, 18L, 24L, 30L, 36L, 42L, 48L, 60L, 72L)),
-      "exact ten-lead product set")
+check(identical(QPF_SUPPORTED_LEADS, seq.int(6L, 240L, by = 6L)) &&
+        length(QPF_SUPPORTED_LEADS) == 40L &&
+        all(c(54L, 66L, 240L) %in% QPF_SUPPORTED_LEADS),
+      "exact continuous 40-lead f240 product set")
 check(identical(qpf_iso_utc(qpf_floor_cycle(qpf_as_utc("2026-08-18T01:00:00Z"))),
                 "2026-08-18T00:00:00Z"), "primary cycle flooring")
 check_error(qpf_validate_cycle("2026-08-18T03:00:00Z"), "validation_failed",
@@ -101,10 +102,10 @@ fake_inventory <- function(url) {
   list(text = text, bytes = length(raw), sha256 = qpf_sha256_raw(raw))
 }
 records <- qpf_preflight_cycle(cycle, fake_inventory, function(url) 1000)
-check(length(records) == 10L &&
+check(length(records) == length(QPF_SUPPORTED_LEADS) &&
         identical(vapply(records, `[[`, integer(1), "lead_hours"), QPF_SUPPORTED_LEADS),
-      "all-ten inventory preflight")
-check_error(qpf_validate_preflight(records[-1L]), "validation_failed", "exactly ten")
+      "all-lead inventory preflight")
+check_error(qpf_validate_preflight(records[-1L]), "validation_failed", "exactly 40")
 bad_records <- clone_value(records)
 bad_records[[2L]]$lead_hours <- bad_records[[1L]]$lead_hours
 check_error(qpf_validate_preflight(bad_records), "validation_failed", "duplicated")
@@ -132,7 +133,8 @@ discovered <- qpf_discover_cycle(
   fetch_object_size = function(url) 1000
 )
 check(identical(qpf_iso_utc(discovered$cycle), "2026-08-17T00:00:00Z") &&
-        length(discovered$attempts) == 2L && discovery_calls == 11L,
+        length(discovered$attempts) == 2L &&
+        discovery_calls == length(QPF_SUPPORTED_LEADS) + 1L,
       "cycle discovery refuses incomplete newest cycle and selects complete fallback")
 check_error(qpf_discover_cycle(
   explicit_cycle = cycle,
@@ -247,10 +249,12 @@ check(xmin(subset) <= QPF_BOUNDS_WGS84[["west"]] - 2 * res(subset_source)[[1L]] 
       "source crop retains the required two-native-cell buffer")
 pipeline_body <- paste(deparse(body(qpf_build_target)), collapse = "\n")
 check(regexpr("qpf_project_numeric", pipeline_body, fixed = TRUE)[[1L]] <
-        regexpr("qpf_write_rgba_png", pipeline_body, fixed = TRUE)[[1L]] &&
+        regexpr("qpf_write_numeric", pipeline_body, fixed = TRUE)[[1L]] &&
+        regexpr("qpf_write_numeric", pipeline_body, fixed = TRUE)[[1L]] <
+          regexpr("qpf_write_rgba_png", pipeline_body, fixed = TRUE)[[1L]] &&
         grepl('method = "bilinear"', paste(deparse(body(qpf_project_numeric)), collapse = "\n"),
               fixed = TRUE),
-      "numeric bilinear reprojection occurs before palette classification")
+      "numeric bilinear reprojection and sidecar encoding occur before palette classification")
 orientation <- matrix(0, nrow = QPF_IMAGE_HEIGHT, ncol = QPF_IMAGE_WIDTH)
 orientation[1L, ] <- 25.4
 orientation[QPF_IMAGE_HEIGHT, ] <- 0.254
@@ -289,6 +293,31 @@ check(isTRUE(webp_stats$lossless_vp8l) && webp_stats$width == 720L &&
       "lossless VP8L RGBA encode/decode and exact pixels")
 check(identical(webp_stats$alpha_values, c(0L, 255L)),
       "WebP diagnostics retain only distinct binary alpha values")
+numeric_fixture <- file.path(image_root, "valid.u16le.gz")
+numeric_stats <- qpf_write_numeric(image_mm, numeric_fixture)
+numeric_values <- qpf_read_numeric(numeric_fixture)
+check(numeric_stats$uncompressed_bytes == QPF_IMAGE_WIDTH * QPF_IMAGE_HEIGHT * 2L &&
+        length(numeric_values) == QPF_IMAGE_WIDTH * QPF_IMAGE_HEIGHT &&
+        numeric_values[(100L - 1L) * QPF_IMAGE_WIDTH + 200L] == 3000L &&
+        numeric_values[(300L - 1L) * QPF_IMAGE_WIDTH + 500L] == QPF_NUMERIC_NODATA,
+      "gzip uint16 little-endian numeric round trip preserves row-major QPF and NoData")
+numeric_repeat <- file.path(image_root, "valid-repeat.u16le.gz")
+invisible(qpf_write_numeric(image_mm, numeric_repeat))
+check(
+  identical(
+    readBin(numeric_fixture, what = "raw", n = file.info(numeric_fixture)$size),
+    readBin(numeric_repeat, what = "raw", n = file.info(numeric_repeat)$size)
+  ),
+  "gzip numeric serialization is byte-deterministic"
+)
+quantized <- qpf_numeric_raw(matrix(
+  0.0004 * 25.4, nrow = QPF_IMAGE_HEIGHT, ncol = QPF_IMAGE_WIDTH
+))
+check(quantized$maximum_quantization_error_in < 0.0005,
+      "numeric quantization error remains strictly below 0.0005 inches")
+check_error(qpf_numeric_raw(matrix(
+  65.535 * 25.4, nrow = QPF_IMAGE_HEIGHT, ncol = QPF_IMAGE_WIDTH
+)), "validation_failed", "overflow")
 zero_png <- file.path(image_root, "all-zero.png")
 zero_webp <- file.path(image_root, "all-zero.webp")
 zero_reference <- qpf_write_rgba_png(
@@ -314,8 +343,9 @@ dir.create(candidate_root, recursive = TRUE)
 on.exit(unlink(candidate_root, recursive = TRUE, force = TRUE), add = TRUE)
 targets <- list()
 target_validations <- list()
-maxima <- seq(0.1, 1.0, length.out = 10)
+maxima <- seq(0.1, 1.0, length.out = length(QPF_SUPPORTED_LEADS))
 webp_sha <- qpf_sha256_file(webp_path)
+numeric_sha <- qpf_sha256_file(numeric_fixture)
 for (index in seq_along(records)) {
   record <- records[[index]]
   filename <- qpf_target_filename(record, webp_sha)
@@ -324,7 +354,14 @@ for (index in seq_along(records)) {
   dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
   check(file.copy(webp_path, destination, overwrite = FALSE),
         paste("fixture target copy", record$lead_hours))
-  target <- qpf_target_entry(record, image_path, destination)
+  numeric_filename <- qpf_numeric_filename(record, numeric_sha)
+  numeric_path <- file.path(QPF_ASSET_ROOT, numeric_filename)
+  numeric_destination <- file.path(candidate_root, numeric_path)
+  check(file.copy(numeric_fixture, numeric_destination, overwrite = FALSE),
+        paste("fixture numeric target copy", record$lead_hours))
+  target <- qpf_target_entry(
+    record, image_path, destination, numeric_path, numeric_destination
+  )
   targets[[index]] <- target
   target_validations[[index]] <- list(
     lead_hours = record$lead_hours,
@@ -340,7 +377,17 @@ for (index in seq_along(records)) {
     source_metadata = list(authoritative_metadata_accepted = TRUE),
     output_grid = list(rows = 733L, columns = 720L),
     target_max_qpf_in = maxima[[index]],
-    webp = list(path = image_path, bytes = target$bytes, sha256 = target$sha256)
+    webp = list(path = image_path, bytes = target$bytes, sha256 = target$sha256),
+    numeric = list(
+      path = numeric_path,
+      compressed_bytes = target$numeric$compressed_bytes,
+      uncompressed_bytes = target$numeric$uncompressed_bytes,
+      sha256 = target$numeric$sha256,
+      finite_count = numeric_stats$finite_count,
+      nodata_count = numeric_stats$nodata_count,
+      maximum_quantization_error_in = numeric_stats$maximum_quantization_error_in
+    ),
+    forecast_state_id = target$forecast_state_id
   )
 }
 manifest <- qpf_candidate_manifest(cycle, targets, maxima, palette)
@@ -380,6 +427,11 @@ check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "mis
 unlink(bad, recursive = TRUE)
 
 bad <- copy_candidate(candidate_root)
+unlink(file.path(bad, targets[[1L]]$numeric$path))
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "numeric")
+unlink(bad, recursive = TRUE)
+
+bad <- copy_candidate(candidate_root)
 writeLines("unexpected", file.path(bad, "unexpected.txt"))
 check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "unexpected")
 unlink(bad, recursive = TRUE)
@@ -394,6 +446,65 @@ unlink(bad, recursive = TRUE)
 
 bad <- copy_candidate(candidate_root)
 mutate_manifest(bad, function(value) {
+  value$cycle$targets[[1L]]$numeric$sha256 <- paste(rep("0", 64), collapse = "")
+  value
+})
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "numeric")
+unlink(bad, recursive = TRUE)
+
+bad <- copy_candidate(candidate_root)
+mutate_manifest(bad, function(value) {
+  value$cycle$targets[[1L]]$numeric$compressed_bytes <-
+    value$cycle$targets[[1L]]$numeric$compressed_bytes + 1
+  value
+})
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "numeric")
+unlink(bad, recursive = TRUE)
+
+for (field in c("scale", "nodata")) {
+  bad <- copy_candidate(candidate_root)
+  mutate_manifest(bad, function(value) {
+    value$cycle$targets[[1L]]$numeric[[field]] <- if (field == "scale") 0.01 else 0L
+    value
+  })
+  check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "numeric")
+  unlink(bad, recursive = TRUE)
+}
+
+bad <- copy_candidate(candidate_root)
+mutate_manifest(bad, function(value) {
+  value$cycle$targets[[1L]]$numeric <- value$cycle$targets[[2L]]$numeric
+  value
+})
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed")
+unlink(bad, recursive = TRUE)
+
+bad <- copy_candidate(candidate_root)
+corrupt_manifest <- jsonlite::fromJSON(
+  file.path(bad, QPF_CANDIDATE_MANIFEST), simplifyVector = FALSE
+)
+corrupt_target <- corrupt_manifest$cycle$targets[[1L]]
+old_numeric <- file.path(bad, corrupt_target$numeric$path)
+writeBin(charToRaw("not gzip"), old_numeric)
+corrupt_sha <- qpf_sha256_file(old_numeric)
+corrupt_name <- qpf_numeric_filename(corrupt_target, corrupt_sha)
+corrupt_relative <- file.path(QPF_ASSET_ROOT, corrupt_name)
+corrupt_path <- file.path(bad, corrupt_relative)
+invisible(file.rename(old_numeric, corrupt_path))
+corrupt_target$numeric$path <- corrupt_relative
+corrupt_target$numeric$sha256 <- corrupt_sha
+corrupt_target$numeric$compressed_bytes <- unname(file.info(corrupt_path)$size)
+corrupt_target$forecast_state_id <- qpf_forecast_state_id(
+  corrupt_target, corrupt_target$image_path, corrupt_target$sha256,
+  corrupt_relative, corrupt_sha
+)
+corrupt_manifest$cycle$targets[[1L]] <- corrupt_target
+qpf_write_json(corrupt_manifest, file.path(bad, QPF_CANDIDATE_MANIFEST))
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "gzip")
+unlink(bad, recursive = TRUE)
+
+bad <- copy_candidate(candidate_root)
+mutate_manifest(bad, function(value) {
   value$cycle$targets[[2L]] <- value$cycle$targets[[1L]]
   value
 })
@@ -402,11 +513,40 @@ unlink(bad, recursive = TRUE)
 
 bad <- copy_candidate(candidate_root)
 mutate_manifest(bad, function(value) {
-  value$cycle$targets <- value$cycle$targets[-10L]
-  value$cycle$target_count <- 9L
+  value$cycle$targets <- value$cycle$targets[-length(QPF_SUPPORTED_LEADS)]
+  value$cycle$target_count <- length(QPF_SUPPORTED_LEADS) - 1L
   value
 })
 check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "completeness")
+unlink(bad, recursive = TRUE)
+
+for (missing_lead in c(54L, 66L)) {
+  bad <- copy_candidate(candidate_root)
+  mutate_manifest(bad, function(value) {
+    index <- which(vapply(value$cycle$targets, function(target) {
+      as.integer(target$lead_hours) == missing_lead
+    }, logical(1)))[[1L]]
+    value$cycle$targets[[index]] <- value$cycle$targets[[index - 1L]]
+    value
+  })
+  check_error(qpf_validate_candidate(bad, palette_path), "validation_failed")
+  unlink(bad, recursive = TRUE)
+}
+
+bad <- copy_candidate(candidate_root)
+mutate_manifest(bad, function(value) {
+  value$cycle$targets[[1L]]$image_width <- 719L
+  value
+})
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "spatial")
+unlink(bad, recursive = TRUE)
+
+bad <- copy_candidate(candidate_root)
+mutate_manifest(bad, function(value) {
+  value$cycle$targets[[1L]]$rows <- 732L
+  value
+})
+check_error(qpf_validate_candidate(bad, palette_path), "validation_failed", "spatial")
 unlink(bad, recursive = TRUE)
 
 bad <- copy_candidate(candidate_root)

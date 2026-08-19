@@ -3,6 +3,8 @@
 WSL_METERS_TO_FEET <- 3.28083989501312
 WSL_TRANSIENT_HTTP_STATUS <- c(408L, 429L, 500L, 502L, 503L, 504L)
 WSL_CARTOGRAPHIC_CRS <- 5070
+WSL_TARGET_LEADS <- c(1L, seq.int(6L, 240L, by = 6L))
+WSL_LEGACY_TARGET_LEADS <- c(1L, 6L, 12L, 18L, 24L, 30L, 36L, 42L, 48L, 60L, 72L)
 
 wsl_stop <- function(class, ..., call. = FALSE) {
   condition <- structure(
@@ -63,6 +65,9 @@ wsl_read_config <- function(path) {
   }
   if (any(!row$source_cycle_hours_utc %in% 0:23)) stop("Invalid source cycle hour.")
   if (any(row$forecast_lead_hours < 0)) stop("Forecast lead hours cannot be negative.")
+  if (!identical(as.integer(row$forecast_lead_hours), WSL_TARGET_LEADS)) {
+    stop("Winter Storm Levels requires f001 plus every six hours from f006 through f240.")
+  }
   row
 }
 
@@ -1387,7 +1392,33 @@ wsl_copy_retained_cycles <- function(
   # The prior manifest is the retention authority. Any malformed manifest,
   # unsafe path, missing target, checksum mismatch, or incomplete cycle fails
   # before the candidate can reach canonical promotion.
-  wsl_validate_manifest(prior_manifest_path, canonical_root, config, now)
+  legacy_config <- config
+  legacy_config$forecast_lead_hours <- WSL_LEGACY_TARGET_LEADS
+  legacy_state <- FALSE
+  current_validation <- tryCatch(
+    {
+      wsl_validate_manifest(prior_manifest_path, canonical_root, config, now)
+      NULL
+    },
+    error = function(error) error
+  )
+  if (inherits(current_validation, "error")) {
+    legacy_validation <- tryCatch(
+      {
+        wsl_validate_manifest(prior_manifest_path, canonical_root, legacy_config, now)
+        NULL
+      },
+      error = function(error) error
+    )
+    if (inherits(legacy_validation, "error")) {
+      wsl_stop(
+        "validation_failed",
+        "Prior canonical Snow state is neither complete f240 nor the exact legacy migration state: ",
+        conditionMessage(current_validation), "; legacy: ", conditionMessage(legacy_validation)
+      )
+    }
+    legacy_state <- TRUE
+  }
   prior <- jsonlite::fromJSON(prior_manifest_path, simplifyVector = FALSE)
   selected_cycle_utc <- wsl_iso_utc(selected_cycle)
   selected_cycle_time <- wsl_as_utc(selected_cycle_utc)
@@ -1395,12 +1426,25 @@ wsl_copy_retained_cycles <- function(
   if (is.na(selected_cycle_time) || is.na(prior_root_time)) {
     wsl_stop("validation_failed", "Selected or prior root cycle is invalid.")
   }
+  if (isTRUE(legacy_state) && selected_cycle_time <= prior_root_time) {
+    wsl_stop(
+      "validation_failed",
+      "Selected f240 migration cycle must be newer than legacy canonical cycle ",
+      prior$cycle_time_utc, "."
+    )
+  }
   if (selected_cycle_time < prior_root_time) {
     wsl_stop(
       "validation_failed",
       "Selected cycle ", selected_cycle_utc,
       " is older than prior canonical root cycle ", prior$cycle_time_utc, "."
     )
+  }
+  if (isTRUE(legacy_state)) {
+    # Sparse legacy cycles cannot be represented as complete f240 cycles. The
+    # first accepted f240 run therefore establishes one complete migration
+    # cycle; the next accepted run restores normal exact two-cycle retention.
+    return(entries)
   }
 
   prior_cycles <- unique(vapply(prior$targets, `[[`, character(1), "cycle_time_utc"))

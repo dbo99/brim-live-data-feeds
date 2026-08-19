@@ -132,8 +132,9 @@ boundary until the producer, consumer, and public contract are changed together.
   range retrieval, a versioned checksum manifest, complete-cycle gating,
   deterministic full-grid isoband contour/bounds/serialization tests, semantic
   no-op behavior, manifest-last promotion with injected-failure coverage, and
-  standalone browser QA. Its accepted public state has two complete retained
-  cycles and 22 targets. Its recurring schedule uses inventory-only +128-minute
+  standalone browser QA. Its target contract has two complete retained
+  41-target cycles (82 targets in steady state). Its recurring schedule uses
+  inventory-only +128-minute
   primary and +174-minute fallback guards so only a strictly newer complete
   cycle reaches the producer; guarded no-ops preserve canonical LKG.
   Geometry research progressed from Terra contour extraction and `maxcells`

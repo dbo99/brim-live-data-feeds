@@ -9,8 +9,10 @@ previous complete cycles, and implements the shared-publisher callback.
 from __future__ import annotations
 
 import argparse
+import array
 import copy
 import csv
+import gzip
 import hashlib
 import json
 import math
@@ -20,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,12 +40,22 @@ R_VALIDATION = Path("validation.json")
 R_PREFLIGHT = Path("preflight.csv")
 SCHEMA_VERSION = "1.0.0"
 SEMANTIC_KEY_TYPE = "nbm_qpf_cycle_state_sha256_v1"
-SUPPORTED_LEADS = (6, 12, 18, 24, 30, 36, 42, 48, 60, 72)
+SUPPORTED_LEADS = tuple(range(6, 241, 6))
+LEGACY_SUPPORTED_LEADS = (6, 12, 18, 24, 30, 36, 42, 48, 60, 72)
 ACCUMULATION_HOURS = 6
 PALETTE_ID = "brim_nbm_qpf_6h_west_v1"
 PALETTE_VERSION = 1
 IMAGE_WIDTH = 720
 IMAGE_HEIGHT = 733
+GRID_CONTRACT_ID = "nbm_qpf_lossless_webp_v1"
+NUMERIC_ENCODING = "uint16_le"
+NUMERIC_COMPRESSION = "gzip"
+NUMERIC_SCALE = 0.001
+NUMERIC_OFFSET = 0
+NUMERIC_NODATA = 65535
+NUMERIC_VALID_MAX = 65534
+NUMERIC_UNCOMPRESSED_BYTES = IMAGE_WIDTH * IMAGE_HEIGHT * 2
+FORECAST_STATE_BINDING = "nbm_qpf_forecast_state_sha256_v1"
 BOUNDS_WGS84 = [-130.0, 30.0, -112.0, 44.5]
 EXTENT_3857 = [
     -14471533.803125564,
@@ -51,10 +64,13 @@ EXTENT_3857 = [
     5543147.203861799,
 ]
 PIXEL_SIZE_M = [2782.9872698322874, 2782.533915903717]
-MANIFEST_MAX_BYTES = 40 * 1024
+MANIFEST_MAX_BYTES = 512 * 1024
 TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 TARGET_PATTERN = re.compile(
     r"nbm_qpf_(\d{8}T\d{6}Z)_f(\d{3})_([0-9a-f]{12})\.webp"
+)
+NUMERIC_PATTERN = re.compile(
+    r"nbm_qpf_(\d{8}T\d{6}Z)_f(\d{3})_([0-9a-f]{12})\.u16le\.gz"
 )
 
 SOURCE_CONTRACT = {
@@ -87,6 +103,8 @@ ROOT_FIELDS = {
     "source",
     "palette",
     "spatial_representation",
+    "numeric_representation",
+    "forecast_state_binding",
     "freshness",
     "retention_mode",
     "current_cycle_utc",
@@ -105,7 +123,10 @@ CYCLE_FIELDS = {
 }
 TARGET_FIELDS = {
     "product_id",
+    "forecast_state_id",
     "source_id",
+    "parameter",
+    "level",
     "cycle_utc",
     "lead_hours",
     "lead_end_hours",
@@ -118,7 +139,16 @@ TARGET_FIELDS = {
     "source_inventory_semantics",
     "native_units",
     "normalized_units",
+    "stored_numeric_units",
     "display_units",
+    "grid_contract_id",
+    "columns",
+    "rows",
+    "crs",
+    "extent_m",
+    "row_order",
+    "column_order",
+    "pixel_is_area",
     "image_path",
     "image_media_type",
     "image_encoding",
@@ -127,6 +157,8 @@ TARGET_FIELDS = {
     "bounds_wgs84",
     "bytes",
     "sha256",
+    "image",
+    "numeric",
     "palette_id",
     "palette_version",
 }
@@ -139,7 +171,26 @@ R_CANDIDATE_FIELDS = {
     "source",
     "palette",
     "spatial_representation",
+    "numeric_representation",
+    "forecast_state_binding",
     "cycle",
+}
+LEGACY_ROOT_FIELDS = ROOT_FIELDS - {"numeric_representation", "forecast_state_binding"}
+LEGACY_TARGET_FIELDS = TARGET_FIELDS - {
+    "forecast_state_id",
+    "parameter",
+    "level",
+    "stored_numeric_units",
+    "grid_contract_id",
+    "columns",
+    "rows",
+    "crs",
+    "extent_m",
+    "row_order",
+    "column_order",
+    "pixel_is_area",
+    "image",
+    "numeric",
 }
 
 
@@ -150,8 +201,10 @@ class ProductError(RuntimeError):
 @dataclass(frozen=True)
 class TargetState:
     entry: Dict[str, object]
-    relative_path: Path
-    sha256: str
+    image_path: Path
+    image_sha256: str
+    numeric_path: Path
+    numeric_sha256: str
 
 
 @dataclass(frozen=True)
@@ -222,6 +275,21 @@ def _json_signature(value: object) -> str:
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _byte_diagnostics(state: ProductState) -> Dict[str, int]:
+    targets = [target for cycle in state.cycles for target in cycle.targets]
+    return {
+        "retained_cycle_count": len(state.cycles),
+        "retained_state_count": len(targets),
+        "retained_image_bytes": sum(int(target.entry["bytes"]) for target in targets),
+        "retained_numeric_compressed_bytes": sum(
+            int(target.entry["numeric"]["compressed_bytes"]) for target in targets
+        ),
+        "retained_numeric_uncompressed_bytes": sum(
+            int(target.entry["numeric"]["uncompressed_bytes"]) for target in targets
+        ),
+    }
 
 
 def _ensure_plain_tree(root: Path) -> None:
@@ -309,7 +377,7 @@ def _validate_spatial(value: object) -> Dict[str, object]:
     if set(value) != expected_fields:
         raise ProductError("QPF spatial representation has missing or unexpected fields")
     scalar_expected = {
-        "contract_id": "nbm_qpf_lossless_webp_v1",
+        "contract_id": GRID_CONTRACT_ID,
         "media_type": "image/webp",
         "encoding": "lossless VP8L RGBA8 WebP",
         "crs": "EPSG:3857",
@@ -328,6 +396,116 @@ def _validate_spatial(value: object) -> Dict[str, object]:
     _numbers_close(value.get("extent_m"), EXTENT_3857, "extent_m")
     _numbers_close(value.get("pixel_size_m"), PIXEL_SIZE_M, "pixel_size_m")
     return copy.deepcopy(value)
+
+
+def _numeric_contract() -> Dict[str, object]:
+    return {
+        "contract_id": "nbm_qpf_uint16_le_gzip_v1",
+        "media_type": "application/octet-stream",
+        "encoding": NUMERIC_ENCODING,
+        "compression": NUMERIC_COMPRESSION,
+        "stored_units": "in",
+        "scale": NUMERIC_SCALE,
+        "offset": NUMERIC_OFFSET,
+        "nodata": NUMERIC_NODATA,
+        "valid_stored_min": 0,
+        "valid_stored_max": NUMERIC_VALID_MAX,
+        "represented_min": 0,
+        "represented_max": NUMERIC_VALID_MAX * NUMERIC_SCALE,
+        "uncompressed_bytes": NUMERIC_UNCOMPRESSED_BYTES,
+        "grid_contract_id": GRID_CONTRACT_ID,
+        "columns": IMAGE_WIDTH,
+        "rows": IMAGE_HEIGHT,
+        "crs": "EPSG:3857",
+        "bounds_wgs84": copy.deepcopy(BOUNDS_WGS84),
+        "extent_m": copy.deepcopy(EXTENT_3857),
+        "row_order": "north_to_south",
+        "column_order": "west_to_east",
+        "pixel_is_area": True,
+    }
+
+
+def _validate_numeric_contract(value: object) -> Dict[str, object]:
+    expected = _numeric_contract()
+    if not isinstance(value, dict) or set(value) != set(expected):
+        raise ProductError("QPF numeric representation has missing or unexpected fields")
+    for key, wanted in expected.items():
+        if key in {"bounds_wgs84", "extent_m"}:
+            continue
+        if value.get(key) != wanted:
+            raise ProductError(f"QPF numeric representation {key} is invalid")
+    _numbers_close(value.get("bounds_wgs84"), BOUNDS_WGS84, "numeric bounds_wgs84")
+    _numbers_close(value.get("extent_m"), EXTENT_3857, "numeric extent_m")
+    return copy.deepcopy(value)
+
+
+def _forecast_state_contract() -> Dict[str, object]:
+    return {
+        "algorithm": FORECAST_STATE_BINDING,
+        "digest": "sha256",
+        "canonicalization": "ordered UTF-8 key=value lines",
+        "binds": [
+            "forecast metadata",
+            "image path and SHA-256",
+            "numeric path and SHA-256",
+        ],
+    }
+
+
+def _forecast_state_id(
+    value: Mapping[str, object],
+    image_path: str,
+    image_sha256: str,
+    numeric_path: str,
+    numeric_sha256: str,
+) -> str:
+    fields = (
+        ("binding", FORECAST_STATE_BINDING),
+        ("product_id", PRODUCT_ID),
+        ("source_id", SOURCE_ID),
+        ("parameter", "APCP"),
+        ("level", "surface"),
+        ("cycle_utc", str(value["cycle_utc"])),
+        ("lead_hours", str(value["lead_hours"])),
+        ("valid_time_utc", str(value["valid_time_utc"])),
+        ("accumulation_start_utc", str(value["accumulation_start_utc"])),
+        ("accumulation_end_utc", str(value["accumulation_end_utc"])),
+        ("accumulation_hours", str(ACCUMULATION_HOURS)),
+        ("source_inventory_semantics", str(value["source_inventory_semantics"])),
+        ("native_units", "kg/m^2"),
+        ("normalized_units", "mm"),
+        ("stored_numeric_units", "in"),
+        ("display_units", "in"),
+        ("grid_contract_id", GRID_CONTRACT_ID),
+        ("columns", str(IMAGE_WIDTH)),
+        ("rows", str(IMAGE_HEIGHT)),
+        ("crs", "EPSG:3857"),
+        ("bounds_wgs84", "-130,30,-112,44.5"),
+        (
+            "extent_m",
+            "-14471533.803125564,3503549.843504374,"
+            "-12467782.96884664,5543147.203861799",
+        ),
+        ("row_order", "north_to_south"),
+        ("column_order", "west_to_east"),
+        ("pixel_is_area", "true"),
+        ("palette_id", PALETTE_ID),
+        ("palette_version", str(PALETTE_VERSION)),
+        ("image_path", image_path),
+        ("image_sha256", image_sha256),
+        ("image_media_type", "image/webp"),
+        ("image_encoding", "lossless_vp8l_rgba8"),
+        ("numeric_path", numeric_path),
+        ("numeric_sha256", numeric_sha256),
+        ("numeric_media_type", "application/octet-stream"),
+        ("numeric_encoding", NUMERIC_ENCODING),
+        ("numeric_compression", NUMERIC_COMPRESSION),
+        ("numeric_scale", "0.001"),
+        ("numeric_offset", "0"),
+        ("numeric_nodata", str(NUMERIC_NODATA)),
+    )
+    canonical = "\n".join(f"{key}={item}" for key, item in fields).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _legend_for_maximum(maximum: float) -> tuple[int, bool]:
@@ -368,7 +546,7 @@ def _run_tool(command: str, arguments: Sequence[str]) -> str:
     return (result.stdout + result.stderr).decode("utf-8", errors="replace")
 
 
-def _validate_webp(path: Path, palette_colors: set[bytes]) -> None:
+def _validate_webp(path: Path, palette_colors: set[bytes]) -> bytes:
     header = path.read_bytes()[:16]
     if len(header) < 16 or header[:4] != b"RIFF" or header[8:12] != b"WEBP" or header[12:16] != b"VP8L":
         raise ProductError(f"QPF target is not a lossless VP8L WebP: {path}")
@@ -416,6 +594,72 @@ def _validate_webp(path: Path, palette_colors: set[bytes]) -> None:
                 raise ProductError("painted QPF WebP pixel is outside the locked palette")
         else:
             raise ProductError("QPF WebP alpha must be exactly 0 or 255")
+    return pixels
+
+
+def _validate_numeric(path: Path) -> array.array[int]:
+    try:
+        compressed = path.read_bytes()
+        payload = gzip.decompress(compressed)
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error) as exc:
+        raise ProductError(f"QPF numeric target is not valid gzip: {path}") from exc
+    if len(payload) != NUMERIC_UNCOMPRESSED_BYTES:
+        raise ProductError(
+            f"QPF numeric uncompressed byte count is invalid: {path}"
+        )
+    values = array.array("H")
+    values.frombytes(payload)
+    if sys.byteorder != "little":
+        values.byteswap()
+    if len(values) != IMAGE_WIDTH * IMAGE_HEIGHT:
+        raise ProductError(f"QPF numeric decoded cell count is invalid: {path}")
+    # Every uint16 is structurally valid; 65535 alone is reserved for NoData.
+    # Decoding explicitly as little-endian proves the application payload
+    # contract independently of any HTTP Content-Encoding behavior.
+    if any(value < 0 or value > NUMERIC_NODATA for value in values):
+        raise ProductError(f"QPF numeric target contains an invalid uint16 value: {path}")
+    return values
+
+
+def _allowed_rgba_by_stored_value() -> tuple[tuple[bytes, ...], ...]:
+    classes = _palette_contract()["classes"]
+    transparent = b"\x00\x00\x00\x00"
+
+    def color(value: float) -> bytes:
+        if value < 0.01:
+            return transparent
+        for item in classes:
+            upper = item["upper_exclusive_in"]
+            if value >= item["lower_inclusive_in"] and (
+                upper is None or value < upper
+            ):
+                return bytes.fromhex(item["color_hex"].lstrip("#")) + b"\xff"
+        raise ProductError("numeric QPF value does not map to the locked palette")
+
+    result: list[tuple[bytes, ...]] = []
+    for stored in range(NUMERIC_NODATA):
+        decoded = stored * NUMERIC_SCALE + NUMERIC_OFFSET
+        possible = {
+            color(max(0.0, decoded - 0.000499999999)),
+            color(decoded),
+            color(decoded + 0.000499999999),
+        }
+        result.append(tuple(possible))
+    result.append((transparent,))
+    return tuple(result)
+
+
+NUMERIC_ALLOWED_RGBA = _allowed_rgba_by_stored_value()
+VALIDATED_IMAGE_NUMERIC_PAIRS: set[tuple[str, str]] = set()
+
+
+def _validate_image_numeric_pair(pixels: bytes, values: array.array[int]) -> None:
+    for index, stored in enumerate(values):
+        rgba = pixels[index * 4 : index * 4 + 4]
+        if rgba not in NUMERIC_ALLOWED_RGBA[stored]:
+            raise ProductError(
+                "QPF image/numeric pixels disagree beyond the numeric quantization tolerance"
+            )
 
 
 def _validate_target(
@@ -423,14 +667,20 @@ def _validate_target(
     value: object,
     cycle: datetime,
     index: int,
-    webp_cache: set[str],
+    webp_cache: Dict[str, bytes],
+    numeric_cache: Dict[str, array.array[int]],
 ) -> TargetState:
     if not isinstance(value, dict) or set(value) != TARGET_FIELDS:
         raise ProductError(f"QPF target {index} has missing or unexpected fields")
     lead = _integer(value.get("lead_hours"), f"QPF target {index} lead_hours")
     if lead not in SUPPORTED_LEADS or value.get("lead_end_hours") != lead:
         raise ProductError(f"QPF target {index} has an unsupported or incoherent lead")
-    if value.get("product_id") != PRODUCT_ID or value.get("source_id") != SOURCE_ID:
+    if (
+        value.get("product_id") != PRODUCT_ID
+        or value.get("source_id") != SOURCE_ID
+        or value.get("parameter") != "APCP"
+        or value.get("level") != "surface"
+    ):
         raise ProductError(f"QPF target {index} identity is invalid")
     if value.get("cycle_utc") != _stamp(cycle):
         raise ProductError(f"QPF target {index} crosses cycles")
@@ -450,7 +700,15 @@ def _validate_target(
         "source_inventory_semantics": expected_semantics,
         "native_units": "kg/m^2",
         "normalized_units": "mm",
+        "stored_numeric_units": "in",
         "display_units": "in",
+        "grid_contract_id": GRID_CONTRACT_ID,
+        "columns": IMAGE_WIDTH,
+        "rows": IMAGE_HEIGHT,
+        "crs": "EPSG:3857",
+        "row_order": "north_to_south",
+        "column_order": "west_to_east",
+        "pixel_is_area": True,
         "image_media_type": "image/webp",
         "image_encoding": "lossless_vp8l_rgba8",
         "image_width": IMAGE_WIDTH,
@@ -462,6 +720,7 @@ def _validate_target(
         if value.get(key) != expected:
             raise ProductError(f"QPF target {index} {key} is invalid")
     _numbers_close(value.get("bounds_wgs84"), BOUNDS_WGS84, f"target {index} bounds")
+    _numbers_close(value.get("extent_m"), EXTENT_3857, f"target {index} extent")
     sha = value.get("sha256")
     byte_count = value.get("bytes")
     if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
@@ -471,37 +730,130 @@ def _validate_target(
     image_path = value.get("image_path")
     if not isinstance(image_path, str):
         raise ProductError(f"QPF target {index} image_path is invalid")
-    relative = Path(image_path)
-    match = TARGET_PATTERN.fullmatch(relative.name)
+    image_relative = Path(image_path)
+    match = TARGET_PATTERN.fullmatch(image_relative.name)
     expected_cycle_token = cycle.strftime("%Y%m%dT%H%M%SZ")
     if (
-        relative.parent != TARGET_ROOT
+        image_relative.parent != TARGET_ROOT
         or match is None
         or match.group(1) != expected_cycle_token
         or int(match.group(2)) != lead
         or match.group(3) != sha[:12]
     ):
         raise ProductError(f"QPF target {index} content-addressed path is invalid")
-    path = root / relative
-    if not path.is_file() or path.is_symlink():
-        raise ProductError(f"QPF manifest references a missing target: {relative}")
-    if path.stat().st_size != byte_count or _sha256(path) != sha:
-        raise ProductError(f"QPF target bytes/hash mismatch: {relative}")
+    image_file = root / image_relative
+    if not image_file.is_file() or image_file.is_symlink():
+        raise ProductError(f"QPF manifest references a missing target: {image_relative}")
+    if image_file.stat().st_size != byte_count or _sha256(image_file) != sha:
+        raise ProductError(f"QPF target bytes/hash mismatch: {image_relative}")
+    image = value.get("image")
+    expected_image = {
+        "path": image_path,
+        "media_type": "image/webp",
+        "encoding": "lossless_vp8l_rgba8",
+        "bytes": byte_count,
+        "sha256": sha,
+    }
+    if image != expected_image:
+        raise ProductError(f"QPF target {index} nested image identity is invalid")
     if sha not in webp_cache:
         colors = {
             bytes.fromhex(item["color_hex"].lstrip("#"))
             for item in _palette_contract()["classes"]
         }
-        _validate_webp(path, colors)
-        webp_cache.add(sha)
-    return TargetState(copy.deepcopy(value), relative, sha)
+        webp_cache[sha] = _validate_webp(image_file, colors)
+
+    numeric = value.get("numeric")
+    numeric_fields = {
+        "path",
+        "media_type",
+        "encoding",
+        "compression",
+        "stored_units",
+        "scale",
+        "offset",
+        "nodata",
+        "compressed_bytes",
+        "uncompressed_bytes",
+        "sha256",
+    }
+    if not isinstance(numeric, dict) or set(numeric) != numeric_fields:
+        raise ProductError(f"QPF target {index} numeric metadata shape is invalid")
+    numeric_expected = {
+        "media_type": "application/octet-stream",
+        "encoding": NUMERIC_ENCODING,
+        "compression": NUMERIC_COMPRESSION,
+        "stored_units": "in",
+        "scale": NUMERIC_SCALE,
+        "offset": NUMERIC_OFFSET,
+        "nodata": NUMERIC_NODATA,
+        "uncompressed_bytes": NUMERIC_UNCOMPRESSED_BYTES,
+    }
+    for key, expected in numeric_expected.items():
+        if numeric.get(key) != expected:
+            raise ProductError(f"QPF target {index} numeric {key} is invalid")
+    numeric_sha = numeric.get("sha256")
+    numeric_bytes = numeric.get("compressed_bytes")
+    if not isinstance(numeric_sha, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", numeric_sha
+    ):
+        raise ProductError(f"QPF target {index} numeric SHA-256 is invalid")
+    if (
+        isinstance(numeric_bytes, bool)
+        or not isinstance(numeric_bytes, int)
+        or numeric_bytes <= 0
+    ):
+        raise ProductError(f"QPF target {index} numeric byte count is invalid")
+    numeric_path = numeric.get("path")
+    if not isinstance(numeric_path, str):
+        raise ProductError(f"QPF target {index} numeric path is invalid")
+    numeric_relative = Path(numeric_path)
+    numeric_match = NUMERIC_PATTERN.fullmatch(numeric_relative.name)
+    if (
+        numeric_relative.parent != TARGET_ROOT
+        or numeric_match is None
+        or numeric_match.group(1) != expected_cycle_token
+        or int(numeric_match.group(2)) != lead
+        or numeric_match.group(3) != numeric_sha[:12]
+    ):
+        raise ProductError(f"QPF target {index} numeric content-addressed path is invalid")
+    numeric_file = root / numeric_relative
+    if not numeric_file.is_file() or numeric_file.is_symlink():
+        raise ProductError(f"QPF manifest references a missing numeric target: {numeric_relative}")
+    if numeric_file.stat().st_size != numeric_bytes or _sha256(numeric_file) != numeric_sha:
+        raise ProductError(f"QPF numeric target bytes/hash mismatch: {numeric_relative}")
+    if numeric_sha not in numeric_cache:
+        numeric_cache[numeric_sha] = _validate_numeric(numeric_file)
+    pair_identity = (sha, numeric_sha)
+    if pair_identity not in VALIDATED_IMAGE_NUMERIC_PAIRS:
+        _validate_image_numeric_pair(webp_cache[sha], numeric_cache[numeric_sha])
+        VALIDATED_IMAGE_NUMERIC_PAIRS.add(pair_identity)
+
+    expected_state_id = _forecast_state_id(
+        value, image_path, sha, numeric_path, numeric_sha
+    )
+    state_id = value.get("forecast_state_id")
+    if (
+        not isinstance(state_id, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", state_id)
+        or state_id != expected_state_id
+    ):
+        raise ProductError(f"QPF target {index} image/numeric forecast-state binding is invalid")
+    return TargetState(
+        copy.deepcopy(value),
+        image_relative,
+        sha,
+        numeric_relative,
+        numeric_sha,
+    )
 
 
 def _validate_cycle(
     root: Path,
     value: object,
     index: int,
-    webp_cache: set[str],
+    webp_cache: Dict[str, bytes],
+    numeric_cache: Dict[str, array.array[int]],
 ) -> CycleState:
     if not isinstance(value, dict) or set(value) != CYCLE_FIELDS:
         raise ProductError(f"QPF cycle {index} has missing or unexpected fields")
@@ -520,14 +872,20 @@ def _validate_cycle(
     ):
         raise ProductError(f"QPF cycle {index} legend-cap metadata is inconsistent")
     if value.get("target_count") != len(SUPPORTED_LEADS):
-        raise ProductError(f"QPF cycle {index} target_count must equal ten")
+        raise ProductError(
+            f"QPF cycle {index} target_count must equal {len(SUPPORTED_LEADS)}"
+        )
     if value.get("complete_required_leads_hours") != list(SUPPORTED_LEADS):
         raise ProductError(f"QPF cycle {index} required lead set is invalid")
     values = value.get("targets")
     if not isinstance(values, list) or len(values) != len(SUPPORTED_LEADS):
-        raise ProductError(f"QPF cycle {index} must contain exactly ten targets")
+        raise ProductError(
+            f"QPF cycle {index} must contain exactly {len(SUPPORTED_LEADS)} targets"
+        )
     targets = tuple(
-        _validate_target(root, target, cycle, target_index, webp_cache)
+        _validate_target(
+            root, target, cycle, target_index, webp_cache, numeric_cache
+        )
         for target_index, target in enumerate(values)
     )
     leads = [int(target.entry["lead_hours"]) for target in targets]
@@ -544,7 +902,7 @@ def validate_product(root: Path, *, allow_bootstrap: bool) -> ProductState:
     manifest_path = root / MANIFEST_PATH
     manifest = _read_json(manifest_path)
     if manifest_path.stat().st_size > MANIFEST_MAX_BYTES:
-        raise ProductError("QPF public manifest exceeds the 40-KB contract budget")
+        raise ProductError("QPF public manifest exceeds the 512-KB contract budget")
     if not isinstance(manifest, dict) or set(manifest) != ROOT_FIELDS:
         raise ProductError("QPF public manifest has missing or unexpected root fields")
     if manifest.get("schema_version") != SCHEMA_VERSION:
@@ -556,14 +914,18 @@ def validate_product(root: Path, *, allow_bootstrap: bool) -> ProductState:
         raise ProductError("QPF public manifest source identity is invalid")
     _validate_palette(manifest.get("palette"))
     _validate_spatial(manifest.get("spatial_representation"))
+    _validate_numeric_contract(manifest.get("numeric_representation"))
+    if manifest.get("forecast_state_binding") != _forecast_state_contract():
+        raise ProductError("QPF public manifest forecast-state binding is invalid")
     if manifest.get("freshness") != FRESHNESS_CONTRACT:
         raise ProductError("QPF public manifest freshness contract is invalid")
     values = manifest.get("cycles")
     if not isinstance(values, list) or len(values) not in {1, 2}:
         raise ProductError("QPF public manifest must retain one bootstrap or two steady cycles")
-    webp_cache: set[str] = set()
+    webp_cache: Dict[str, bytes] = {}
+    numeric_cache: Dict[str, array.array[int]] = {}
     cycles = tuple(
-        _validate_cycle(root, cycle, index, webp_cache)
+        _validate_cycle(root, cycle, index, webp_cache, numeric_cache)
         for index, cycle in enumerate(values)
     )
     mode = manifest.get("retention_mode")
@@ -582,7 +944,10 @@ def validate_product(root: Path, *, allow_bootstrap: bool) -> ProductState:
     if manifest.get("current_cycle_utc") != cycles[0].entry["cycle_utc"]:
         raise ProductError("QPF current_cycle_utc does not identify the first cycle")
     referenced = {
-        target.relative_path for cycle in cycles for target in cycle.targets
+        path
+        for cycle in cycles
+        for target in cycle.targets
+        for path in (target.image_path, target.numeric_path)
     }
     target_root = root / TARGET_ROOT
     if not target_root.is_dir() or target_root.is_symlink():
@@ -622,6 +987,146 @@ def validate_product(root: Path, *, allow_bootstrap: bool) -> ProductState:
     return ProductState(root, copy.deepcopy(manifest), cycles, cycles[0], previous)
 
 
+def _validate_legacy_target(
+    root: Path,
+    value: object,
+    cycle: datetime,
+    lead: int,
+    webp_cache: set[str],
+) -> Path:
+    if not isinstance(value, dict) or set(value) != LEGACY_TARGET_FIELDS:
+        raise ProductError("legacy QPF target shape is invalid")
+    end = cycle + timedelta(hours=lead)
+    start = end - timedelta(hours=ACCUMULATION_HOURS)
+    expected = {
+        "product_id": PRODUCT_ID,
+        "source_id": SOURCE_ID,
+        "cycle_utc": _stamp(cycle),
+        "lead_hours": lead,
+        "lead_end_hours": lead,
+        "accumulation_start_utc": _stamp(start),
+        "accumulation_end_utc": _stamp(end),
+        "valid_time_utc": _stamp(end),
+        "accumulation_hours": ACCUMULATION_HOURS,
+        "source_parameter": "APCP",
+        "source_level": "surface",
+        "source_inventory_semantics": f"{lead - 6}-{lead} hour acc fcst",
+        "native_units": "kg/m^2",
+        "normalized_units": "mm",
+        "display_units": "in",
+        "image_media_type": "image/webp",
+        "image_encoding": "lossless_vp8l_rgba8",
+        "image_width": IMAGE_WIDTH,
+        "image_height": IMAGE_HEIGHT,
+        "palette_id": PALETTE_ID,
+        "palette_version": PALETTE_VERSION,
+    }
+    if any(value.get(key) != item for key, item in expected.items()):
+        raise ProductError("legacy QPF target contract is invalid")
+    _numbers_close(value.get("bounds_wgs84"), BOUNDS_WGS84, "legacy target bounds")
+    sha = value.get("sha256")
+    byte_count = value.get("bytes")
+    image_path = value.get("image_path")
+    if (
+        not isinstance(sha, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", sha)
+        or isinstance(byte_count, bool)
+        or not isinstance(byte_count, int)
+        or byte_count <= 0
+        or not isinstance(image_path, str)
+    ):
+        raise ProductError("legacy QPF target identity is invalid")
+    relative = Path(image_path)
+    match = TARGET_PATTERN.fullmatch(relative.name)
+    if (
+        relative.parent != TARGET_ROOT
+        or match is None
+        or match.group(1) != cycle.strftime("%Y%m%dT%H%M%SZ")
+        or int(match.group(2)) != lead
+        or match.group(3) != sha[:12]
+    ):
+        raise ProductError("legacy QPF target path identity is invalid")
+    path = root / relative
+    if (
+        not path.is_file()
+        or path.is_symlink()
+        or path.stat().st_size != byte_count
+        or _sha256(path) != sha
+    ):
+        raise ProductError("legacy QPF target bytes/hash are invalid")
+    if sha not in webp_cache:
+        colors = {
+            bytes.fromhex(item["color_hex"].lstrip("#"))
+            for item in _palette_contract()["classes"]
+        }
+        _validate_webp(path, colors)
+        webp_cache.add(sha)
+    return relative
+
+
+def _validate_legacy_product(root: Path) -> datetime:
+    root = root.resolve()
+    manifest = _read_json(root / MANIFEST_PATH)
+    if not isinstance(manifest, dict) or set(manifest) != LEGACY_ROOT_FIELDS:
+        raise ProductError("legacy QPF manifest root shape is invalid")
+    if (
+        manifest.get("schema_version") != SCHEMA_VERSION
+        or manifest.get("product_id") != PRODUCT_ID
+        or manifest.get("source") != SOURCE_CONTRACT
+        or manifest.get("freshness") != FRESHNESS_CONTRACT
+    ):
+        raise ProductError("legacy QPF manifest root contract is invalid")
+    _timestamp(manifest.get("generated_at_utc"), "legacy QPF generated_at_utc")
+    _validate_palette(manifest.get("palette"))
+    _validate_spatial(manifest.get("spatial_representation"))
+    cycles = manifest.get("cycles")
+    if not isinstance(cycles, list) or len(cycles) not in {1, 2}:
+        raise ProductError("legacy QPF retained-cycle inventory is invalid")
+    webp_cache: set[str] = set()
+    referenced: set[Path] = set()
+    parsed_cycles: list[datetime] = []
+    for cycle_index, cycle_value in enumerate(cycles):
+        if not isinstance(cycle_value, dict) or set(cycle_value) != CYCLE_FIELDS:
+            raise ProductError("legacy QPF cycle shape is invalid")
+        cycle = _timestamp(cycle_value.get("cycle_utc"), "legacy QPF cycle")
+        if cycle.minute or cycle.second or cycle.hour not in {0, 6, 12, 18}:
+            raise ProductError("legacy QPF cycle identity is invalid")
+        if (
+            cycle_value.get("cycle_status") != "complete"
+            or cycle_value.get("target_count") != len(LEGACY_SUPPORTED_LEADS)
+            or cycle_value.get("complete_required_leads_hours")
+            != list(LEGACY_SUPPORTED_LEADS)
+        ):
+            raise ProductError("legacy QPF cycle completeness is invalid")
+        targets = cycle_value.get("targets")
+        if not isinstance(targets, list) or len(targets) != len(LEGACY_SUPPORTED_LEADS):
+            raise ProductError("legacy QPF target inventory is invalid")
+        for lead, target in zip(LEGACY_SUPPORTED_LEADS, targets):
+            referenced.add(
+                _validate_legacy_target(root, target, cycle, lead, webp_cache)
+            )
+        parsed_cycles.append(cycle)
+    if parsed_cycles != sorted(parsed_cycles, reverse=True):
+        raise ProductError("legacy QPF cycles are not newest-first")
+    if manifest.get("current_cycle_utc") != _stamp(parsed_cycles[0]):
+        raise ProductError("legacy QPF current cycle identity is invalid")
+    mode = manifest.get("retention_mode")
+    previous = manifest.get("previous_cycle_utc")
+    if (len(parsed_cycles) == 1 and (mode != "bootstrap" or previous is not None)) or (
+        len(parsed_cycles) == 2
+        and (mode != "steady" or previous != _stamp(parsed_cycles[1]))
+    ):
+        raise ProductError("legacy QPF retention metadata is invalid")
+    actual = {
+        path.relative_to(root)
+        for path in (root / TARGET_ROOT).rglob("*")
+        if path.is_file()
+    }
+    if actual != referenced:
+        raise ProductError("legacy QPF manifest-target closure is invalid")
+    return parsed_cycles[0]
+
+
 def validate_candidate(root: Path) -> ProductState:
     state = validate_product(root, allow_bootstrap=True)
     if state.manifest.get("retention_mode") != "bootstrap" or len(state.cycles) != 1:
@@ -649,34 +1154,62 @@ def _validate_r_candidate(root: Path) -> Dict[str, object]:
         raise ProductError("R QPF candidate source identity is invalid")
     _validate_palette(manifest.get("palette"))
     _validate_spatial(manifest.get("spatial_representation"))
-    webp_cache: set[str] = set()
-    cycle = _validate_cycle(root, manifest.get("cycle"), 0, webp_cache)
+    _validate_numeric_contract(manifest.get("numeric_representation"))
+    if manifest.get("forecast_state_binding") != _forecast_state_contract():
+        raise ProductError("R QPF candidate forecast-state binding is invalid")
+    webp_cache: Dict[str, bytes] = {}
+    numeric_cache: Dict[str, array.array[int]] = {}
+    cycle = _validate_cycle(
+        root, manifest.get("cycle"), 0, webp_cache, numeric_cache
+    )
     validation = _read_json(root / R_VALIDATION)
     if not isinstance(validation, dict):
         raise ProductError("R QPF candidate validation root is invalid")
     validation_expected = {
         "validation_result": "passed",
         "complete_cycle": True,
-        "source_record_count": 10,
-        "target_count": 10,
+        "source_record_count": len(SUPPORTED_LEADS),
+        "target_count": len(SUPPORTED_LEADS),
         "numeric_reprojection_before_classification": True,
         "interpolation": "bilinear",
         "manifest_target_closure": True,
         "content_hashes_validated": True,
+        "image_numeric_state_binding_validated": True,
+        "numeric_encoding": NUMERIC_ENCODING,
+        "numeric_compression": NUMERIC_COMPRESSION,
+        "numeric_uncompressed_bytes_per_target": NUMERIC_UNCOMPRESSED_BYTES,
     }
     for key, expected in validation_expected.items():
         if validation.get(key) != expected:
             raise ProductError(f"R QPF validation {key} is invalid")
+    expected_cycle_bytes = {
+        "cycle_image_bytes": sum(int(target.entry["bytes"]) for target in cycle.targets),
+        "cycle_numeric_compressed_bytes": sum(
+            int(target.entry["numeric"]["compressed_bytes"])
+            for target in cycle.targets
+        ),
+        "cycle_numeric_uncompressed_bytes": len(SUPPORTED_LEADS)
+        * NUMERIC_UNCOMPRESSED_BYTES,
+    }
+    for key, expected in expected_cycle_bytes.items():
+        if validation.get(key) != expected:
+            raise ProductError(f"R QPF byte diagnostic {key} is invalid")
     preflight_path = root / R_PREFLIGHT
     if not preflight_path.is_file() or preflight_path.is_symlink():
         raise ProductError("R QPF candidate preflight.csv is missing")
     with preflight_path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    if len(rows) != 10 or [int(row["lead_hours"]) for row in rows] != list(SUPPORTED_LEADS):
+    if len(rows) != len(SUPPORTED_LEADS) or [
+        int(row["lead_hours"]) for row in rows
+    ] != list(SUPPORTED_LEADS):
         raise ProductError("R QPF preflight lead inventory is incomplete or unordered")
     if any(row["cycle_utc"] != cycle.entry["cycle_utc"] for row in rows):
         raise ProductError("R QPF preflight crosses cycles")
-    referenced = {target.relative_path for target in cycle.targets}
+    referenced = {
+        path
+        for target in cycle.targets
+        for path in (target.image_path, target.numeric_path)
+    }
     expected_inventory = {R_CANDIDATE_MANIFEST, R_VALIDATION, R_PREFLIGHT, *referenced}
     actual_inventory = _inventory(root)
     if actual_inventory != expected_inventory:
@@ -703,6 +1236,8 @@ def _public_manifest(
         "source": copy.deepcopy(source_manifest["source"]),
         "palette": copy.deepcopy(source_manifest["palette"]),
         "spatial_representation": copy.deepcopy(source_manifest["spatial_representation"]),
+        "numeric_representation": copy.deepcopy(source_manifest["numeric_representation"]),
+        "forecast_state_binding": copy.deepcopy(source_manifest["forecast_state_binding"]),
         "freshness": copy.deepcopy(FRESHNESS_CONTRACT),
         "retention_mode": "steady" if previous is not None else "bootstrap",
         "current_cycle_utc": current.entry["cycle_utc"],
@@ -730,12 +1265,16 @@ def assemble_candidate(r_candidate_root: Path, output_root: Path) -> ProductStat
     output_root.mkdir(parents=True, exist_ok=True)
     cycle_value = r_manifest["cycle"]
     for target in cycle_value["targets"]:
-        relative = Path(target["image_path"])
-        destination = output_root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(r_candidate_root / relative, destination)
-    webp_cache: set[str] = set()
-    cycle = _validate_cycle(output_root, cycle_value, 0, webp_cache)
+        for relative_text in (target["image_path"], target["numeric"]["path"]):
+            relative = Path(relative_text)
+            destination = output_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(r_candidate_root / relative, destination)
+    webp_cache: Dict[str, bytes] = {}
+    numeric_cache: Dict[str, array.array[int]] = {}
+    cycle = _validate_cycle(
+        output_root, cycle_value, 0, webp_cache, numeric_cache
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "product_id": PRODUCT_ID,
@@ -743,6 +1282,8 @@ def assemble_candidate(r_candidate_root: Path, output_root: Path) -> ProductStat
         "source": copy.deepcopy(r_manifest["source"]),
         "palette": copy.deepcopy(r_manifest["palette"]),
         "spatial_representation": copy.deepcopy(r_manifest["spatial_representation"]),
+        "numeric_representation": copy.deepcopy(r_manifest["numeric_representation"]),
+        "forecast_state_binding": copy.deepcopy(r_manifest["forecast_state_binding"]),
         "freshness": copy.deepcopy(FRESHNESS_CONTRACT),
         "retention_mode": "bootstrap",
         "current_cycle_utc": cycle.entry["cycle_utc"],
@@ -758,7 +1299,14 @@ def semantic_key(root: Path) -> str:
 
 
 def _contracts_match(candidate: ProductState, canonical: ProductState) -> bool:
-    keys = ("source", "palette", "spatial_representation", "freshness")
+    keys = (
+        "source",
+        "palette",
+        "spatial_representation",
+        "numeric_representation",
+        "forecast_state_binding",
+        "freshness",
+    )
     return all(candidate.manifest[key] == canonical.manifest[key] for key in keys)
 
 
@@ -808,14 +1356,51 @@ def reconcile(
         if product_root.exists() and any(path.is_file() for path in product_root.rglob("*")):
             raise ProductError("canonical QPF root has files but no valid root manifest")
         manifest = _public_manifest(None, candidate.manifest, candidate.current, None, now)
-        desired = {
-            target.relative_path: (candidate.root / target.relative_path, target.sha256)
-            for target in candidate.current.targets
-        }
+        desired: Dict[Path, tuple[Path, str]] = {}
+        for target in candidate.current.targets:
+            desired[target.image_path] = (
+                candidate.root / target.image_path,
+                target.image_sha256,
+            )
+            desired[target.numeric_path] = (
+                candidate.root / target.numeric_path,
+                target.numeric_sha256,
+            )
         _apply_desired_state(canonical_root, manifest, desired)
         validate_product(canonical_root, allow_bootstrap=True)
         return "new", "canonical QPF product was absent; established one-cycle bootstrap"
-    canonical = validate_product(canonical_root, allow_bootstrap=True)
+    try:
+        canonical = validate_product(canonical_root, allow_bootstrap=True)
+    except ProductError as modern_error:
+        try:
+            legacy_cycle = _validate_legacy_product(canonical_root)
+        except ProductError as legacy_error:
+            raise ProductError(
+                "canonical QPF state is neither a valid f240 product nor the exact "
+                f"legacy migration state: modern={modern_error}; legacy={legacy_error}"
+            ) from legacy_error
+        proposed = candidate.current
+        if proposed.cycle <= legacy_cycle:
+            return "stale", "candidate cycle is not newer than legacy canonical QPF"
+        manifest = _public_manifest(
+            None, candidate.manifest, proposed, None, now
+        )
+        desired: Dict[Path, tuple[Path, str]] = {}
+        for target in proposed.targets:
+            desired[target.image_path] = (
+                candidate.root / target.image_path,
+                target.image_sha256,
+            )
+            desired[target.numeric_path] = (
+                candidate.root / target.numeric_path,
+                target.numeric_sha256,
+            )
+        _apply_desired_state(canonical_root, manifest, desired)
+        validate_product(canonical_root, allow_bootstrap=True)
+        return (
+            "new",
+            "validated legacy sparse QPF state migrated to one complete f240 bootstrap cycle",
+        )
     if not _contracts_match(candidate, canonical):
         raise ProductError("candidate and canonical QPF root contracts differ")
     proposed = candidate.current
@@ -830,9 +1415,13 @@ def reconcile(
     desired: Dict[Path, tuple[Path, str]] = {}
     for cycle, source_root in ((proposed, candidate.root), (current, canonical.root)):
         for target in cycle.targets:
-            desired[target.relative_path] = (
-                source_root / target.relative_path,
-                target.sha256,
+            desired[target.image_path] = (
+                source_root / target.image_path,
+                target.image_sha256,
+            )
+            desired[target.numeric_path] = (
+                source_root / target.numeric_path,
+                target.numeric_sha256,
             )
     _apply_desired_state(canonical_root, manifest, desired)
     validate_product(canonical_root, allow_bootstrap=False)
@@ -875,9 +1464,22 @@ def _callback() -> int:
     if phase == "reconcile":
         state, reason = reconcile(candidate_root, worktree)
         decision = "publish" if state == "new" else "no-op"
+        diagnostics: Dict[str, int] = {}
+        try:
+            diagnostics = _byte_diagnostics(
+                validate_product(worktree, allow_bootstrap=True)
+            )
+        except ProductError:
+            if state == "new":
+                raise
         Path(os.environ["BRIM_PUBLISH_RESULT"]).write_text(
             json.dumps(
-                {"decision": decision, "candidate_state": state, "reason": reason}
+                {
+                    "decision": decision,
+                    "candidate_state": state,
+                    "reason": reason,
+                    "diagnostics": diagnostics,
+                }
             )
             + "\n",
             encoding="utf-8",
@@ -912,21 +1514,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(
                 f"Assembled QPF publication candidate: "
-                f"{state.current.entry['cycle_utc']} with 10 targets"
+                f"{state.current.entry['cycle_utc']} with {len(SUPPORTED_LEADS)} targets"
             )
         elif args.command == "validate-candidate":
             state = validate_candidate(Path(args.root))
+            diagnostics = _byte_diagnostics(state)
             print(
                 f"Validated QPF publication candidate: "
-                f"{state.current.entry['cycle_utc']} with 10 targets"
+                f"{state.current.entry['cycle_utc']} with {len(SUPPORTED_LEADS)} targets; "
+                f"image_bytes={diagnostics['retained_image_bytes']}; "
+                f"numeric_bytes={diagnostics['retained_numeric_compressed_bytes']}"
             )
         elif args.command == "validate-public":
             state = validate_product(
                 Path(args.root), allow_bootstrap=args.allow_bootstrap
             )
+            diagnostics = _byte_diagnostics(state)
             print(
                 f"Validated public QPF tree: {len(state.cycles)} cycles, "
-                f"{sum(len(cycle.targets) for cycle in state.cycles)} targets"
+                f"{sum(len(cycle.targets) for cycle in state.cycles)} targets; "
+                f"retained_image_bytes={diagnostics['retained_image_bytes']}; "
+                f"retained_numeric_bytes={diagnostics['retained_numeric_compressed_bytes']}"
             )
         else:
             print(semantic_key(Path(args.root)))

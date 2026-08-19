@@ -63,7 +63,10 @@ discovery <- qpf_discover_cycle(
   explicit_cycle = if (nzchar(explicit_cycle)) explicit_cycle else NULL
 )
 message("Selected complete QPF cycle: ", qpf_iso_utc(discovery$cycle))
-message("Inventory preflight passed for all ten required native six-hour records.")
+message(
+  "Inventory preflight passed for all ", length(QPF_SUPPORTED_LEADS),
+  " required native six-hour records."
+)
 
 source_root <- file.path(working_root, "sources")
 sources <- qpf_acquire_sources(discovery$records, source_root)
@@ -76,7 +79,10 @@ if (repeat_build) {
   qpf_build_candidate(discovery$records, sources, second_root, palette_path)
   proof <- qpf_compare_candidate_builds(first_root, second_root, palette_path)
   qpf_record_determinism(first_root, proof, palette_path)
-  message("Determinism passed: 10/10 WebP byte and SHA identities.")
+  message(
+    "Determinism passed: ", length(QPF_SUPPORTED_LEADS), "/",
+    length(QPF_SUPPORTED_LEADS), " image/numeric state identities."
+  )
 }
 
 delivered <- qpf_deliver_candidate(
@@ -92,8 +98,15 @@ message("Legend overflow: ", validated$manifest$cycle$legend_overflow)
 message("Total WebP bytes: ", sum(vapply(targets, function(target) {
   as.numeric(target$bytes)
 }, numeric(1))))
+message("Total numeric sidecar bytes: ", sum(vapply(targets, function(target) {
+  as.numeric(target$numeric$compressed_bytes)
+}, numeric(1))))
 for (target in targets) {
   message(
-    sprintf("f%03d bytes=%d sha256=%s", target$lead_hours, target$bytes, target$sha256)
+    sprintf(
+      "f%03d image_bytes=%d numeric_bytes=%d forecast_state_id=%s",
+      target$lead_hours, target$bytes, target$numeric$compressed_bytes,
+      target$forecast_state_id
+    )
   )
 }

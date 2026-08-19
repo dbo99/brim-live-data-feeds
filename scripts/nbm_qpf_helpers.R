@@ -5,7 +5,7 @@
 
 QPF_PRODUCT_ID <- "nbm_qpf"
 QPF_SOURCE_ID <- "noaa_nbm_core_conus_apcp"
-QPF_SUPPORTED_LEADS <- c(6L, 12L, 18L, 24L, 30L, 36L, 42L, 48L, 60L, 72L)
+QPF_SUPPORTED_LEADS <- seq.int(6L, 240L, by = 6L)
 QPF_PRIMARY_CYCLE_HOURS <- c(0L, 6L, 12L, 18L)
 QPF_ACCUMULATION_HOURS <- 6L
 QPF_BOUNDS_WGS84 <- c(west = -130, south = 30, east = -112, north = 44.5)
@@ -17,6 +17,7 @@ QPF_EXTENT_3857 <- c(
 )
 QPF_IMAGE_WIDTH <- 720L
 QPF_IMAGE_HEIGHT <- 733L
+QPF_GRID_CONTRACT_ID <- "nbm_qpf_lossless_webp_v1"
 QPF_PIXEL_SIZE_M <- c(x = 2782.9872698322874, y = 2782.533915903717)
 QPF_SOURCE_COLUMNS <- 2345L
 QPF_SOURCE_ROWS <- 1597L
@@ -34,6 +35,14 @@ QPF_MAX_INDEX_BYTES <- 5 * 1024 * 1024
 QPF_MAX_RANGE_BYTES <- 20 * 1024 * 1024
 QPF_TRANSIENT_HTTP_STATUS <- c(408L, 429L, 500L, 502L, 503L, 504L)
 QPF_ASSET_ROOT <- "docs/data/nbm-qpf/nbm/qpf"
+QPF_NUMERIC_ENCODING <- "uint16_le"
+QPF_NUMERIC_COMPRESSION <- "gzip"
+QPF_NUMERIC_SCALE <- 0.001
+QPF_NUMERIC_OFFSET <- 0
+QPF_NUMERIC_NODATA <- 65535L
+QPF_NUMERIC_VALID_MAX <- 65534L
+QPF_NUMERIC_UNCOMPRESSED_BYTES <- QPF_IMAGE_WIDTH * QPF_IMAGE_HEIGHT * 2L
+QPF_FORECAST_STATE_BINDING <- "nbm_qpf_forecast_state_sha256_v1"
 QPF_CANDIDATE_MANIFEST <- "nbm_qpf_candidate.json"
 QPF_VALIDATION_FILE <- "validation.json"
 QPF_PREFLIGHT_FILE <- "preflight.csv"
@@ -287,7 +296,10 @@ qpf_parse_index <- function(text, cycle, lead_hour, object_size = NULL) {
 
 qpf_validate_preflight <- function(records) {
   if (!is.list(records) || length(records) != length(QPF_SUPPORTED_LEADS)) {
-    qpf_stop("validation_failed", "QPF preflight must contain exactly ten records.")
+    qpf_stop(
+      "validation_failed", "QPF preflight must contain exactly ",
+      length(QPF_SUPPORTED_LEADS), " records."
+    )
   }
   leads <- vapply(records, function(record) as.integer(record$lead_hours), integer(1))
   if (anyDuplicated(leads) || !identical(sort(leads), QPF_SUPPORTED_LEADS)) {
@@ -1152,7 +1164,7 @@ qpf_palette_manifest <- function(palette) {
 
 qpf_spatial_manifest <- function() {
   list(
-    contract_id = "nbm_qpf_lossless_webp_v1",
+    contract_id = QPF_GRID_CONTRACT_ID,
     media_type = "image/webp",
     encoding = "lossless VP8L RGBA8 WebP",
     crs = "EPSG:3857",
@@ -1172,11 +1184,212 @@ qpf_spatial_manifest <- function() {
   )
 }
 
-qpf_target_entry <- function(record, image_path, file_path) {
-  image_path <- qpf_safe_image_path(image_path)
+qpf_numeric_manifest <- function() {
   list(
+    contract_id = "nbm_qpf_uint16_le_gzip_v1",
+    media_type = "application/octet-stream",
+    encoding = QPF_NUMERIC_ENCODING,
+    compression = QPF_NUMERIC_COMPRESSION,
+    stored_units = "in",
+    scale = QPF_NUMERIC_SCALE,
+    offset = QPF_NUMERIC_OFFSET,
+    nodata = QPF_NUMERIC_NODATA,
+    valid_stored_min = 0L,
+    valid_stored_max = QPF_NUMERIC_VALID_MAX,
+    represented_min = 0,
+    represented_max = QPF_NUMERIC_VALID_MAX * QPF_NUMERIC_SCALE,
+    uncompressed_bytes = QPF_NUMERIC_UNCOMPRESSED_BYTES,
+    grid_contract_id = QPF_GRID_CONTRACT_ID,
+    columns = QPF_IMAGE_WIDTH,
+    rows = QPF_IMAGE_HEIGHT,
+    crs = "EPSG:3857",
+    bounds_wgs84 = unname(QPF_BOUNDS_WGS84),
+    extent_m = unname(QPF_EXTENT_3857),
+    row_order = "north_to_south",
+    column_order = "west_to_east",
+    pixel_is_area = TRUE
+  )
+}
+
+qpf_forecast_state_manifest <- function() {
+  list(
+    algorithm = QPF_FORECAST_STATE_BINDING,
+    digest = "sha256",
+    canonicalization = "ordered UTF-8 key=value lines",
+    binds = c("forecast metadata", "image path and SHA-256", "numeric path and SHA-256")
+  )
+}
+
+qpf_numeric_filename <- function(record, sha256) {
+  if (!is.character(sha256) || length(sha256) != 1L ||
+      !grepl("^[0-9a-f]{64}$", sha256)) {
+    qpf_stop("validation_failed", "A full lowercase SHA-256 is required for a numeric target.")
+  }
+  sprintf(
+    "nbm_qpf_%s_f%03d_%s.u16le.gz",
+    qpf_cycle_token(record$cycle_utc, filename = TRUE),
+    as.integer(record$lead_hours),
+    substr(sha256, 1L, 12L)
+  )
+}
+
+qpf_safe_numeric_path <- function(path) {
+  expected <- paste0(
+    "^", QPF_ASSET_ROOT,
+    "/nbm_qpf_[0-9]{8}T[0-9]{6}Z_f[0-9]{3}_[0-9a-f]{12}\\.u16le\\.gz$"
+  )
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path) ||
+      startsWith(path, "/") || grepl("\\\\", path) ||
+      any(strsplit(path, "/", fixed = TRUE)[[1L]] %in% c("", ".", "..")) ||
+      !grepl(expected, path)) {
+    qpf_stop("validation_failed", "Unsafe NBM QPF numeric target path: ", path)
+  }
+  path
+}
+
+qpf_numeric_raw <- function(qpf_mm) {
+  values_mm <- if (inherits(qpf_mm, "SpatRaster")) {
+    as.matrix(qpf_mm, wide = TRUE)
+  } else {
+    as.matrix(qpf_mm)
+  }
+  if (!identical(dim(values_mm), c(QPF_IMAGE_HEIGHT, QPF_IMAGE_WIDTH))) {
+    qpf_stop("validation_failed", "Numeric QPF grid dimensions are invalid.")
+  }
+  values_in <- as.vector(t(values_mm / 25.4))
+  finite <- is.finite(values_in)
+  if (any(values_in[finite] < 0)) {
+    qpf_stop("validation_failed", "Numeric QPF values cannot be negative.")
+  }
+  stored <- rep.int(QPF_NUMERIC_NODATA, length(values_in))
+  stored[finite] <- as.integer(round(
+    (values_in[finite] - QPF_NUMERIC_OFFSET) / QPF_NUMERIC_SCALE
+  ))
+  if (anyNA(stored[finite]) || any(stored[finite] > QPF_NUMERIC_VALID_MAX)) {
+    qpf_stop("validation_failed", "Numeric QPF uint16 encoding overflow.")
+  }
+  decoded <- stored[finite] * QPF_NUMERIC_SCALE + QPF_NUMERIC_OFFSET
+  errors <- abs(decoded - values_in[finite])
+  maximum_error <- if (length(errors)) max(errors) else 0
+  if (!is.finite(maximum_error) || maximum_error >= QPF_NUMERIC_SCALE / 2) {
+    qpf_stop("validation_failed", "Numeric QPF quantization error is not below 0.0005 inches.")
+  }
+  payload <- raw(length(stored) * 2L)
+  low <- seq.int(1L, length(payload), by = 2L)
+  payload[low] <- as.raw(stored %% 256L)
+  payload[low + 1L] <- as.raw(stored %/% 256L)
+  list(
+    payload = payload,
+    stored = stored,
+    finite_count = sum(finite),
+    nodata_count = sum(!finite),
+    maximum_quantization_error_in = unname(maximum_error)
+  )
+}
+
+qpf_write_numeric <- function(qpf_mm, path) {
+  encoded <- qpf_numeric_raw(qpf_mm)
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  connection <- gzfile(path, open = "wb", compression = 9L)
+  tryCatch(
+    writeBin(encoded$payload, connection),
+    finally = close(connection)
+  )
+  c(
+    encoded[c("finite_count", "nodata_count", "maximum_quantization_error_in")],
+    list(
+      compressed_bytes = unname(file.info(path)$size),
+      uncompressed_bytes = length(encoded$payload),
+      sha256 = qpf_sha256_file(path)
+    )
+  )
+}
+
+qpf_read_numeric <- function(path) {
+  if (!file.exists(path) || unname(file.info(path)$size) < 1) {
+    qpf_stop("validation_failed", "Numeric QPF target is missing or empty.")
+  }
+  compressed <- readBin(path, "raw", n = unname(file.info(path)$size))
+  payload <- tryCatch(
+    memDecompress(compressed, type = "gzip"),
+    error = function(error) {
+      qpf_stop("validation_failed", "Numeric QPF gzip payload is corrupt: ", conditionMessage(error))
+    }
+  )
+  if (length(payload) != QPF_NUMERIC_UNCOMPRESSED_BYTES) {
+    qpf_stop("validation_failed", "Numeric QPF uncompressed byte count is invalid.")
+  }
+  low <- seq.int(1L, length(payload), by = 2L)
+  stored <- as.integer(payload[low]) + 256L * as.integer(payload[low + 1L])
+  if (length(stored) != QPF_IMAGE_WIDTH * QPF_IMAGE_HEIGHT) {
+    qpf_stop("validation_failed", "Numeric QPF decoded cell count is invalid.")
+  }
+  stored
+}
+
+qpf_forecast_state_id <- function(record, image_path, image_sha256,
+                                  numeric_path, numeric_sha256) {
+  fields <- c(
+    binding = QPF_FORECAST_STATE_BINDING,
     product_id = QPF_PRODUCT_ID,
     source_id = QPF_SOURCE_ID,
+    parameter = "APCP",
+    level = "surface",
+    cycle_utc = record$cycle_utc,
+    lead_hours = as.character(as.integer(record$lead_hours)),
+    valid_time_utc = record$valid_time_utc,
+    accumulation_start_utc = record$accumulation_start_utc,
+    accumulation_end_utc = record$accumulation_end_utc,
+    accumulation_hours = as.character(QPF_ACCUMULATION_HOURS),
+    source_inventory_semantics = record$inventory_semantics %||%
+      record$source_inventory_semantics,
+    native_units = "kg/m^2",
+    normalized_units = "mm",
+    stored_numeric_units = "in",
+    display_units = "in",
+    grid_contract_id = QPF_GRID_CONTRACT_ID,
+    columns = as.character(QPF_IMAGE_WIDTH),
+    rows = as.character(QPF_IMAGE_HEIGHT),
+    crs = "EPSG:3857",
+    bounds_wgs84 = "-130,30,-112,44.5",
+    extent_m = "-14471533.803125564,3503549.843504374,-12467782.96884664,5543147.203861799",
+    row_order = "north_to_south",
+    column_order = "west_to_east",
+    pixel_is_area = "true",
+    palette_id = QPF_PALETTE_ID,
+    palette_version = as.character(QPF_PALETTE_VERSION),
+    image_path = image_path,
+    image_sha256 = image_sha256,
+    image_media_type = "image/webp",
+    image_encoding = "lossless_vp8l_rgba8",
+    numeric_path = numeric_path,
+    numeric_sha256 = numeric_sha256,
+    numeric_media_type = "application/octet-stream",
+    numeric_encoding = QPF_NUMERIC_ENCODING,
+    numeric_compression = QPF_NUMERIC_COMPRESSION,
+    numeric_scale = "0.001",
+    numeric_offset = "0",
+    numeric_nodata = as.character(QPF_NUMERIC_NODATA)
+  )
+  qpf_sha256_raw(charToRaw(paste(names(fields), fields, sep = "=", collapse = "\n")))
+}
+
+qpf_target_entry <- function(record, image_path, image_file_path,
+                             numeric_path, numeric_file_path) {
+  image_path <- qpf_safe_image_path(image_path)
+  numeric_path <- qpf_safe_numeric_path(numeric_path)
+  image_sha256 <- qpf_sha256_file(image_file_path)
+  numeric_sha256 <- qpf_sha256_file(numeric_file_path)
+  image_bytes <- unname(file.info(image_file_path)$size)
+  numeric_bytes <- unname(file.info(numeric_file_path)$size)
+  list(
+    product_id = QPF_PRODUCT_ID,
+    forecast_state_id = qpf_forecast_state_id(
+      record, image_path, image_sha256, numeric_path, numeric_sha256
+    ),
+    source_id = QPF_SOURCE_ID,
+    parameter = "APCP",
+    level = "surface",
     cycle_utc = record$cycle_utc,
     lead_hours = as.integer(record$lead_hours),
     lead_end_hours = as.integer(record$lead_hours),
@@ -1189,15 +1402,44 @@ qpf_target_entry <- function(record, image_path, file_path) {
     source_inventory_semantics = record$inventory_semantics,
     native_units = "kg/m^2",
     normalized_units = "mm",
+    stored_numeric_units = "in",
     display_units = "in",
+    grid_contract_id = QPF_GRID_CONTRACT_ID,
+    columns = QPF_IMAGE_WIDTH,
+    rows = QPF_IMAGE_HEIGHT,
+    crs = "EPSG:3857",
+    extent_m = unname(QPF_EXTENT_3857),
+    row_order = "north_to_south",
+    column_order = "west_to_east",
+    pixel_is_area = TRUE,
     image_path = image_path,
     image_media_type = "image/webp",
     image_encoding = "lossless_vp8l_rgba8",
     image_width = QPF_IMAGE_WIDTH,
     image_height = QPF_IMAGE_HEIGHT,
     bounds_wgs84 = unname(QPF_BOUNDS_WGS84),
-    bytes = unname(file.info(file_path)$size),
-    sha256 = qpf_sha256_file(file_path),
+    bytes = image_bytes,
+    sha256 = image_sha256,
+    image = list(
+      path = image_path,
+      media_type = "image/webp",
+      encoding = "lossless_vp8l_rgba8",
+      bytes = image_bytes,
+      sha256 = image_sha256
+    ),
+    numeric = list(
+      path = numeric_path,
+      media_type = "application/octet-stream",
+      encoding = QPF_NUMERIC_ENCODING,
+      compression = QPF_NUMERIC_COMPRESSION,
+      stored_units = "in",
+      scale = QPF_NUMERIC_SCALE,
+      offset = QPF_NUMERIC_OFFSET,
+      nodata = QPF_NUMERIC_NODATA,
+      compressed_bytes = numeric_bytes,
+      uncompressed_bytes = QPF_NUMERIC_UNCOMPRESSED_BYTES,
+      sha256 = numeric_sha256
+    ),
     palette_id = QPF_PALETTE_ID,
     palette_version = QPF_PALETTE_VERSION
   )
@@ -1208,7 +1450,10 @@ qpf_candidate_manifest <- function(cycle, targets, target_maxima_in, palette) {
   if (length(targets) != length(QPF_SUPPORTED_LEADS) ||
       length(target_maxima_in) != length(QPF_SUPPORTED_LEADS) ||
       any(!is.finite(target_maxima_in))) {
-    qpf_stop("validation_failed", "A candidate manifest requires ten validated target maxima.")
+    qpf_stop(
+      "validation_failed", "A candidate manifest requires ",
+      length(QPF_SUPPORTED_LEADS), " validated target maxima."
+    )
   }
   cycle_max <- max(target_maxima_in)
   legend <- qpf_legend_cap(cycle_max, palette)
@@ -1233,6 +1478,8 @@ qpf_candidate_manifest <- function(cycle, targets, target_maxima_in, palette) {
     ),
     palette = qpf_palette_manifest(palette),
     spatial_representation = qpf_spatial_manifest(),
+    numeric_representation = qpf_numeric_manifest(),
+    forecast_state_binding = qpf_forecast_state_manifest(),
     cycle = list(
       cycle_utc = qpf_iso_utc(cycle),
       cycle_status = "complete",
@@ -1299,7 +1546,10 @@ qpf_write_preflight <- function(records, path) {
 qpf_read_preflight <- function(path) {
   table <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
   if (nrow(table) != length(QPF_SUPPORTED_LEADS)) {
-    qpf_stop("validation_failed", "Candidate preflight CSV must contain ten records.")
+    qpf_stop(
+      "validation_failed", "Candidate preflight CSV must contain ",
+      length(QPF_SUPPORTED_LEADS), " records."
+    )
   }
   table
 }
@@ -1318,7 +1568,12 @@ qpf_build_target <- function(record, source, candidate_root, palette,
   reference_png <- tempfile(sprintf("nbm-qpf-f%03d-reference-", record$lead_hours),
                             fileext = ".png")
   temporary_webp <- tempfile(sprintf("nbm-qpf-f%03d-", record$lead_hours), fileext = ".webp")
-  on.exit(unlink(c(reference_png, temporary_webp), force = TRUE), add = TRUE)
+  temporary_numeric <- tempfile(
+    sprintf("nbm-qpf-f%03d-numeric-", record$lead_hours), fileext = ".u16le.gz"
+  )
+  on.exit(unlink(c(reference_png, temporary_webp, temporary_numeric), force = TRUE), add = TRUE)
+  numeric_stats <- qpf_write_numeric(output, temporary_numeric)
+  qpf_read_numeric(temporary_numeric)
   reference <- qpf_write_rgba_png(output, reference_png, palette)
   qpf_encode_lossless_webp(reference_png, temporary_webp)
   webp_stats <- qpf_validate_webp(temporary_webp, palette, reference)
@@ -1330,9 +1585,23 @@ qpf_build_target <- function(record, source, candidate_root, palette,
   if (!file.copy(temporary_webp, destination, overwrite = FALSE, copy.mode = TRUE)) {
     qpf_stop("validation_failed", "Could not finalize content-addressed QPF target.")
   }
-  target <- qpf_target_entry(record, image_path, destination)
+  numeric_sha256 <- qpf_sha256_file(temporary_numeric)
+  numeric_filename <- qpf_numeric_filename(record, numeric_sha256)
+  numeric_path <- file.path(QPF_ASSET_ROOT, numeric_filename)
+  numeric_destination <- file.path(candidate_root, numeric_path)
+  if (!file.copy(
+    temporary_numeric, numeric_destination, overwrite = FALSE, copy.mode = TRUE
+  )) {
+    qpf_stop("validation_failed", "Could not finalize content-addressed numeric QPF target.")
+  }
+  target <- qpf_target_entry(
+    record, image_path, destination, numeric_path, numeric_destination
+  )
   if (!identical(target$sha256, sha256)) {
     qpf_stop("validation_failed", "Final QPF target checksum changed during finalization.")
+  }
+  if (!identical(target$numeric$sha256, numeric_sha256)) {
+    qpf_stop("validation_failed", "Final numeric QPF checksum changed during finalization.")
   }
   validation <- list(
     lead_hours = as.integer(record$lead_hours),
@@ -1351,7 +1620,17 @@ qpf_build_target <- function(record, source, candidate_root, palette,
     webp = c(
       list(path = image_path, bytes = target$bytes, sha256 = target$sha256),
       webp_stats
-    )
+    ),
+    numeric = c(
+      list(
+        path = numeric_path,
+        compressed_bytes = target$numeric$compressed_bytes,
+        uncompressed_bytes = target$numeric$uncompressed_bytes,
+        sha256 = target$numeric$sha256
+      ),
+      numeric_stats[c("finite_count", "nodata_count", "maximum_quantization_error_in")]
+    ),
+    forecast_state_id = target$forecast_state_id
   )
   rm(raster, output)
   invisible(gc(FALSE))
@@ -1371,6 +1650,19 @@ qpf_candidate_validation <- function(manifest, target_validations, runtime,
     interpolation = "bilinear",
     manifest_target_closure = TRUE,
     content_hashes_validated = TRUE,
+    image_numeric_state_binding_validated = TRUE,
+    numeric_encoding = QPF_NUMERIC_ENCODING,
+    numeric_compression = QPF_NUMERIC_COMPRESSION,
+    numeric_uncompressed_bytes_per_target = QPF_NUMERIC_UNCOMPRESSED_BYTES,
+    cycle_image_bytes = sum(vapply(
+      manifest$cycle$targets, function(target) as.numeric(target$bytes), numeric(1)
+    )),
+    cycle_numeric_compressed_bytes = sum(vapply(
+      manifest$cycle$targets,
+      function(target) as.numeric(target$numeric$compressed_bytes), numeric(1)
+    )),
+    cycle_numeric_uncompressed_bytes = length(manifest$cycle$targets) *
+      QPF_NUMERIC_UNCOMPRESSED_BYTES,
     cycle_max_qpf_in = manifest$cycle$cycle_max_qpf_in,
     legend_cap_in = manifest$cycle$legend_cap_in,
     legend_overflow = manifest$cycle$legend_overflow,
@@ -1442,7 +1734,8 @@ qpf_validate_candidate <- function(root, palette_path) {
   )
   root_fields <- c(
     "candidate_schema_version", "candidate_kind", "product_id", "publication_ready",
-    "mutable_public_manifest_included", "source", "palette", "spatial_representation", "cycle"
+    "mutable_public_manifest_included", "source", "palette", "spatial_representation",
+    "numeric_representation", "forecast_state_binding", "cycle"
   )
   if (!all(root_fields %in% names(manifest)) ||
       !identical(manifest$candidate_schema_version, "1.0.0") ||
@@ -1470,6 +1763,15 @@ qpf_validate_candidate <- function(root, palette_path) {
   )) {
     qpf_stop("validation_failed", "Candidate spatial/WebP contract is invalid.")
   }
+  if (!identical(
+    manifest$numeric_representation,
+    qpf_json_normalize(qpf_numeric_manifest())
+  ) || !identical(
+    manifest$forecast_state_binding,
+    qpf_json_normalize(qpf_forecast_state_manifest())
+  )) {
+    qpf_stop("validation_failed", "Candidate numeric/state-binding contract is invalid.")
+  }
 
   cycle <- manifest$cycle
   cycle_fields <- c(
@@ -1478,22 +1780,29 @@ qpf_validate_candidate <- function(root, palette_path) {
   )
   if (!all(cycle_fields %in% names(cycle)) ||
       !identical(cycle$cycle_status, "complete") ||
-      !qpf_scalar_number(cycle$target_count) || as.integer(cycle$target_count) != 10L ||
-      length(cycle$targets) != 10L ||
+      !qpf_scalar_number(cycle$target_count) ||
+      as.integer(cycle$target_count) != length(QPF_SUPPORTED_LEADS) ||
+      length(cycle$targets) != length(QPF_SUPPORTED_LEADS) ||
       !identical(as.integer(unlist(cycle$complete_required_leads_hours)), QPF_SUPPORTED_LEADS)) {
     qpf_stop("validation_failed", "Candidate cycle completeness contract is invalid.")
   }
   cycle_time <- qpf_validate_cycle(cycle$cycle_utc)
   required_target_fields <- c(
-    "product_id", "source_id", "cycle_utc", "lead_hours", "lead_end_hours",
+    "product_id", "forecast_state_id", "source_id", "parameter", "level",
+    "cycle_utc", "lead_hours", "lead_end_hours",
     "accumulation_start_utc", "accumulation_end_utc", "valid_time_utc",
     "accumulation_hours", "source_parameter", "source_level",
-    "source_inventory_semantics", "native_units", "normalized_units", "display_units",
+    "source_inventory_semantics", "native_units", "normalized_units",
+    "stored_numeric_units", "display_units", "grid_contract_id",
+    "columns", "rows", "crs", "extent_m", "row_order", "column_order",
+    "pixel_is_area",
     "image_path", "image_media_type", "image_encoding", "image_width", "image_height",
-    "bounds_wgs84", "bytes", "sha256", "palette_id", "palette_version"
+    "bounds_wgs84", "bytes", "sha256", "image", "numeric",
+    "palette_id", "palette_version"
   )
   leads <- integer()
   image_paths <- character()
+  numeric_paths <- character()
   for (target in cycle$targets) {
     if (!all(required_target_fields %in% names(target))) {
       qpf_stop("validation_failed", "Candidate target fields are incomplete.")
@@ -1505,6 +1814,8 @@ qpf_validate_candidate <- function(root, palette_path) {
     expected_semantics <- sprintf("%d-%d hour acc fcst", lead - 6L, lead)
     if (!identical(target$product_id, QPF_PRODUCT_ID) ||
         !identical(target$source_id, QPF_SOURCE_ID) ||
+        !identical(target$parameter, "APCP") ||
+        !identical(target$level, "surface") ||
         !identical(target$cycle_utc, cycle$cycle_utc) ||
         as.integer(target$lead_end_hours) != lead ||
         as.integer(target$accumulation_hours) != QPF_ACCUMULATION_HOURS ||
@@ -1516,7 +1827,17 @@ qpf_validate_candidate <- function(root, palette_path) {
         !identical(target$source_level, "surface") ||
         !identical(target$native_units, "kg/m^2") ||
         !identical(target$normalized_units, "mm") ||
+        !identical(target$stored_numeric_units, "in") ||
         !identical(target$display_units, "in") ||
+        !identical(target$grid_contract_id, QPF_GRID_CONTRACT_ID) ||
+        as.integer(target$columns) != QPF_IMAGE_WIDTH ||
+        as.integer(target$rows) != QPF_IMAGE_HEIGHT ||
+        !identical(target$crs, "EPSG:3857") ||
+        length(unlist(target$extent_m)) != length(QPF_EXTENT_3857) ||
+        any(abs(as.numeric(unlist(target$extent_m)) - unname(QPF_EXTENT_3857)) > 1e-6) ||
+        !identical(target$row_order, "north_to_south") ||
+        !identical(target$column_order, "west_to_east") ||
+        !identical(target$pixel_is_area, TRUE) ||
         !identical(target$image_media_type, "image/webp") ||
         !identical(target$image_encoding, "lossless_vp8l_rgba8") ||
         as.integer(target$image_width) != QPF_IMAGE_WIDTH ||
@@ -1544,8 +1865,62 @@ qpf_validate_candidate <- function(root, palette_path) {
       qpf_stop("validation_failed", "Candidate target path/hash/byte identity mismatch: ", path)
     }
     qpf_validate_webp(file_path, palette)
+
+    numeric <- target$numeric
+    numeric_fields <- c(
+      "path", "media_type", "encoding", "compression", "stored_units",
+      "scale", "offset", "nodata", "compressed_bytes", "uncompressed_bytes", "sha256"
+    )
+    if (!is.list(numeric) || !identical(sort(names(numeric)), sort(numeric_fields)) ||
+        !identical(numeric$media_type, "application/octet-stream") ||
+        !identical(numeric$encoding, QPF_NUMERIC_ENCODING) ||
+        !identical(numeric$compression, QPF_NUMERIC_COMPRESSION) ||
+        !identical(numeric$stored_units, "in") ||
+        as.numeric(numeric$scale) != QPF_NUMERIC_SCALE ||
+        as.numeric(numeric$offset) != QPF_NUMERIC_OFFSET ||
+        as.integer(numeric$nodata) != QPF_NUMERIC_NODATA ||
+        as.integer(numeric$uncompressed_bytes) != QPF_NUMERIC_UNCOMPRESSED_BYTES ||
+        !qpf_scalar_number(numeric$compressed_bytes) || numeric$compressed_bytes < 1 ||
+        numeric$compressed_bytes %% 1 != 0 ||
+        !is.character(numeric$sha256) || length(numeric$sha256) != 1L ||
+        !grepl("^[0-9a-f]{64}$", numeric$sha256)) {
+      qpf_stop("validation_failed", "Candidate numeric target contract is invalid.")
+    }
+    numeric_path <- qpf_safe_numeric_path(numeric$path)
+    numeric_paths <- c(numeric_paths, numeric_path)
+    numeric_file <- file.path(root, numeric_path)
+    expected_numeric_name <- qpf_numeric_filename(
+      list(cycle_utc = target$cycle_utc, lead_hours = lead), numeric$sha256
+    )
+    if (!file.exists(numeric_file) ||
+        !identical(basename(numeric_path), expected_numeric_name) ||
+        !identical(qpf_sha256_file(numeric_file), numeric$sha256) ||
+        !identical(unname(file.info(numeric_file)$size), as.numeric(numeric$compressed_bytes))) {
+      qpf_stop(
+        "validation_failed", "Candidate numeric path/hash/byte identity mismatch: ",
+        numeric_path
+      )
+    }
+    qpf_read_numeric(numeric_file)
+    image <- target$image
+    if (!is.list(image) || !identical(
+      sort(names(image)), sort(c("path", "media_type", "encoding", "bytes", "sha256"))
+    ) || !identical(image$path, target$image_path) ||
+        !identical(image$media_type, target$image_media_type) ||
+        !identical(image$encoding, target$image_encoding) ||
+        as.numeric(image$bytes) != as.numeric(target$bytes) ||
+        !identical(image$sha256, target$sha256)) {
+      qpf_stop("validation_failed", "Candidate nested image identity is invalid.")
+    }
+    expected_state_id <- qpf_forecast_state_id(
+      target, target$image_path, target$sha256, numeric_path, numeric$sha256
+    )
+    if (!is.character(target$forecast_state_id) || length(target$forecast_state_id) != 1L ||
+        !identical(target$forecast_state_id, expected_state_id)) {
+      qpf_stop("validation_failed", "Candidate image/numeric forecast-state binding is invalid.")
+    }
   }
-  if (anyDuplicated(leads) || anyDuplicated(image_paths) ||
+  if (anyDuplicated(leads) || anyDuplicated(image_paths) || anyDuplicated(numeric_paths) ||
       !identical(leads, QPF_SUPPORTED_LEADS)) {
     qpf_stop("validation_failed", "Candidate target order/set is incomplete, duplicated, or unexpected.")
   }
@@ -1555,9 +1930,23 @@ qpf_validate_candidate <- function(root, palette_path) {
       !identical(validation$complete_cycle, TRUE) ||
       !identical(validation$manifest_target_closure, TRUE) ||
       !identical(validation$content_hashes_validated, TRUE) ||
-      as.integer(validation$source_record_count) != 10L ||
-      as.integer(validation$target_count) != 10L ||
-      length(validation$targets) != 10L) {
+      !identical(validation$image_numeric_state_binding_validated, TRUE) ||
+      !identical(validation$numeric_encoding, QPF_NUMERIC_ENCODING) ||
+      !identical(validation$numeric_compression, QPF_NUMERIC_COMPRESSION) ||
+      as.integer(validation$numeric_uncompressed_bytes_per_target) !=
+        QPF_NUMERIC_UNCOMPRESSED_BYTES ||
+      as.numeric(validation$cycle_image_bytes) != sum(vapply(
+        cycle$targets, function(target) as.numeric(target$bytes), numeric(1)
+      )) ||
+      as.numeric(validation$cycle_numeric_compressed_bytes) != sum(vapply(
+        cycle$targets,
+        function(target) as.numeric(target$numeric$compressed_bytes), numeric(1)
+      )) ||
+      as.numeric(validation$cycle_numeric_uncompressed_bytes) !=
+        length(QPF_SUPPORTED_LEADS) * QPF_NUMERIC_UNCOMPRESSED_BYTES ||
+      as.integer(validation$source_record_count) != length(QPF_SUPPORTED_LEADS) ||
+      as.integer(validation$target_count) != length(QPF_SUPPORTED_LEADS) ||
+      length(validation$targets) != length(QPF_SUPPORTED_LEADS)) {
     qpf_stop("validation_failed", "Candidate validation summary is invalid.")
   }
   validation_leads <- vapply(
@@ -1578,6 +1967,13 @@ qpf_validate_candidate <- function(root, palette_path) {
         !identical(target_validation$webp$path, target$image_path) ||
         !identical(target_validation$webp$sha256, target$sha256) ||
         as.numeric(target_validation$webp$bytes) != as.numeric(target$bytes) ||
+        !identical(target_validation$numeric$path, target$numeric$path) ||
+        !identical(target_validation$numeric$sha256, target$numeric$sha256) ||
+        as.numeric(target_validation$numeric$compressed_bytes) !=
+          as.numeric(target$numeric$compressed_bytes) ||
+        as.integer(target_validation$numeric$uncompressed_bytes) !=
+          QPF_NUMERIC_UNCOMPRESSED_BYTES ||
+        !identical(target_validation$forecast_state_id, target$forecast_state_id) ||
         !isTRUE(target_validation$source_metadata$authoritative_metadata_accepted) ||
         !qpf_scalar_number(target_validation$target_max_qpf_in)) {
       qpf_stop("validation_failed", "Candidate target validation does not close over its manifest target.")
@@ -1620,7 +2016,7 @@ qpf_validate_candidate <- function(root, palette_path) {
                              full.names = FALSE)
   actual_files <- gsub("\\\\", "/", actual_files)
   expected_files <- c(QPF_CANDIDATE_MANIFEST, QPF_VALIDATION_FILE, QPF_PREFLIGHT_FILE,
-                      image_paths)
+                      image_paths, numeric_paths)
   if (!identical(sort(actual_files), sort(expected_files))) {
     qpf_stop("validation_failed", "Candidate contains a missing or unexpected file.")
   }
@@ -1650,21 +2046,54 @@ qpf_compare_candidate_builds <- function(first_root, second_root, palette_path) 
         !identical(first_target$image_path, second_target$image_path)) {
       qpf_stop("validation_failed", "Repeat-build WebP bytes, hashes, or names differ.")
     }
+    first_numeric_path <- file.path(first_root, first_target$numeric$path)
+    second_numeric_path <- file.path(second_root, second_target$numeric$path)
+    first_numeric_raw <- readBin(
+      first_numeric_path, "raw", n = unname(file.info(first_numeric_path)$size)
+    )
+    second_numeric_raw <- readBin(
+      second_numeric_path, "raw", n = unname(file.info(second_numeric_path)$size)
+    )
+    numeric_byte_identical <- identical(first_numeric_raw, second_numeric_raw)
+    numeric_sha_identical <-
+      identical(first_target$numeric$sha256, second_target$numeric$sha256) &&
+      identical(qpf_sha256_file(first_numeric_path), qpf_sha256_file(second_numeric_path))
+    if (!numeric_byte_identical || !numeric_sha_identical ||
+        !identical(first_target$numeric$path, second_target$numeric$path) ||
+        !identical(first_target$forecast_state_id, second_target$forecast_state_id)) {
+      qpf_stop(
+        "validation_failed",
+        "Repeat-build numeric bytes, hashes, names, or forecast-state bindings differ."
+      )
+    }
     proof[[index]] <- list(
       lead_hours = as.integer(first_target$lead_hours),
-      bytes = as.numeric(first_target$bytes),
-      sha256 = first_target$sha256,
-      byte_identical = TRUE,
-      sha_identical = TRUE,
-      name_identical = TRUE
+      forecast_state_id = first_target$forecast_state_id,
+      image = list(
+        bytes = as.numeric(first_target$bytes),
+        sha256 = first_target$sha256,
+        byte_identical = TRUE,
+        sha_identical = TRUE,
+        name_identical = TRUE
+      ),
+      numeric = list(
+        bytes = as.numeric(first_target$numeric$compressed_bytes),
+        sha256 = first_target$numeric$sha256,
+        byte_identical = TRUE,
+        sha_identical = TRUE,
+        name_identical = TRUE
+      )
     )
   }
   list(
     performed = TRUE,
     source_inputs_reused = TRUE,
-    target_count = 10L,
-    webp_byte_identity_count = 10L,
-    webp_sha_identity_count = 10L,
+    target_count = length(QPF_SUPPORTED_LEADS),
+    webp_byte_identity_count = length(QPF_SUPPORTED_LEADS),
+    webp_sha_identity_count = length(QPF_SUPPORTED_LEADS),
+    numeric_byte_identity_count = length(QPF_SUPPORTED_LEADS),
+    numeric_sha_identity_count = length(QPF_SUPPORTED_LEADS),
+    forecast_state_identity_count = length(QPF_SUPPORTED_LEADS),
     manifest_semantic_identity = TRUE,
     palette_identity = identical(first$manifest$palette, second$manifest$palette),
     legend_cap_identity = identical(
