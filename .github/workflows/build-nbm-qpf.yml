@@ -166,7 +166,7 @@ jobs:
           python3 scripts/main_publisher.py prepare \
             --candidate-root "${candidate_root}" \
             --output "${candidate_artifact_root}/candidate-metadata.json" \
-            --product-id nbm-qpf \
+            --product-id nbm_qpf \
             --semantic-key-type nbm_qpf_cycle_state_sha256_v1 \
             --semantic-key "${semantic_state}" \
             --source-event-sha "${SOURCE_SHA}" \
@@ -237,7 +237,7 @@ jobs:
             --repo . \
             --candidate-root "${candidate_artifact_root}/candidate" \
             --metadata "${candidate_artifact_root}/candidate-metadata.json" \
-            --product-id nbm-qpf \
+            --product-id nbm_qpf \
             --target-ref refs/heads/main \
             --commit-subject "Update NBM QPF live feed" \
             --allowlist docs/data/nbm-qpf/nbm_qpf_manifest.json \
