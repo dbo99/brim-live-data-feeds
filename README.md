@@ -11,7 +11,7 @@ reviewed, and rolled back without coupling them to the interface code.
 
 ## Production products
 
-The current production system contains fourteen product families:
+The current production system contains fifteen product families:
 
 1. CDEC reservoir storage
 2. CoCoRaHS daily precipitation
@@ -27,6 +27,7 @@ The current production system contains fourteen product families:
 12. CNRFC major water-supply basin forecasts
 13. CBRFC Colorado River water-supply forecasts
 14. Winter Storm Levels NBM snow-level contours
+15. NBM six-hour QPF image and numeric grids
 
 The authoritative paths, workflows, scripts, formats, schedules, time/unit
 semantics, QA gates, and known gaps are in
@@ -46,16 +47,17 @@ Each production writer, subject to documented product-specific branch controls:
 - Pushes normally, without force, back to its authorized selected reference.
 - Shares a reference-scoped, non-cancelling concurrency group with other writers.
 
-The CNRFC, CBRFC, and Winter Storm Levels forecast writers are the current
-stricter exceptions: manual runs default to runner-temporary dry-run output,
-feature branches cannot publish, and publication is restricted to `main`. Winter
-Storm Levels also uses guarded primary and fallback scheduled attempts for each
+The CNRFC, CBRFC, Winter Storm Levels, and NBM QPF forecast writers are the
+current stricter exceptions: manual work is runner-temporary dry-run output or
+artifact-only preparation, feature branches cannot publish, and publication is
+restricted to `main`. Winter Storm Levels also uses guarded primary and fallback
+scheduled attempts for each
 00/06/12/18 UTC NBM cycle; only a strictly newer complete cycle can reach its
 existing publication transaction.
 
-The official Pages source is `main/docs`. Except for the dry-run-only
-feature-branch behavior of CNRFC, CBRFC, and Winter Storm Levels, a manual writer
-run on a feature branch changes that branch's ordinary product paths; it does not
+The official Pages source is `main/docs`. Except for the nonpublishing
+feature-branch behavior of CNRFC, CBRFC, Winter Storm Levels, and NBM QPF, a
+manual writer run on a feature branch changes that branch's ordinary product paths; it does not
 publish the official feed. When a
 builder rejects a response before commit, the previous committed
 files remain the last-known-good publication.

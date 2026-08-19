@@ -27,7 +27,8 @@ MANIFEST_PATH = Path(
 )
 TARGET_ROOT = Path("docs/data/winter-storm-levels/nbm/snow-level")
 BUNDLE_ROOT = Path("docs/data/winter-storm-levels")
-TARGET_LEADS = (1, 6, 12, 18, 24, 30, 36, 42, 48, 60, 72)
+TARGET_LEADS = (1, *range(6, 241, 6))
+LEGACY_TARGET_LEADS = (1, 6, 12, 18, 24, 30, 36, 42, 48, 60, 72)
 TARGET_PATTERN = re.compile(
     r"winter_storm_levels_nbm_snow_level_(\d{10})_f(\d{3})_([0-9a-f]{12})\.geojson"
 )
@@ -342,13 +343,18 @@ def _validate_geojson(
     return len(features), sorted(levels), declared_bbox
 
 
-def _validate_entry(root: Path, value: object, index: int) -> EntryState:
+def _validate_entry(
+    root: Path,
+    value: object,
+    index: int,
+    target_leads: Sequence[int] = TARGET_LEADS,
+) -> EntryState:
     if not isinstance(value, dict) or set(value) != ENTRY_KEYS:
         raise ProductError(f"manifest target {index} shape is invalid")
     if value.get("source_id") != SOURCE_ID or value.get("media_type") != "application/geo+json":
         raise ProductError(f"manifest target {index} source or media type is invalid")
     lead = _integer(value.get("lead_hours"), f"manifest target {index} lead")
-    if lead not in TARGET_LEADS:
+    if lead not in target_leads:
         raise ProductError(f"manifest target {index} lead is unsupported")
     cycle = _timestamp(value.get("cycle_time_utc"), f"manifest target {index} cycle")
     valid = _timestamp(value.get("valid_time_utc"), f"manifest target {index} valid time")
@@ -456,7 +462,11 @@ def _inventory(root: Path) -> set[Path]:
     return files
 
 
-def validate_product(root: Path) -> ProductState:
+def validate_product(
+    root: Path,
+    *,
+    _target_leads: Sequence[int] = TARGET_LEADS,
+) -> ProductState:
     manifest = _read_json(root / MANIFEST_PATH)
     if not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS:
         raise ProductError("manifest root shape is invalid")
@@ -486,9 +496,19 @@ def validate_product(root: Path) -> ProductState:
     if manifest.get("publication_time_utc") is not None:
         raise ProductError("manifest publication time must remain null in contract 1.0.0")
     values = manifest.get("targets")
-    if not isinstance(values, list) or len(values) not in {11, 22}:
-        raise ProductError("manifest must contain one or two complete 11-target cycles")
-    entries = tuple(_validate_entry(root, value, index) for index, value in enumerate(values))
+    target_leads = tuple(_target_leads)
+    cycle_target_count = len(target_leads)
+    if not isinstance(values, list) or len(values) not in {
+        cycle_target_count,
+        2 * cycle_target_count,
+    }:
+        raise ProductError(
+            f"manifest must contain one or two complete {cycle_target_count}-target cycles"
+        )
+    entries = tuple(
+        _validate_entry(root, value, index, target_leads)
+        for index, value in enumerate(values)
+    )
     cycles = tuple(dict.fromkeys(entry.cycle for entry in entries))
     if not 1 <= len(cycles) <= 2 or cycles != tuple(sorted(cycles, reverse=True)):
         raise ProductError("manifest retained cycles are incomplete or not newest-first")
@@ -496,14 +516,14 @@ def validate_product(root: Path) -> ProductState:
         raise ProductError("manifest root cycle is not the newest retained cycle")
     for cycle in cycles:
         leads = [entry.lead for entry in entries if entry.cycle == cycle]
-        if leads != list(TARGET_LEADS):
+        if leads != list(target_leads):
             raise ProductError(f"manifest cycle lead set/order is incomplete: {cycle}")
     if len({(entry.cycle, entry.valid) for entry in entries}) != len(entries):
         raise ProductError("manifest contains duplicate cycle/valid-time identities")
     diagnostics = manifest.get("diagnostics")
     expected_diagnostics = {
-        "expected_current_cycle_target_count": len(TARGET_LEADS),
-        "actual_current_cycle_target_count": len(TARGET_LEADS),
+        "expected_current_cycle_target_count": len(target_leads),
+        "actual_current_cycle_target_count": len(target_leads),
         "retained_cycle_count": len(cycles),
         "complete_bundle_validated": True,
     }
@@ -620,7 +640,27 @@ def reconcile(candidate_root: Path, canonical_root: Path) -> tuple[str, str]:
         _apply_desired_state(candidate, None, canonical_root)
         validate_product(canonical_root)
         return "new", "canonical Winter Storm Levels product was absent"
-    canonical = validate_product(canonical_root)
+    try:
+        canonical = validate_product(canonical_root)
+    except ProductError as modern_error:
+        try:
+            legacy = validate_product(
+                canonical_root, _target_leads=LEGACY_TARGET_LEADS
+            )
+        except ProductError as legacy_error:
+            raise ProductError(
+                "canonical Winter Storm Levels state is neither complete f240 nor "
+                f"the exact legacy migration state: modern={modern_error}; "
+                f"legacy={legacy_error}"
+            ) from legacy_error
+        if candidate.current_cycle <= legacy.current_cycle:
+            return "stale", "candidate cycle is not newer than legacy canonical Snow state"
+        _apply_desired_state(candidate, None, canonical_root)
+        validate_product(canonical_root)
+        return (
+            "new",
+            "validated legacy sparse Snow state migrated to one complete f240 cycle",
+        )
     if _semantic_manifest(candidate.manifest) == _semantic_manifest(canonical.manifest):
         return "same", "Winter Storm Levels two-cycle semantic state is canonical"
     if candidate.current_cycle < canonical.current_cycle:

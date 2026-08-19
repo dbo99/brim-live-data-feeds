@@ -103,6 +103,7 @@ wsl_build <- function() {
       output_bytes = unname(file.info(target_path)$size),
       output_sha256 = wsl_sha256(target_path),
       feature_count = contour$feature_count,
+      vertex_count = contour$cartography$vertices,
       contour_levels_ft_msl = contour$contour_levels,
       non_simple_count = contour$cartography$non_simple_count,
       serialization_collapse_removed_count =
@@ -142,6 +143,11 @@ wsl_build <- function() {
   attempt$source_stats <<- source_stats
   attempt$total_source_bytes <<- sum(vapply(source_stats, `[[`, numeric(1), "source_bytes"))
   attempt$total_output_bytes <<- sum(vapply(source_stats, `[[`, numeric(1), "output_bytes"))
+  attempt$retained_output_bytes <<- sum(vapply(entries, function(entry) {
+    as.numeric(entry$bytes)
+  }, numeric(1)))
+  attempt$total_feature_count <<- sum(vapply(source_stats, `[[`, numeric(1), "feature_count"))
+  attempt$total_vertex_count <<- sum(vapply(source_stats, `[[`, numeric(1), "vertex_count"))
   attempt$qa <<- "passed"
   attempt$publication_outcome <<- if (!publish) {
     "dry_run_only"

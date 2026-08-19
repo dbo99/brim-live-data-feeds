@@ -143,12 +143,13 @@ class WinterFixtureMixin:
         previous: datetime | None = None,
         *,
         marker: float = 1,
+        target_leads=winter.TARGET_LEADS,
     ) -> None:
         shutil.rmtree(root, ignore_errors=True)
         cycles = [current] + ([previous] if previous is not None else [])
         entries = []
         for cycle_index, cycle in enumerate(cycles):
-            for lead in winter.TARGET_LEADS:
+            for lead in target_leads:
                 _, entry = cls._write_target(
                     root,
                     cycle,
@@ -170,8 +171,8 @@ class WinterFixtureMixin:
             "publication_time_utc": None,
             "target_count": len(entries),
             "diagnostics": {
-                "expected_current_cycle_target_count": len(winter.TARGET_LEADS),
-                "actual_current_cycle_target_count": len(winter.TARGET_LEADS),
+                "expected_current_cycle_target_count": len(target_leads),
+                "actual_current_cycle_target_count": len(target_leads),
                 "retained_cycle_count": len(cycles),
                 "complete_bundle_validated": True,
             },
@@ -249,15 +250,40 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
 
     def test_valid_one_and_two_cycle_products_and_semantic_key(self):
         self.product(self.candidate, 0)
-        self.assertEqual(len(winter.validate_product(self.candidate).entries), 11)
+        self.assertEqual(
+            len(winter.validate_product(self.candidate).entries),
+            len(winter.TARGET_LEADS),
+        )
         self.product(self.candidate, 0, -6)
-        self.assertEqual(len(winter.validate_product(self.candidate).entries), 22)
+        self.assertEqual(
+            len(winter.validate_product(self.candidate).entries),
+            2 * len(winter.TARGET_LEADS),
+        )
         self.assertEqual(len(winter.semantic_key(self.candidate)), 64)
 
     def test_current_repository_product_validates(self):
-        state = winter.validate_product(Path(__file__).resolve().parents[1])
+        repository = Path(__file__).resolve().parents[1]
+        with self.assertRaises(winter.ProductError):
+            winter.validate_product(repository)
+        state = winter.validate_product(
+            repository, _target_leads=winter.LEGACY_TARGET_LEADS
+        )
         self.assertEqual(len(state.cycles), 2)
-        self.assertEqual(len(state.entries), 22)
+        self.assertEqual(len(state.entries), 2 * len(winter.LEGACY_TARGET_LEADS))
+
+    def test_exact_legacy_sparse_state_migrates_to_one_complete_f240_cycle(self):
+        self.write_product(
+            self.canonical,
+            self.base - timedelta(hours=6),
+            target_leads=winter.LEGACY_TARGET_LEADS,
+        )
+        self.product(self.candidate, 0)
+        state, reason = winter.reconcile(self.candidate, self.canonical)
+        self.assertEqual("new", state)
+        self.assertIn("migrated", reason)
+        migrated = winter.validate_product(self.canonical)
+        self.assertEqual((self.base,), migrated.cycles)
+        self.assertEqual(len(winter.TARGET_LEADS), len(migrated.entries))
 
     def test_new_cycle_rolls_to_exact_fresh_main_two_cycle_state(self):
         self.product(self.canonical, -6, -12, marker=10)
@@ -272,7 +298,7 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
         result = winter.validate_product(self.canonical)
         self.assertEqual(state, "new")
         self.assertEqual(result.cycles, (self.base, self.base - timedelta(hours=6)))
-        self.assertEqual(len(result.entries), 22)
+        self.assertEqual(len(result.entries), 2 * len(winter.TARGET_LEADS))
         for path, content in retained.items():
             self.assertEqual((self.canonical / path).read_bytes(), content)
 
@@ -288,8 +314,8 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
         winter.reconcile(self.candidate, self.canonical)
         result_paths = set(winter.validate_product(self.canonical).targets)
         self.assertFalse(candidate_prior & result_paths)
-        self.assertEqual(len(result_paths), 22)
-        self.assertEqual(len(old_paths - result_paths), 11)
+        self.assertEqual(len(result_paths), 2 * len(winter.TARGET_LEADS))
+        self.assertEqual(len(old_paths - result_paths), len(winter.TARGET_LEADS))
 
     def test_same_semantic_state_ignores_only_retrieval_time(self):
         self.product(self.candidate, 0, -6)
@@ -403,10 +429,27 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
     def test_missing_required_lead_is_rejected(self):
         self.product(self.candidate, 0, -6)
         manifest = self.manifest(self.candidate)
-        manifest["targets"][0]["lead_hours"] = 54
+        manifest["targets"][0]["lead_hours"] = 242
         self.save_manifest(self.candidate, manifest)
         with self.assertRaisesRegex(winter.ProductError, "unsupported"):
             winter.validate_product(self.candidate)
+
+    def test_missing_f054_and_f066_are_rejected(self):
+        for lead in (54, 66):
+            with self.subTest(lead=lead):
+                self.product(self.candidate, 0, -6)
+                manifest = self.manifest(self.candidate)
+                index = next(
+                    position
+                    for position, target in enumerate(manifest["targets"])
+                    if target["lead_hours"] == lead
+                )
+                manifest["targets"][index] = copy.deepcopy(
+                    manifest["targets"][index - 1]
+                )
+                self.save_manifest(self.candidate, manifest)
+                with self.assertRaises(winter.ProductError):
+                    winter.validate_product(self.candidate)
 
     def test_duplicate_lead_is_rejected(self):
         self.product(self.candidate, 0, -6)
@@ -567,7 +610,10 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
     def test_bootstrap_without_canonical_is_validated_and_copied(self):
         self.product(self.candidate, 0)
         self.assertEqual(winter.reconcile(self.candidate, self.canonical)[0], "new")
-        self.assertEqual(len(winter.validate_product(self.canonical).entries), 11)
+        self.assertEqual(
+            len(winter.validate_product(self.canonical).entries),
+            len(winter.TARGET_LEADS),
+        )
 
     def test_callback_rejects_wrong_semantic_metadata(self):
         self.product(self.candidate, 0, -6)

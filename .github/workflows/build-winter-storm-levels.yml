@@ -268,7 +268,7 @@ jobs:
             fi
             echo "| Publication candidate prepared | `${PUBLICATION_CANDIDATE_PREPARED}` |"
             if [[ -f "${QA_JSON}" ]]; then
-              jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / vector bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Producer output | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
+              jq -r '"| Status | `\(.status)` |", "| Mode | `\(.mode)` |", "| Selected cycle | `\(.selected_cycle_time_utc // "none")` |", "| Valid-time coverage | `\(.valid_time_start_utc // "none")` through `\(.valid_time_end_utc // "none")` |", "| Current-cycle targets | \(.current_cycle_target_count // 0) / \(.expected_current_cycle_target_count // 0) |", "| Source / current vector / retained bytes | \(.total_source_bytes // 0) / \(.total_output_bytes // 0) / \(.retained_output_bytes // 0) |", "| Snow features / vertices | \(.total_feature_count // 0) / \(.total_vertex_count // 0) |", "| Runtime | \(.elapsed_seconds // "n/a") seconds |", "| QA | `\(.qa // "not_run")` |", "| Semantic change | \(.semantic_change) |", "| Producer output | `\(.publication_outcome // "not_published")` |"' "${QA_JSON}"
             else
               echo "| Producer attempt | `not_started` |"
             fi

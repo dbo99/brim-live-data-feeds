@@ -76,7 +76,8 @@ not assert equality: it is HRRR freezing level, not NBM snow level.
   forecast lead, and byte offset. The decoded GRIB supplies valid time, Lambert
   CRS, 2.5-km grid geometry, metre units, and `9999` NoData. NCEP advertises
   hourly CONUS Core cycles and f001-f264; the candidate deliberately selects the
-  four primary 00/06/12/18 cycles and 11 leads through f072. Dated object keys
+  four primary 00/06/12/18 cycles and 41 leads: f001 plus every six hours from
+  f006 through f240. Dated object keys
   provide short-term historical inspection; neither path requires credentials.
 - **GFS:** anonymous HTTPS GRIB2/inventory at
   `https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.YYYYMMDD/CC/atmos/gfs.tCCz.pgrb2.0p25.fFFF[.idx]`,
@@ -203,7 +204,8 @@ alternate or rollback algorithm.
 ## Rolling set, freshness, and failure policy
 
 The manifest is the only selection authority. A current cycle publishes
-forecast hours 1, 6, 12, 18, 24, 30, 36, 42, 48, 60, and 72. A target is active
+f001 plus every six-hour forecast from f006 through f240, including f054 and
+f066. A target is active
 from three hours before through three hours after its valid time. Consumers
 prefer the newest cycle for duplicate valid times.
 
@@ -213,7 +215,7 @@ and `expired` afterward or whenever no target is active. Consumers must recomput
 these transitions from source cycle/target validity; retrieval, publication, Git,
 or Pages time does not extend meteorological validity.
 
-The publisher requires all 11 horizons from one cycle. It retries only transport
+The publisher requires all 41 horizons from one cycle. It retries only transport
 errors and HTTP 408, 429, 500, 502, 503, and 504, for at most three attempts,
 using bounded exponential backoff with jitter and a 30-second cap on numeric
 `Retry-After`.
@@ -226,10 +228,13 @@ and does not rewrite the accepted manifest or target set. New targets are
 promoted first and the validated manifest is renamed last; injected pre-manifest
 failure tests prove the previous accepted manifest remains byte-identical.
 
-Bootstrap requires one complete `current` 11-target cycle with an active target.
+Bootstrap requires one complete `current` 41-target cycle with an active target.
 After bootstrap, a genuinely newer cycle strictly validates the prior canonical
 manifest and all referenced targets before retaining the prior root cycle. The
-result is exactly two complete cycles and 22 targets. Malformed, unsafe,
+result is exactly two complete cycles and 82 targets. The exact legacy 11-lead
+state is accepted only as one-time migration input: the next newer complete f240
+cycle replaces it with a one-cycle bootstrap before normal retention resumes.
+Malformed, unsafe,
 missing, checksum-invalid, or uncopyable prior retention state fails without
 replacing accepted bytes. A third-cycle rotation retains the previous root plus
 the new cycle and removes the oldest cycle only after manifest promotion.
@@ -268,11 +273,11 @@ promotion. The implementation now removes coordinate-collapsed/zero-length
 components and covers that case synthetically; the gate authorized exactly one
 live run, so no second live attempt was made. No canonical product was written.
 
-One normal build makes 11 inventory requests and 11 range requests and downloads
-roughly 12 MB of source messages. At four runs daily that is about 44 target
-messages and 48 MB of GRIB transfer before retries, plus roughly 0.9 MB of new
-vector payload per advancing cycle. This is why the candidate does not fetch the
-full multi-field GRIB files or run every hour.
+One normal build makes 41 inventory requests and 41 range requests. Transfer and
+vector size vary by horizon and contour complexity; CI diagnostics report source
+bytes, retained target bytes, feature count, and vertex count so material drift
+is reviewable. This is why the candidate uses exact ranges rather than complete
+multi-field GRIB files and does not run every hour.
 
 [`qa/winter_storm_levels/index.html`](../qa/winter_storm_levels/index.html) is a
 dependency-free standalone QA page. It loads a manifest by URL or an extracted

@@ -45,7 +45,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | GFS wind | `gfs_surface_wind` | NOAA/NCEP GFS | Hourly at :47 | GFS manifest | Yes |
 | HRRR wind | `hrrr_surface_wind` | NOAA/NCEP HRRR | Hourly at :33 | HRRR manifest | Yes |
 | NBM wind guidance | Not declared | NOAA/NCEP NBM | 01:23, 07:23, 13:23, 19:23 | NBM manifest | Yes |
-| NBM QPF | `nbm_qpf` | NOAA/NWS/NCEP/MDL NBM | Approved 02:18/08:18/14:18/20:18 and fallback 03:10/09:10/15:10/21:10; first publication remains separately gated | Unseeded `docs/data/nbm-qpf/nbm_qpf_manifest.json` | Yes |
+| NBM QPF | `nbm_qpf` | NOAA/NWS/NCEP/MDL NBM | 02:18/08:18/14:18/20:18 and fallback 03:10/09:10/15:10/21:10 | `docs/data/nbm-qpf/nbm_qpf_manifest.json` | Yes |
 | ASOS/AWOS observed wind | `asos_awos_wind_obs` | NOAA Aviation Weather Center METAR cache | Twice hourly at :17 and :42 | GeoJSON, summary, and manifest | Yes |
 | USGS streamflow | Not declared | USGS Water Data API | Every 4 hours at :23 | GeoJSON and summary | No |
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
@@ -74,9 +74,10 @@ not acceptance limits. Most legacy rows describe output near baseline commit
 | USGS groundwater | 2,263 well features | 11.9 MB |
 | SCAN | 28 station features | 0.29 MB, plus context CSVs |
 | Snow-pillow | 304 station features | 0.70 MB, plus context CSVs |
-| Winter Storm Levels | 22 NBM valid-time targets across two complete cycles | About 7.8 MB plus a 30-KB manifest in the current retained set |
+| Winter Storm Levels | Legacy retained state has 22 targets; the next accepted cycle migrates to one complete 41-target f240 cycle, then steady state retains 82 targets | Payload varies materially with contour complexity |
+| NBM QPF | Legacy retained state has ten WebP targets; the next accepted cycle migrates to one complete 40-target paired f240 cycle, then steady state retains 80 WebPs and 80 numeric grids | Payload varies with image and gzip compression |
 
-GFS, HRRR, NBM wind, and Winter Storm Levels are rolling multi-file products. Their total size changes
+GFS, HRRR, NBM wind, NBM QPF, and Winter Storm Levels are rolling multi-file products. Their total size changes
 with retained model cycles and forecast entries. Do not infer a payload budget
 from one checkout.
 
@@ -99,7 +100,7 @@ It does not mean every such file is a canonical consumer product.
 | GFS wind | `docs/data/wind/gfs_surface_wind_feed_manifest.json`<br>`docs/data/wind/gfs/surface/*.json`<br>`docs/data/wind/gfs_surface_wind_latest.json`<br>`docs/data/wind/gfs_surface_wind_latest_summary.json` | Manifest and selected rolling target are canonical; latest JSON/summary are compatibility outputs |
 | HRRR wind | `docs/data/wind/hrrr_surface_wind_feed_manifest.json`<br>`docs/data/wind/hrrr/surface/*.json`<br>`docs/data/wind/hrrr_surface_wind_latest.json`<br>`docs/data/wind/hrrr_surface_wind_latest_summary.json` | Manifest and selected rolling target are canonical; latest JSON/summary are compatibility outputs |
 | NBM wind guidance | `docs/data/wind/nbm_wind_guidance_feed_manifest.json`<br>`docs/data/wind/nbm/guidance/*.geojson`<br>`docs/data/wind/nbm_wind_guidance_latest_summary.json` | Manifest and selected target are canonical; summary is producer/QA metadata |
-| NBM QPF | `docs/data/nbm-qpf/nbm_qpf_manifest.json`<br>`docs/data/nbm-qpf/nbm/qpf/*.webp` | Approved future manifest and immutable-target root. The product is unseeded, is not yet hosted, and has no private BRIM consumer; implementation does not grant publication authority. |
+| NBM QPF | `docs/data/nbm-qpf/nbm_qpf_manifest.json`<br>`docs/data/nbm-qpf/nbm/qpf/*.webp`<br>`docs/data/nbm-qpf/nbm/qpf/*.u16le.gz` | Canonical manifest and immutable image/numeric target root. The manifest is the only mutable product path; consumers resolve both representations from it. |
 | ASOS/AWOS | `docs/data/wind/asos_awos_wind_latest.geojson`<br>`docs/data/wind/asos_awos_wind_latest_summary.json`<br>`docs/data/wind/asos_awos_wind_feed_manifest.json` | All three are canonical consumer/status products |
 | USGS streamflow | `docs/data/usgs_streamflow_latest_ca.geojson`<br>`docs/data/usgs_streamflow_latest_ca_summary.json` | Both are canonical consumer products |
 | USGS groundwater | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | Both are canonical consumer products |
@@ -906,11 +907,15 @@ ownership.
 - **Canonical entry point and rolling set:**
   `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` and its
   relative targets beneath `docs/data/winter-storm-levels/nbm/snow-level/`.
-  The accepted public set contains two complete retained cycles and 22 targets.
+  Steady public state contains two complete retained cycles and 82 targets.
+  The legacy 11-lead state is accepted only by the one-time migration path;
+  the next newer accepted cycle replaces it with one complete f240 cycle before
+  ordinary two-cycle retention resumes.
   Target filenames include a short content-hash suffix so a same-cycle revision
   cannot overwrite bytes still referenced by an older manifest. Consumers must
   never select by directory listing or filename guessing.
-- **Forecast targets:** Hours 1, 6, 12, 18, 24, 30, 36, 42, 48, 60, and 72.
+- **Forecast targets:** Hour 1, then every six hours from 6 through 240,
+  inclusive. This exact 41-lead set includes f054 and f066.
   Two cycles are retained after successful advancement; newest-cycle entries
   win when valid times overlap.
 - **Format/domain/CRS:** Each target is a WGS84 GeoJSON FeatureCollection of
@@ -951,7 +956,7 @@ ownership.
   terrain-mask or replace the NBM-derived field. Where terrain exceeds the
   snow-level height, consumers should explain the transition as at/near the
   surface rather than imply a useful below-ground level.
-- **QA/failure policy:** All 11 inventories, exact record identity, range
+- **QA/failure policy:** All 41 inventories, exact record identity, range
   response, single-layer decode, metre unit, valid time, CRS, at least 95%
   finite source coverage, physical range, contour metadata/bounds, manifest
   paths/checksums/sizes, feature metadata, structurally valid nonempty linework,
@@ -964,7 +969,7 @@ ownership.
   semantic no-ops. Bootstrap requires one complete `current` cycle with an
   active target. After bootstrap, a genuinely newer cycle must strictly
   validate and retain the prior root cycle, producing exactly two complete
-  cycles and 22 targets. Any malformed, unsafe, incomplete, missing,
+  cycles and 82 targets. Any malformed, unsafe, incomplete, missing,
   checksum-invalid, or uncopyable prior retention state fails the candidate.
 - **Publication controls and schedule:** Manual dispatch defaults to a
   runner-temporary dry run, and feature branches cannot publish. Manual
@@ -973,7 +978,7 @@ ownership.
   guard as the schedule. For every 00/06/12/18 UTC NBM cycle, primary attempts
   run at +128 minutes (02:08/08:08/14:08/20:08) and fallbacks at +174 minutes
   (02:54/08:54/14:54/20:54). The inventory-only preflight reuses the producer's
-  cycle discovery and 11-lead completeness semantics. It exits successfully
+  cycle discovery and 41-lead completeness semantics. It exits successfully
   without geospatial setup or a build when the newest nominal cycle is already
   canonical or a newer cycle is not complete. Unexpected inventory/source
   errors fail visibly; all guarded no-build outcomes leave the canonical LKG
@@ -991,12 +996,11 @@ ownership.
   fallbacks. Detailed source evidence is in
   [WINTER_STORM_LEVELS.md](WINTER_STORM_LEVELS.md).
 
-## NBM QPF publication implementation (unseeded; not published)
+## NBM QPF publication implementation
 
-`nbm_qpf` has an R-centric complete-cycle candidate producer plus a bounded
-publication workflow and product-specific Python validator/reconciler. No QPF
-manifest or WebP is tracked under `docs/data`, no workflow has been dispatched,
-and the product is not yet hosted or consumed by private BRIM. The producer is
+`nbm_qpf` is a seeded public, manifest-selected product with an R-centric
+complete-cycle candidate producer plus a bounded publication workflow and
+product-specific Python validator/reconciler. The producer is
 [`scripts/build_nbm_qpf_candidate.R`](../scripts/build_nbm_qpf_candidate.R),
 with validation and transformation helpers in
 [`scripts/nbm_qpf_helpers.R`](../scripts/nbm_qpf_helpers.R) and the locked
@@ -1008,26 +1012,36 @@ The publication adapter is
 separates read-only preparation from the shared `brim-live-main-publish`
 transaction.
 
-The candidate requires exactly ten deterministic NBM Core CONUS surface APCP
+The candidate requires exactly 40 deterministic NBM Core CONUS surface APCP
 records from one 00/06/12/18 UTC cycle: native preceding-six-hour
-accumulations ending at f006, f012, f018, f024, f030, f036, f042, f048, f060,
-and f072. It validates exact inventory and GRIB source/time/unit metadata,
+accumulations ending every six hours from f006 through f240, inclusive. It
+validates exact inventory and GRIB source/time/unit metadata,
 refuses incomplete or mixed cycles, crops the native numeric source with a
 two-cell buffer, bilinearly reprojects numeric millimetres to the fixed 720 by
 733 EPSG:3857 grid over WGS84 `[-130, 30, -112, 44.5]`, converts to inches,
-then applies the global fixed `brim_nbm_qpf_6h_west_v1` palette. Nodata and
-finite QPF below 0.01 inch are transparent; painted pixels have alpha 255.
-Targets are lossless VP8L RGBA WebPs with content-addressed names.
+then writes the numeric representation before applying the global fixed
+`brim_nbm_qpf_6h_west_v1` palette. NoData and finite QPF below 0.01 inch are
+transparent in the image; painted pixels have alpha 255. Each target state is
+an immutable pair: a lossless VP8L RGBA8 WebP and a gzip application payload
+containing a headerless north-to-south, west-to-east, row-major little-endian
+uint16 grid. Numeric values are inches with scale 0.001, offset 0, NoData 65535,
+valid stored values 0 through 65534, and pixel-is-area semantics. The numeric
+grid has the same 720 by 733 EPSG:3857 extent as the image. Overflow fails;
+finite round-trip quantization error must remain below 0.0005 inch.
 
 One R candidate root contains `nbm_qpf_candidate.json`, `validation.json`,
-`preflight.csv`, and exactly ten referenced WebPs under the future product path
-shape `docs/data/nbm-qpf/nbm/qpf/`. The candidate manifest has no wall-clock
+`preflight.csv`, exactly 40 referenced WebPs, and exactly 40 referenced
+`.u16le.gz` numeric grids under `docs/data/nbm-qpf/nbm/qpf/`. The candidate manifest has no wall-clock
 generation field and declares itself nonpublication output. The validator
-recomputes time relationships, target closure, byte counts, SHA-256 values,
-palette/alpha membership, WebP encoding and dimensions, cycle maximum, and the
-cycle-level displayed legend cap. It rejects missing, duplicate, unexpected,
-hash-mismatched, wrong-duration, wrong-cycle, wrong-CRS, or dimension-mismatched
-state. The entry point refuses any output root under canonical `docs/data` and
+recomputes time relationships, paired-target closure, byte counts, SHA-256
+values, numeric gzip/decode/grid contracts, palette/alpha membership, WebP
+encoding and dimensions, cycle maximum, and the cycle-level displayed legend
+cap. A deterministic SHA-256 `forecast_state_id` binds the scientific metadata
+and final identities of both representations. Validation rejects missing,
+duplicate, swapped, unexpected, hash-mismatched, wrong-duration, wrong-cycle,
+wrong-CRS, wrong-endianness, corrupt-gzip, or dimension-mismatched state. The
+gzip wrapper is part of the file bytes; it is not an HTTP `Content-Encoding`.
+The entry point refuses any output root under canonical `docs/data` and
 requires a new absent output directory.
 
 Run offline tests and a candidate build from the repository root:
@@ -1044,16 +1058,19 @@ Rscript scripts/build_nbm_qpf_candidate.R
 The controlled-sample test uses the separately retained research workspace when
 available and otherwise reports a skip. The explicit cycle above is an example,
 not a scheduled or freshness promise. Repeat-build mode downloads one validated
-source set once, produces it twice, and requires 10/10 WebP byte/hash/name
-identity plus semantic candidate-manifest, palette, cycle maximum, and legend
-identity before delivering the first candidate.
+source set once, produces it twice, and requires 40/40 image and numeric
+byte/hash/name identity plus semantic candidate-manifest, state bindings,
+palette, cycle maximum, and legend identity before delivering the first
+candidate.
 
 The separate publication candidate has public schema `1.0.0`, one complete
 cycle, and only the approved manifest and immutable-target paths. On fresh
 `origin/main`, the callback classifies a complete candidate as NEW, SAME, STALE,
 or conflicting same-cycle state. An absent canonical product establishes an
-explicit ten-target `bootstrap` state. The next newer cycle establishes
-`steady` state with current and previous complete cycles and exactly 20 targets;
+explicit 40-target `bootstrap` state. The current legacy ten-lead public state
+is accepted only as a precisely validated migration source: a newer complete
+f240 cycle replaces it with one bootstrap cycle. The next newer cycle establishes
+`steady` state with current and previous complete cycles and exactly 80 targets;
 every later advancement retains old current as previous and prunes only the old
 previous files within `docs/data/nbm-qpf/nbm/qpf/`. SAME and STALE are successful
 no-ops; malformed canonical state or conflicting same-cycle identity fails
@@ -1063,17 +1080,19 @@ explicitly allowed for initial seeding.
 The only mutable path is `docs/data/nbm-qpf/nbm_qpf_manifest.json`; immutable
 targets are owned only beneath `docs/data/nbm-qpf/nbm/qpf/`. The public manifest
 selects targets and records current/previous cycles, the locked source, palette,
-spatial and freshness contracts, cycle-level legend metadata, exact ten-lead
-sets, per-target times/units/bounds/dimensions, bytes and SHA-256. Consumers must
-never select by directory listing or filename time.
+numeric encoding, spatial and freshness contracts, cycle-level legend metadata,
+the exact 40-lead sets, per-target state bindings, times/units/bounds/dimensions,
+bytes and SHA-256. Consumers must never select by directory listing or filename
+time. The selected-frame numeric representation supports exact hover values;
+this does not add or redefine a cumulative or total-QPF product.
 
 The workflow's approved primary times are +138 minutes after each primary NBM
 cycle, with fallback at +190 minutes. The primary remains ten minutes behind the
 established Snow Levels primary source-readiness probe, and the fallback avoids
-the start-of-hour high-load period. Merge, dispatch, first publication, Pages
-verification, and private BRIM integration remain separate maintainer decisions.
-Until an approved first run seeds the canonical manifest, these paths describe
-an unpublished additive contract rather than an available public API.
+the start-of-hour high-load period. Merge, dispatch, publication, and Pages
+verification remain separate maintainer decisions. Private consumer support
+for the additive f240 and selected-frame numeric fields was prepared separately;
+private implementation is not copied into this public repository.
 
 ## Nonproduction workflows
 

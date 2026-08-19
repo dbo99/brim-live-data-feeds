@@ -16,7 +16,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 The official product has two stages:
 
 1. A scheduled writer retrieves, transforms and validates data. Thirteen writers,
-   including the unseeded NBM QPF integration, prepare validated candidate
+   including the seeded NBM QPF integration, prepare validated candidate
    artifacts and delegate bounded fresh-main reconciliation to a separate
    `main`-authorized publisher job. Two writers—NBM wind guidance and Winter
    Storm Levels—still stage and push their own declared paths.
@@ -148,12 +148,12 @@ producer. There is no internal polling. Manual `publish: true` on `main` uses
 the same guard, while manual `publish: false` preserves diagnostic current-cycle
 rebuild behavior.
 
-The unseeded NBM QPF workflow has approved primary attempts at 02:18, 08:18,
+The seeded NBM QPF workflow has primary attempts at 02:18, 08:18,
 14:18 and 20:18 (+138 minutes) with fallbacks at 03:10, 09:10, 15:10 and 21:10
 (+190 minutes). The primary remains ten minutes behind the established Snow
 Levels source-readiness probe, while the fallback avoids the start-of-hour
-high-load period. Do not merge, dispatch, or publish QPF until the maintainer
-separately approves first live publication.
+high-load period. Manual dispatch and official publication remain maintainer
+decisions.
 
 Before any manual writer dispatch, the operator must record:
 
@@ -286,8 +286,9 @@ The repository has product-specific, not universal, QA:
   while source freshness holds. Bootstrap may establish
   one valid family while others remain explicit failed/unavailable structural
   records; it fails if no active family establishes official data.
-- Winter Storm Levels requires one complete NBM cycle with all 11 configured
-  horizons. It validates exact deterministic `SNOWLVL` inventory identity and
+- Winter Storm Levels requires one complete NBM cycle with all 41 configured
+  horizons (f001 plus f006 through f240 every six hours). It validates exact
+  deterministic `SNOWLVL` inventory identity and
   byte ranges, metre units, decoded valid time/CRS, at least 95% finite grid
   coverage, physical range, contour metadata/bounds, stable target structure,
   manifest paths/checksums/sizes, and unique cycle/valid identities. Only
@@ -323,10 +324,10 @@ success" is not universally equivalent to "complete current product."
 | First CBRFC bootstrap establishes at least one valid family, including expired period provenance or the year-round monthly series | The valid family is accepted and the others remain explicit `failed_no_data` or source-unavailable structural records; CNRFC is unaffected | A complete, honestly partial three-record CBRFC seed can be created year-round |
 | First CBRFC bootstrap establishes no official family and an active family has an unexplained fetch/parse/validation failure | No CBRFC canonical replacement or commit step; CNRFC is unaffected; the failure is not relabeled out of season | No CBRFC canonical seed is created |
 | CBRFC roster/schema/serialization/staged validation fails | No CBRFC canonical replacement or commit step; CNRFC is unaffected | Prior CBRFC canonical bytes remain unchanged |
-| Winter Storm Levels source is unavailable, its variable is missing, fetch/decode/validation/publication fails, or any of 11 horizons is missing | Attempt diagnostics preserve the distinct failure class; no manifest promotion or commit step | Prior manifest and referenced contours remain unchanged and age naturally into delayed, stale LKG, then expired states |
+| Winter Storm Levels source is unavailable, its variable is missing, fetch/decode/validation/publication fails, or any of 41 horizons is missing | Attempt diagnostics preserve the distinct failure class; no manifest promotion or commit step | Prior manifest and referenced contours remain unchanged and age naturally into delayed, stale LKG, then expired states |
 | Winter Storm Levels scheduled preflight finds no newer complete cycle | `NO_NEW_CYCLE` or `SOURCE_NOT_READY`; geospatial setup, producer, and publication transaction do not run | Prior manifest and referenced contours remain unchanged; fallback may make one later inventory-only attempt |
 | Winter Storm Levels candidate is unchanged except retrieval time | Semantic no-op; no data commit | Prior accepted bytes remain authoritative |
-| NBM QPF preflight/candidate/public validation fails, is incomplete, or conflicts with the same canonical cycle | No publication transaction or commit | Prior manifest and exact referenced WebPs remain unchanged; an unseeded product remains absent |
+| NBM QPF preflight/candidate/public validation fails, has an incomplete image/numeric pair, or conflicts with the same canonical cycle | No publication transaction or commit | Prior manifest and exact referenced paired assets remain unchanged |
 | NBM QPF candidate is SAME or STALE relative to fresh canonical `main` | Shared publisher succeeds as a no-op | Current and previous canonical cycles do not regress |
 | Exactly one snow provider fails and valid prior rows exist | Snow publishes a partial-refresh commit containing fresh healthy-provider rows and unchanged prior failed-provider rows, with additive summary status | Failed provider remains last-known-good; healthy provider advances |
 | Both snow providers fail, or failed-provider prior rows are invalid/unavailable | No snow commit step | Entire prior snow product remains |

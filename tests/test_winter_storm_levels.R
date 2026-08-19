@@ -31,7 +31,10 @@ check_error <- function(expression, class = NULL, pattern = NULL) {
 config <- wsl_read_config(file.path("data", "input", "winter_storm_levels_config.csv"))
 check(identical(config$product_id, "winter_storm_levels"), "config product id")
 check(identical(config$source_id, "nbm_snow_level"), "canonical source is the derived NBM snow-level field")
-check(identical(config$forecast_lead_hours, c(1L, 6L, 12L, 18L, 24L, 30L, 36L, 42L, 48L, 60L, 72L)), "configured leads")
+check(identical(config$forecast_lead_hours, c(1L, seq.int(6L, 240L, by = 6L))) &&
+        length(config$forecast_lead_hours) == 41L &&
+        all(c(54L, 66L, 240L) %in% config$forecast_lead_hours),
+      "configured f001 plus continuous six-hour leads through f240")
 check(config$source_west < config$west && config$source_north > config$north, "source crop buffers display domain")
 check(abs(1000 * WSL_METERS_TO_FEET - 3280.83989501312) < 1e-9, "exact metre-to-foot conversion")
 
@@ -703,16 +706,59 @@ bootstrap_manifest <- wsl_test_write_manifest(
   bootstrap_candidate, cycle_a, cycle_a_entries, cycle_a + 2 * 3600, config
 )
 check(identical(bootstrap_manifest$status, "current"), "fresh bootstrap status is current")
-check(length(bootstrap_manifest$targets) == 11L, "fresh bootstrap has exactly 11 targets")
+check(length(bootstrap_manifest$targets) == length(config$forecast_lead_hours),
+      "fresh bootstrap has exactly 41 targets")
 check(is.null(bootstrap_manifest$publication_time_utc), "builder publication time is null")
 check(isTRUE(wsl_require_current_bootstrap(
   bootstrap_manifest, cycle_a + 2 * 3600, config, FALSE
 )), "fresh complete bootstrap accepted")
+for (missing_lead in c(54L, 66L)) {
+  incomplete <- wsl_test_clone(bootstrap_manifest)
+  keep <- vapply(incomplete$targets, function(entry) {
+    as.integer(entry$lead_hours) != missing_lead
+  }, logical(1))
+  incomplete$targets <- incomplete$targets[keep]
+  incomplete$target_count <- length(incomplete$targets)
+  incomplete$diagnostics$actual_current_cycle_target_count <- length(incomplete$targets)
+  incomplete_path <- file.path(
+    bootstrap_candidate, sprintf("missing-f%03d-manifest.json", missing_lead)
+  )
+  wsl_write_json(incomplete, incomplete_path)
+  check_error(
+    wsl_validate_manifest(incomplete_path, bootstrap_candidate, config, cycle_a + 2 * 3600),
+    pattern = "forecast-hour set is incomplete"
+  )
+}
 bootstrap_promotion <- wsl_promote_bundle(
   bootstrap_candidate, contract_canonical, "winter_storm_levels_manifest.json",
   config, now = cycle_a + 2 * 3600
 )
 check(bootstrap_promotion$changed, "fresh bootstrap promoted in isolated contract test")
+
+legacy_root <- file.path(contract_root, "legacy-canonical")
+legacy_candidate <- file.path(contract_root, "legacy-migration-candidate")
+invisible(lapply(
+  c(legacy_root, legacy_candidate), dir.create, recursive = TRUE, showWarnings = FALSE
+))
+legacy_config <- config
+legacy_config$forecast_lead_hours <- WSL_LEGACY_TARGET_LEADS
+legacy_entries <- wsl_test_cycle_entries(legacy_root, cycle_a, legacy_config, contour, stats)
+invisible(wsl_test_write_manifest(
+  legacy_root, cycle_a, legacy_entries, cycle_a + 2 * 3600, legacy_config
+))
+migration_entries <- wsl_test_cycle_entries(
+  legacy_candidate, cycle_b, config, contour, stats
+)
+migration_result <- wsl_copy_retained_cycles(
+  legacy_candidate, migration_entries, cycle_b, config, legacy_root,
+  now = cycle_b + 2 * 3600
+)
+check(length(migration_result) == length(config$forecast_lead_hours) &&
+        identical(
+          sort(vapply(migration_result, `[[`, integer(1), "lead_hours")),
+          config$forecast_lead_hours
+        ),
+      "validated sparse legacy state migrates to one complete f240 cycle")
 
 noncurrent_bootstraps <- list(
   delayed = list(age_hours = 10, status = "delayed_but_usable"),
@@ -745,7 +791,8 @@ cycle_b_complete <- wsl_copy_retained_cycles(
 cycle_b_manifest <- wsl_test_write_manifest(
   cycle_b_candidate, cycle_b, cycle_b_complete, cycle_b + 2 * 3600, config
 )
-check(length(cycle_b_manifest$targets) == 22L, "second cycle produces exactly 22 targets")
+check(length(cycle_b_manifest$targets) == 2L * length(config$forecast_lead_hours),
+      "second cycle produces exactly 82 targets")
 check(length(unique(vapply(cycle_b_manifest$targets, `[[`, character(1), "cycle_time_utc"))) == 2L,
       "second cycle produces exactly two complete cycles")
 check(identical(cycle_b_manifest$cycle_time_utc, wsl_iso_utc(cycle_b)),
@@ -829,12 +876,14 @@ cycle_c_cycles <- sort(unique(vapply(
 )))
 check(identical(cycle_c_cycles, sort(c(wsl_iso_utc(cycle_b), wsl_iso_utc(cycle_c)))),
       "third-cycle rotation retains exactly B and C")
-check(length(cycle_c_manifest$targets) == 22L, "third-cycle rotation remains exactly 22 targets")
+check(length(cycle_c_manifest$targets) == 2L * length(config$forecast_lead_hours),
+      "third-cycle rotation remains exactly 82 targets")
 rotation <- wsl_promote_bundle(
   cycle_c_candidate, contract_canonical, "winter_storm_levels_manifest.json",
   config, now = cycle_c + 2 * 3600
 )
-check(length(rotation$removed) == 11L, "third-cycle rotation evicts all 11 cycle-A targets")
+check(length(rotation$removed) == length(config$forecast_lead_hours),
+      "third-cycle rotation evicts all 41 cycle-A targets")
 check(!any(vapply(cycle_a_entries, function(entry) {
   file.exists(file.path(contract_canonical, entry$path))
 }, logical(1))), "third-cycle rotation removes cycle A")
@@ -842,7 +891,8 @@ rotated <- jsonlite::fromJSON(
   file.path(contract_canonical, "winter_storm_levels_manifest.json"), simplifyVector = FALSE
 )
 check(identical(rotated$cycle_time_utc, wsl_iso_utc(cycle_c)) &&
-      length(rotated$targets) == 22L, "rotated canonical root is cycle C with 22 targets")
+      length(rotated$targets) == 2L * length(config$forecast_lead_hours),
+      "rotated canonical root is cycle C with 82 targets")
 
 same_cycle_candidate <- file.path(contract_root, "same-cycle-candidate")
 same_cycle_entries <- wsl_test_cycle_entries(same_cycle_candidate, cycle_c, config, contour, stats)

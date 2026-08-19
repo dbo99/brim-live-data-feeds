@@ -27,7 +27,7 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-hrrr-wind-latest.yml` | Build HRRR wind latest | Manual; hourly :33 | `scripts/build_hrrr_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
-| `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; approved +138m primary and +190m fallback for 00/06/12/18Z; first publication separately gated | `scripts/build_nbm_qpf_candidate.R` | Unseeded complete-cycle artifact; separate bounded `main` publisher |
+| `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; +138m primary and +190m fallback for 00/06/12/18Z | `scripts/build_nbm_qpf_candidate.R` | Seeded complete-cycle paired image/numeric artifact; separate bounded `main` publisher |
 | `.github/workflows/build-scan-soil-moisture-latest.yml` | Build SCAN soil moisture latest feed | Manual; daily 14:30 | `scripts/build_scan_soil_moisture_latest.R` | Latest/trace/style |
 | `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
@@ -81,10 +81,11 @@ workflow but is not source-controlled in `.github/workflows`.
   run the shared-logic, inventory-only cycle preflight; only `NEW_CYCLE` reaches
   the full producer. Manual `publish: false` remains available for diagnostic
   current-cycle rebuilds.
-- The unseeded NBM QPF workflow performs the same ten-lead inventory discovery
-  before its unchanged R producer, prepares a bounded candidate on any selected
-  ref, and permits its separate publisher job only on `main`. Its approved +138/
-  +190-minute timing does not authorize merge, dispatch, or first publication.
+- The seeded NBM QPF workflow performs exact 40-lead f006-through-f240 inventory
+  discovery before its R producer, prepares a bounded paired image/numeric
+  candidate on any selected ref, and permits its separate publisher job only
+  on `main`. Its approved +138/
+  +190-minute timing does not authorize merge, dispatch, or publication.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
@@ -311,13 +312,14 @@ directory and atomically promoted locally.
   contour, contract, and publication failures. It does not publish a partial
   target set. Bootstrap requires one complete current cycle with an active
   target. Every genuinely newer mature candidate strictly validates and retains
-  the prior root cycle, producing exactly two complete cycles and 22 targets;
+  the prior root cycle, producing exactly two complete 41-target cycles;
   failed retention rejects the candidate. Old accepted values age through
   explicit delayed, stale-LKG, and expired states without restamping.
 - NBM QPF rejects every partial or mixed-cycle candidate. Its public adapter
-  validates one explicit bootstrap cycle or exactly two steady cycles, ten
-  targets per cycle, locked six-hour timing/science/spatial/palette identity,
-  WebP decode and content hashes. Fresh-main NEW advances and prunes only the old
+  validates one explicit bootstrap cycle or exactly two steady cycles, 40
+  targets per cycle, locked six-hour timing/science/spatial/palette/numeric
+  identity, paired-state binding, WebP decode, gzip numeric decode, and content hashes.
+  Fresh-main NEW advances and prunes only the old
   previous cycle; SAME and STALE do not rewrite or regress canonical state.
 
 **Gaps**
@@ -405,8 +407,7 @@ directory and atomically promoted locally.
 **Implemented**
 
 - ASOS, GFS, HRRR, NBM, and Winter Storm Levels have product manifests.
-- NBM QPF has an implemented schema-1 manifest contract and validator but no
-  tracked or hosted manifest until a separately approved first publication.
+- NBM QPF has a tracked schema-1 manifest and product-specific validator.
 - Other families have ad hoc summaries.
 
 **Gaps**
