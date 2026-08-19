@@ -1,4 +1,6 @@
+import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -7,6 +9,13 @@ REPO = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO / ".github" / "workflows"
 QPF = WORKFLOWS / "build-nbm-qpf.yml"
 HELPER_COMMAND = "sudo bash scripts/configure_apt_mirror_order.sh"
+PUBLISHER_SPEC = importlib.util.spec_from_file_location(
+    "nbm_qpf_publisher_workflow_contract", REPO / "scripts/nbm_qpf_publisher.py"
+)
+assert PUBLISHER_SPEC is not None and PUBLISHER_SPEC.loader is not None
+qpf = importlib.util.module_from_spec(PUBLISHER_SPEC)
+sys.modules[PUBLISHER_SPEC.name] = qpf
+PUBLISHER_SPEC.loader.exec_module(qpf)
 
 
 class NbmQpfWorkflowSafetyTests(unittest.TestCase):
@@ -14,6 +23,31 @@ class NbmQpfWorkflowSafetyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.text = QPF.read_text(encoding="utf-8")
         cls.prepare, cls.publish = cls.text.split("  publish-to-main:\n", 1)
+
+    @staticmethod
+    def main_publisher_product_ids(section: str, action: str) -> list[str]:
+        lines = section.splitlines()
+        marker = f"python3 scripts/main_publisher.py {action} \\"
+        starts = [index for index, line in enumerate(lines) if marker in line]
+        if len(starts) != 1:
+            return []
+        command = []
+        for line in lines[starts[0] :]:
+            command.append(line)
+            if not line.rstrip().endswith("\\"):
+                break
+        return re.findall(r"--product-id\s+([^\s\\]+)", "\n".join(command))
+
+    def test_main_publisher_product_ids_match_qpf_contract(self) -> None:
+        self.assertEqual(
+            self.main_publisher_product_ids(self.prepare, "prepare"),
+            [qpf.PRODUCT_ID],
+        )
+        self.assertEqual(
+            self.main_publisher_product_ids(self.publish, "publish"),
+            [qpf.PRODUCT_ID],
+        )
+        self.assertEqual(self.text.count("--product-id "), 2)
 
     def test_hardening_runs_once_in_prepare_before_first_setup_r(self) -> None:
         self.assertEqual(self.text.count(HELPER_COMMAND), 1)
