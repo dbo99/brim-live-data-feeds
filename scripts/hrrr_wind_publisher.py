@@ -35,6 +35,11 @@ STALE_AFTER_HOURS = 4.0
 MAX_MANIFEST_ENTRIES = 24
 MAX_FORECAST_HOUR = 18
 MAX_TARGET_DISTANCE_MINUTES = 126.0
+# Prior R outputs derived freshness from a fractional timestamp, then truncated
+# the serialized timestamp to whole seconds. Permit exactly that directional
+# legacy discrepancy, plus 2 ms for six-decimal JSON number serialization.
+LEGACY_TIMESTAMP_TRUNCATION_SECONDS = 1.0
+NUMERIC_SERIALIZATION_EPSILON_SECONDS = 0.002
 
 
 class ProductError(RuntimeError):
@@ -89,6 +94,43 @@ def _finite_number(value: object, label: str) -> float:
     if not math.isfinite(result):
         raise ProductError(f"{label} must be finite")
     return result
+
+
+def _matches_legacy_timestamp_truncation(
+    reported: float, reconstructed: float, *, seconds_per_unit: float
+) -> bool:
+    discrepancy_seconds = (reported - reconstructed) * seconds_per_unit
+    return (
+        -NUMERIC_SERIALIZATION_EPSILON_SECONDS
+        <= discrepancy_seconds
+        <= LEGACY_TIMESTAMP_TRUNCATION_SECONDS
+        + NUMERIC_SERIALIZATION_EPSILON_SECONDS
+    )
+
+
+def _validate_summary_freshness(
+    summary: Mapping[str, object], reconstructed_lag_minutes: float
+) -> None:
+    reported_lag_minutes = _finite_number(
+        summary.get("valid_lag_minutes_at_build"), "HRRR summary valid lag"
+    )
+    reported_age_hours = _finite_number(
+        summary.get("valid_time_age_hours"), "HRRR summary valid age"
+    )
+    if (
+        not _matches_legacy_timestamp_truncation(
+            reported_lag_minutes,
+            reconstructed_lag_minutes,
+            seconds_per_unit=60.0,
+        )
+        or not _matches_legacy_timestamp_truncation(
+            reported_age_hours,
+            reconstructed_lag_minutes / 60.0,
+            seconds_per_unit=3600.0,
+        )
+        or summary.get("is_stale") is not (reported_age_hours > STALE_AFTER_HOURS)
+    ):
+        raise ProductError("HRRR summary valid-time freshness is incoherent")
 
 
 def _sha256(path: Path) -> str:
@@ -337,12 +379,7 @@ def validate_product(root: Path) -> ProductState:
         if summary.get(key) != selected.entry.get(key):
             raise ProductError(f"HRRR summary {key} disagrees with selected entry")
     lag_minutes = (generated - selected.valid).total_seconds() / 60.0
-    if (
-        abs(_finite_number(summary.get("valid_lag_minutes_at_build"), "HRRR summary valid lag") - lag_minutes) > 0.01
-        or abs(_finite_number(summary.get("valid_time_age_hours"), "HRRR summary valid age") - lag_minutes / 60.0) > 0.001
-        or summary.get("is_stale") is not (lag_minutes / 60.0 > STALE_AFTER_HOURS)
-    ):
-        raise ProductError("HRRR summary valid-time freshness is incoherent")
+    _validate_summary_freshness(summary, lag_minutes)
     for key in (
         "source", "domain", "grid", "earth_relative_winds_confirmed",
         "vector_regrid_method", "speed_ms", "speed_mph",

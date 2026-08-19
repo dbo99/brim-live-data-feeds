@@ -50,6 +50,29 @@ brim_hrrr_floor_hour <- function(x) {
   as.POSIXct(format(x, "%Y-%m-%d %H:00:00", tz = "UTC"), tz = "UTC")
 }
 
+brim_hrrr_floor_second <- function(x) {
+  x <- brim_hrrr_as_utc(x)
+  brim_hrrr_as_utc(floor(as.numeric(x)))
+}
+
+brim_hrrr_summary_freshness <- function(build_time, valid_time, stale_after_hours) {
+  # JSON timestamps are serialized to whole seconds, so normalize first and
+  # derive every companion freshness field from that exact instant.
+  build_time <- brim_hrrr_floor_second(build_time)
+  valid_time <- brim_hrrr_as_utc(valid_time)
+  valid_lag_minutes <- unname(
+    as.numeric(difftime(build_time, valid_time, units = "mins"))
+  )
+  valid_time_age_hours <- valid_lag_minutes / 60
+  list(
+    build_time = build_time,
+    valid_lag_minutes_at_build = valid_lag_minutes,
+    valid_time_age_hours = valid_time_age_hours,
+    # Equality remains fresh; an entry becomes stale only after four hours.
+    is_stale = isTRUE(valid_time_age_hours > stale_after_hours)
+  )
+}
+
 brim_hrrr_fmt_iso_utc <- function(x) {
   format(brim_hrrr_as_utc(x), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
 }
@@ -811,7 +834,7 @@ run_manifest <- NULL
 qa_zip <- NULL
 
 tryCatch({
-  now_utc <- brim_hrrr_as_utc(Sys.time())
+  now_utc <- brim_hrrr_floor_second(Sys.time())
 
   # Round to the nearest model-valid hour before applying the user-facing leads.
   # The workflow runs at :33, so this normally anchors to the next whole hour.
@@ -898,9 +921,11 @@ tryCatch({
   if (!file.exists(selected_path)) stop("Selected HRRR JSON is missing: ", selected_path)
   file.copy(selected_path, brim_hrrr_files$wind_json, overwrite = TRUE)
 
-  build_time <- brim_hrrr_as_utc(Sys.time())
   valid_time <- brim_hrrr_parse_iso_utc(selected_entry$valid_time_utc)
-  valid_age_hours <- unname(as.numeric(difftime(build_time, valid_time, units = "hours")))
+  freshness <- brim_hrrr_summary_freshness(
+    Sys.time(), valid_time, brim_hrrr_stale_after_hours
+  )
+  build_time <- freshness$build_time
 
   nearest_lead_availability <- lapply(brim_hrrr_target_lead_hours, function(lead) {
     target_ms <- as.numeric(now_utc + lead * 3600)
@@ -934,10 +959,10 @@ tryCatch({
     build_time_utc = brim_hrrr_fmt_iso_utc(build_time),
     build_time_local = brim_hrrr_fmt_local(build_time, brim_hrrr_local_tz),
     local_time_zone = brim_hrrr_local_tz,
-    valid_lag_minutes_at_build = unname(as.numeric(difftime(build_time, valid_time, units = "mins"))),
-    valid_time_age_hours = valid_age_hours,
+    valid_lag_minutes_at_build = freshness$valid_lag_minutes_at_build,
+    valid_time_age_hours = freshness$valid_time_age_hours,
     stale_after_hours = brim_hrrr_stale_after_hours,
-    is_stale = isTRUE(valid_age_hours > brim_hrrr_stale_after_hours),
+    is_stale = freshness$is_stale,
     supported_browser_lead_hours = brim_hrrr_target_lead_hours,
     target_base_utc = brim_hrrr_fmt_iso_utc(target_base),
     target_build_results = nearest_lead_availability,
