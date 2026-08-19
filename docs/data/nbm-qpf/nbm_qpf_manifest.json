@@ -1,0 +1,548 @@
+{
+  "schema_version": "1.0.0",
+  "product_id": "nbm_qpf",
+  "generated_at_utc": "2026-08-19T14:45:36Z",
+  "source": {
+    "source_id": "noaa_nbm_core_conus_apcp",
+    "agency": "NOAA/NWS/NCEP/MDL",
+    "dataset": "National Blend of Models",
+    "family": "core",
+    "domain": "conus",
+    "parameter": "APCP",
+    "level": "surface",
+    "field_kind": "deterministic accumulated precipitation",
+    "native_units": "kg/m^2",
+    "normalized_units": "mm",
+    "display_units": "in"
+  },
+  "palette": {
+    "palette_id": "brim_nbm_qpf_6h_west_v1",
+    "palette_version": 1,
+    "display_units": "in",
+    "class_interval": "lower-inclusive upper-exclusive",
+    "below_0_01_in": "transparent",
+    "nodata": "transparent",
+    "overflow": ">=20 in uses the final fixed class",
+    "classes": [
+      {
+        "lower_inclusive_in": 0.01,
+        "upper_exclusive_in": 0.1,
+        "color_hex": "#D9F0D3",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 0.1,
+        "upper_exclusive_in": 0.25,
+        "color_hex": "#A6DBA0",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 0.25,
+        "upper_exclusive_in": 0.5,
+        "color_hex": "#62BD73",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 0.5,
+        "upper_exclusive_in": 1,
+        "color_hex": "#2F9E55",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 1,
+        "upper_exclusive_in": 1.5,
+        "color_hex": "#146B38",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 1.5,
+        "upper_exclusive_in": 2,
+        "color_hex": "#FFF59D",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 2,
+        "upper_exclusive_in": 2.5,
+        "color_hex": "#FFE066",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 2.5,
+        "upper_exclusive_in": 3,
+        "color_hex": "#FDBE55",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 3,
+        "upper_exclusive_in": 3.5,
+        "color_hex": "#F79441",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 3.5,
+        "upper_exclusive_in": 4,
+        "color_hex": "#F05A3C",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 4,
+        "upper_exclusive_in": 4.5,
+        "color_hex": "#D73027",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 4.5,
+        "upper_exclusive_in": 5,
+        "color_hex": "#BD1F2D",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 5,
+        "upper_exclusive_in": 5.5,
+        "color_hex": "#9E1737",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 5.5,
+        "upper_exclusive_in": 6,
+        "color_hex": "#7A123D",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 6,
+        "upper_exclusive_in": 7,
+        "color_hex": "#5B0B55",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 7,
+        "upper_exclusive_in": 8,
+        "color_hex": "#480A6A",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 8,
+        "upper_exclusive_in": 10,
+        "color_hex": "#5F0A87",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 10,
+        "upper_exclusive_in": 12,
+        "color_hex": "#7D1A9A",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 12,
+        "upper_exclusive_in": 15,
+        "color_hex": "#A542B0",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 15,
+        "upper_exclusive_in": 20,
+        "color_hex": "#CD86CF",
+        "alpha_u8": 255
+      },
+      {
+        "lower_inclusive_in": 20,
+        "upper_exclusive_in": null,
+        "color_hex": "#F1C6E7",
+        "alpha_u8": 255
+      }
+    ]
+  },
+  "spatial_representation": {
+    "contract_id": "nbm_qpf_lossless_webp_v1",
+    "media_type": "image/webp",
+    "encoding": "lossless VP8L RGBA8 WebP",
+    "crs": "EPSG:3857",
+    "bounds_wgs84": [
+      -130,
+      30,
+      -112,
+      44.5
+    ],
+    "extent_m": [
+      -14471533.8031256,
+      3503549.84350437,
+      -12467782.9688466,
+      5543147.2038618
+    ],
+    "image_width": 720,
+    "image_height": 733,
+    "pixel_size_m": [
+      2782.98726983229,
+      2782.53391590372
+    ],
+    "row_order": "north_to_south",
+    "column_order": "west_to_east",
+    "pixel_is_area": true,
+    "leaflet_bounds": [
+      [
+        30,
+        -130
+      ],
+      [
+        44.5,
+        -112
+      ]
+    ],
+    "default_leaflet_opacity": 0.55
+  },
+  "freshness": {
+    "basis": "source_cycle_age",
+    "current_through_hours": 9,
+    "delayed_through_hours": 15,
+    "stale_through_hours": 24,
+    "expired_after_hours": 24,
+    "product_status_independent_from_snow": true
+  },
+  "retention_mode": "bootstrap",
+  "current_cycle_utc": "2026-08-19T12:00:00Z",
+  "previous_cycle_utc": null,
+  "cycles": [
+    {
+      "cycle_utc": "2026-08-19T12:00:00Z",
+      "cycle_status": "complete",
+      "cycle_max_qpf_in": 0.315202803123654,
+      "legend_cap_in": 3,
+      "legend_overflow": false,
+      "target_count": 10,
+      "complete_required_leads_hours": [
+        6,
+        12,
+        18,
+        24,
+        30,
+        36,
+        42,
+        48,
+        60,
+        72
+      ],
+      "targets": [
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 6,
+          "lead_end_hours": 6,
+          "accumulation_start_utc": "2026-08-19T12:00:00Z",
+          "accumulation_end_utc": "2026-08-19T18:00:00Z",
+          "valid_time_utc": "2026-08-19T18:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "0-6 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f006_e158fcc4f25e.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 474,
+          "sha256": "e158fcc4f25eac87b239e1e34d11a0b0bbe9694a030a578903aa0e1818c82286",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 12,
+          "lead_end_hours": 12,
+          "accumulation_start_utc": "2026-08-19T18:00:00Z",
+          "accumulation_end_utc": "2026-08-20T00:00:00Z",
+          "valid_time_utc": "2026-08-20T00:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "6-12 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f012_a96f64deda11.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 568,
+          "sha256": "a96f64deda116efa5158887a6df4ce175857eb2b0498044634b9f92aa4079e11",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 18,
+          "lead_end_hours": 18,
+          "accumulation_start_utc": "2026-08-20T00:00:00Z",
+          "accumulation_end_utc": "2026-08-20T06:00:00Z",
+          "valid_time_utc": "2026-08-20T06:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "12-18 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f018_97118c3c332a.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 940,
+          "sha256": "97118c3c332ad3431e1c5f39be777b7143e482ba255e4713920edc74326d5ced",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 24,
+          "lead_end_hours": 24,
+          "accumulation_start_utc": "2026-08-20T06:00:00Z",
+          "accumulation_end_utc": "2026-08-20T12:00:00Z",
+          "valid_time_utc": "2026-08-20T12:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "18-24 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f024_2bd341cf9d2f.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 448,
+          "sha256": "2bd341cf9d2f86f41876d21d92ac6b0e0737b0b95be074664e454cde9d2bc081",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 30,
+          "lead_end_hours": 30,
+          "accumulation_start_utc": "2026-08-20T12:00:00Z",
+          "accumulation_end_utc": "2026-08-20T18:00:00Z",
+          "valid_time_utc": "2026-08-20T18:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "24-30 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f030_9346c1950f96.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 332,
+          "sha256": "9346c1950f96c23261c3ef46356765db656f2d6acf63736139879a837d3e2704",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 36,
+          "lead_end_hours": 36,
+          "accumulation_start_utc": "2026-08-20T18:00:00Z",
+          "accumulation_end_utc": "2026-08-21T00:00:00Z",
+          "valid_time_utc": "2026-08-21T00:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "30-36 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f036_62ecd1d4f908.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 826,
+          "sha256": "62ecd1d4f908787aeac42526749b3d2861ed2455b652a4cfc72a182b97fbb390",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 42,
+          "lead_end_hours": 42,
+          "accumulation_start_utc": "2026-08-21T00:00:00Z",
+          "accumulation_end_utc": "2026-08-21T06:00:00Z",
+          "valid_time_utc": "2026-08-21T06:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "36-42 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f042_5e68c723f315.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 912,
+          "sha256": "5e68c723f3151dba4dc81e882e2bc3af4056b1beb757c6c57e38f7eb41c09faa",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 48,
+          "lead_end_hours": 48,
+          "accumulation_start_utc": "2026-08-21T06:00:00Z",
+          "accumulation_end_utc": "2026-08-21T12:00:00Z",
+          "valid_time_utc": "2026-08-21T12:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "42-48 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f048_7646611987d3.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 504,
+          "sha256": "7646611987d37345533389d492e5f0c199806dc70fc25ca28a63f6e2a0600643",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 60,
+          "lead_end_hours": 60,
+          "accumulation_start_utc": "2026-08-21T18:00:00Z",
+          "accumulation_end_utc": "2026-08-22T00:00:00Z",
+          "valid_time_utc": "2026-08-22T00:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "54-60 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f060_b162f27b9406.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 1284,
+          "sha256": "b162f27b94062c60ebb1833c83f04cdbac20982ce376b9aafe5b81a46800bb60",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        },
+        {
+          "product_id": "nbm_qpf",
+          "source_id": "noaa_nbm_core_conus_apcp",
+          "cycle_utc": "2026-08-19T12:00:00Z",
+          "lead_hours": 72,
+          "lead_end_hours": 72,
+          "accumulation_start_utc": "2026-08-22T06:00:00Z",
+          "accumulation_end_utc": "2026-08-22T12:00:00Z",
+          "valid_time_utc": "2026-08-22T12:00:00Z",
+          "accumulation_hours": 6,
+          "source_parameter": "APCP",
+          "source_level": "surface",
+          "source_inventory_semantics": "66-72 hour acc fcst",
+          "native_units": "kg/m^2",
+          "normalized_units": "mm",
+          "display_units": "in",
+          "image_path": "docs/data/nbm-qpf/nbm/qpf/nbm_qpf_20260819T120000Z_f072_b2b4cd68e998.webp",
+          "image_media_type": "image/webp",
+          "image_encoding": "lossless_vp8l_rgba8",
+          "image_width": 720,
+          "image_height": 733,
+          "bounds_wgs84": [
+            -130,
+            30,
+            -112,
+            44.5
+          ],
+          "bytes": 536,
+          "sha256": "b2b4cd68e99836ddf808445f293f2dced36f882a79970e02313e3235319fd3be",
+          "palette_id": "brim_nbm_qpf_6h_west_v1",
+          "palette_version": 1
+        }
+      ]
+    }
+  ]
+}
