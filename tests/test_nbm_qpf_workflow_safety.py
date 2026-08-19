@@ -49,10 +49,10 @@ class NbmQpfWorkflowSafetyTests(unittest.TestCase):
         )
         self.assertEqual(self.text.count("--product-id "), 2)
 
-    def test_hardening_runs_once_in_prepare_before_first_setup_r(self) -> None:
-        self.assertEqual(self.text.count(HELPER_COMMAND), 1)
-        self.assertIn(HELPER_COMMAND, self.prepare)
-        self.assertNotIn(HELPER_COMMAND, self.publish)
+    def test_hardening_runs_once_per_qpf_apt_job_before_first_use(self) -> None:
+        self.assertEqual(self.text.count(HELPER_COMMAND), 2)
+        self.assertEqual(self.prepare.count(HELPER_COMMAND), 1)
+        self.assertEqual(self.publish.count(HELPER_COMMAND), 1)
         self.assertLess(
             self.prepare.index(HELPER_COMMAND),
             self.prepare.index("r-lib/actions/setup-r@v2"),
@@ -61,14 +61,14 @@ class NbmQpfWorkflowSafetyTests(unittest.TestCase):
             self.prepare.index(HELPER_COMMAND),
             self.prepare.index("actions/checkout@v6"),
         )
-
-    def test_no_other_workflow_uses_the_qpf_canary_helper(self) -> None:
-        users = {
-            path.name
-            for path in WORKFLOWS.glob("*.yml")
-            if HELPER_COMMAND in path.read_text(encoding="utf-8")
-        }
-        self.assertEqual(users, {QPF.name})
+        self.assertLess(
+            self.publish.index(HELPER_COMMAND),
+            self.publish.index("sudo apt-get update"),
+        )
+        self.assertGreater(
+            self.publish.index(HELPER_COMMAND),
+            self.publish.index("actions/checkout@v6"),
+        )
 
     def test_schedules_and_whole_workflow_lock_are_unchanged(self) -> None:
         self.assertIn('- cron: "18 2,8,14,20 * * *"', self.text)

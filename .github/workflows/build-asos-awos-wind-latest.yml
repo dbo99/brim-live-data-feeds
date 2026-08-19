@@ -109,6 +109,11 @@ jobs:
                   fh.write(f"age_minutes={age_minutes:.1f}\n")
           PY
 
+      - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
+        if: steps.freshness.outputs.should_run == 'true'
+        shell: bash
+        run: sudo bash scripts/configure_apt_mirror_order.sh
+
       - name: Set up R
         if: steps.freshness.outputs.should_run == 'true'
         uses: r-lib/actions/setup-r@v2

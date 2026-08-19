@@ -212,6 +212,10 @@ jobs:
           ref: ${{ needs.prepare-candidate.outputs.source-sha }}
           fetch-depth: 0
 
+      - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
+        shell: bash
+        run: sudo bash scripts/configure_apt_mirror_order.sh
+
       - name: Install WebP validation tools
         shell: bash
         run: |
