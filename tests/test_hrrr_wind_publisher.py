@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -239,10 +240,186 @@ class HrrrWindPublisherTests(unittest.TestCase):
     def valid_offsets(self, root: Path) -> list[int]:
         return [int((entry.valid - self.base).total_seconds() / 3600) for entry in self.state(root).entries]
 
+    @staticmethod
+    def set_summary_freshness_discrepancy(root: Path, discrepancy_seconds: float) -> None:
+        manifest = json.loads((root / hrrr.MANIFEST_PATH).read_text(encoding="utf-8"))
+        summary_path = root / hrrr.SUMMARY_PATH
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        generated = datetime.fromisoformat(manifest["generated_utc"][:-1] + "+00:00")
+        valid = datetime.fromisoformat(summary["valid_time_utc"][:-1] + "+00:00")
+        reconstructed_lag_minutes = (generated - valid).total_seconds() / 60.0
+        summary["valid_lag_minutes_at_build"] = reconstructed_lag_minutes + discrepancy_seconds / 60.0
+        summary["valid_time_age_hours"] = reconstructed_lag_minutes / 60.0 + discrepancy_seconds / 3600.0
+        summary["is_stale"] = summary["valid_time_age_hours"] > hrrr.STALE_AFTER_HOURS
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
     def test_valid_product_and_semantic_key(self):
         self.write_product(self.candidate, self.generated, [self.spec(0, -1), self.spec(6, 0, requested_lead=6), self.spec(12, 0, requested_lead=12)])
         self.assertEqual(len(self.state(self.candidate).entries), 3)
         self.assertEqual(len(hrrr.semantic_key(self.candidate)), 64)
+
+    def test_production_legacy_subsecond_discrepancies_validate(self):
+        production_cases = {
+            "canonical_run_564": 0.905900,
+            "prepare_run_566": 0.695400,
+            "prepare_run_567": 0.693680,
+            "prepare_run_568": 0.800900,
+            "prepare_run_569": 0.996200,
+        }
+        for label, discrepancy_seconds in production_cases.items():
+            with self.subTest(label=label, discrepancy_seconds=discrepancy_seconds):
+                generated = self.generated + timedelta(seconds=discrepancy_seconds)
+                self.write_product(self.candidate, generated, [self.spec(0, -1)])
+                self.assertEqual(len(self.state(self.candidate).entries), 1)
+
+    def test_legacy_timestamp_truncation_boundary_is_one_second(self):
+        for discrepancy_seconds in (0.0, 0.999999, 1.0):
+            with self.subTest(discrepancy_seconds=discrepancy_seconds):
+                self.write_product(self.candidate, self.generated, [self.spec(0, -1)])
+                self.set_summary_freshness_discrepancy(
+                    self.candidate, discrepancy_seconds
+                )
+                self.assertEqual(len(self.state(self.candidate).entries), 1)
+
+        self.write_product(self.candidate, self.generated, [self.spec(0, -1)])
+        self.set_summary_freshness_discrepancy(self.candidate, 1.01)
+        with self.assertRaisesRegex(
+            hrrr.ProductError, "valid-time freshness is incoherent"
+        ):
+            self.state(self.candidate)
+
+    def test_legacy_timestamp_truncation_allowance_is_directional(self):
+        self.write_product(self.candidate, self.generated, [self.spec(0, -1)])
+        self.set_summary_freshness_discrepancy(self.candidate, -0.01)
+        with self.assertRaisesRegex(
+            hrrr.ProductError, "valid-time freshness is incoherent"
+        ):
+            self.state(self.candidate)
+
+    def test_four_hour_staleness_boundary_uses_strictly_greater_than(self):
+        for age_hours, expected_stale in (
+            (hrrr.STALE_AFTER_HOURS - 1 / 3600, False),
+            (hrrr.STALE_AFTER_HOURS, False),
+            (hrrr.STALE_AFTER_HOURS + 1 / 3600, True),
+        ):
+            with self.subTest(age_hours=age_hours):
+                summary = {
+                    "valid_lag_minutes_at_build": age_hours * 60,
+                    "valid_time_age_hours": age_hours,
+                    "is_stale": expected_stale,
+                }
+                hrrr._validate_summary_freshness(summary, age_hours * 60)
+
+        exactly_four_hours_but_stale = {
+            "valid_lag_minutes_at_build": hrrr.STALE_AFTER_HOURS * 60,
+            "valid_time_age_hours": hrrr.STALE_AFTER_HOURS,
+            "is_stale": True,
+        }
+        with self.assertRaisesRegex(
+            hrrr.ProductError, "valid-time freshness is incoherent"
+        ):
+            hrrr._validate_summary_freshness(
+                exactly_four_hours_but_stale, hrrr.STALE_AFTER_HOURS * 60
+            )
+
+    @unittest.skipUnless(shutil.which("Rscript"), "Rscript is required")
+    def test_r_producer_normalizes_before_deriving_freshness(self):
+        producer = Path(__file__).resolve().parents[1] / "scripts/build_hrrr_wind_latest.R"
+        producer_text = producer.read_text(encoding="utf-8")
+        for required_use in (
+            "now_utc <- brim_hrrr_floor_second(Sys.time())",
+            "freshness <- brim_hrrr_summary_freshness(",
+            "build_time <- freshness$build_time",
+            "build_time_utc = brim_hrrr_fmt_iso_utc(build_time)",
+            "generated_utc = brim_hrrr_fmt_iso_utc(build_time)",
+            "valid_lag_minutes_at_build = freshness$valid_lag_minutes_at_build",
+            "valid_time_age_hours = freshness$valid_time_age_hours",
+            "is_stale = freshness$is_stale",
+        ):
+            self.assertIn(required_use, producer_text)
+        program = r'''
+expressions <- parse(file = Sys.getenv("BRIM_HRRR_PRODUCER_PATH"))
+wanted <- c(
+  "brim_hrrr_as_utc",
+  "brim_hrrr_floor_second",
+  "brim_hrrr_summary_freshness",
+  "brim_hrrr_fmt_iso_utc"
+)
+test_env <- new.env(parent = baseenv())
+for (expr in expressions) {
+  if (
+    is.call(expr) && identical(expr[[1L]], as.name("<-")) &&
+    is.symbol(expr[[2L]]) && as.character(expr[[2L]]) %in% wanted
+  ) {
+    eval(expr, envir = test_env)
+  }
+}
+stopifnot(all(vapply(wanted, exists, logical(1), envir = test_env)))
+valid_time <- as.POSIXct("2026-08-18 00:00:00", tz = "UTC")
+below <- test_env$brim_hrrr_summary_freshness(
+  as.POSIXct("2026-08-18 03:59:59.999", tz = "UTC"), valid_time, 4
+)
+exact <- test_env$brim_hrrr_summary_freshness(
+  as.POSIXct("2026-08-18 04:00:00.9059", tz = "UTC"), valid_time, 4
+)
+above <- test_env$brim_hrrr_summary_freshness(
+  as.POSIXct("2026-08-18 04:00:01.001", tz = "UTC"), valid_time, 4
+)
+stopifnot(
+  test_env$brim_hrrr_fmt_iso_utc(exact$build_time) == "2026-08-18T04:00:00Z",
+  identical(exact$valid_lag_minutes_at_build, 240),
+  identical(exact$valid_time_age_hours, 4),
+  identical(below$is_stale, FALSE),
+  identical(exact$is_stale, FALSE),
+  identical(above$is_stale, TRUE),
+  identical(above$valid_lag_minutes_at_build, 240 + 1 / 60)
+)
+cat("HRRR_R_TIMESTAMP_PRECISION_OK\n")
+'''
+        environment = os.environ.copy()
+        environment["BRIM_HRRR_PRODUCER_PATH"] = str(producer)
+        result = subprocess.run(
+            [shutil.which("Rscript"), "-"],
+            input=program,
+            text=True,
+            capture_output=True,
+            env=environment,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"R producer precision test failed:\n{result.stdout}\n{result.stderr}",
+        )
+        self.assertIn("HRRR_R_TIMESTAMP_PRECISION_OK", result.stdout)
+
+    def test_candidate_reconciles_against_run_564_legacy_precision(self):
+        legacy_generated = self.generated + timedelta(seconds=0.905900)
+        self.write_product(
+            self.canonical,
+            legacy_generated,
+            [
+                self.spec(0, -1),
+                self.spec(6, 0, requested_lead=6),
+                self.spec(12, 0, requested_lead=12),
+            ],
+        )
+        self.assertEqual(len(self.state(self.canonical).entries), 3)
+        self.write_product(
+            self.candidate,
+            self.generated + timedelta(hours=1),
+            [
+                self.spec(1, 0, 2.0),
+                self.spec(7, 1, 2.0, requested_lead=6),
+                self.spec(13, 1, 2.0, requested_lead=12),
+            ],
+        )
+        self.assertEqual(hrrr.reconcile(self.candidate, self.canonical)[0], "new")
+        self.assertEqual(
+            self.state(self.canonical).generated,
+            self.state(self.candidate).generated,
+        )
 
     def test_one_hour_window_movement_prunes_expired_and_adds_new(self):
         self.write_product(self.canonical, self.generated, [self.spec(i, i - 1) for i in range(-3, 15)])
