@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static mixed-state lock and migrated-writer workflow safety checks."""
+"""Authoritative main-writer publication-concurrency safety checks."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ HRRR = WORKFLOWS / "build-hrrr-wind-latest.yml"
 NBM_WIND = WORKFLOWS / "build-nbm-wind-guidance-latest.yml"
 NBM_QPF = WORKFLOWS / "build-nbm-qpf.yml"
 WINTER_STORM = WORKFLOWS / "build-winter-storm-levels.yml"
-WRITERS = (
+MAIN_WRITERS = (
     "build-asos-awos-wind-latest.yml",
     "build-cbrfc-major-water-supply-forecasts.yml",
     "build-cocorahs-daily-precip-feed.yml",
@@ -42,23 +42,7 @@ WRITERS = (
     "build-usgs-streamflow-latest-ca.yml",
     "build-winter-storm-levels.yml",
 )
-MIGRATED = (
-    CDEC,
-    DELTA_OPS,
-    SCAN,
-    COCORAHS,
-    STREAMFLOW,
-    GROUNDWATER,
-    ASOS_AWOS,
-    SNOW_PILLOW,
-    CNRFC,
-    CBRFC,
-    GFS,
-    HRRR,
-    NBM_WIND,
-    NBM_QPF,
-    WINTER_STORM,
-)
+MAIN_WRITER_PATHS = tuple(WORKFLOWS / filename for filename in MAIN_WRITERS)
 PRODUCT_PATHS = {
     CDEC: {
         "docs/data/cdec_reservoir_latest.geojson",
@@ -129,47 +113,70 @@ def job_level_env_blocks(text: str) -> list[str]:
 
 class MainPublisherWorkflowSafetyTests(unittest.TestCase):
     def test_main_writer_inventory_is_complete(self) -> None:
-        discovered = {
-            path.name
-            for path in WORKFLOWS.glob("*.yml")
-            if "  schedule:\n" in path.read_text(encoding="utf-8")
-            and "contents: write" in path.read_text(encoding="utf-8")
-        }
-        self.assertEqual(discovered, set(WRITERS))
+        discovered = set()
+        for path in WORKFLOWS.glob("*.yml"):
+            text = path.read_text(encoding="utf-8")
+            if "  schedule:\n" in text and (
+                "contents: write" in text
+                or "scripts/main_publisher.py publish" in text
+                or re.search(r"(?m)^\s+git push\b", text)
+            ):
+                discovered.add(path.name)
+        self.assertEqual(len(MAIN_WRITERS), 15)
+        self.assertEqual(discovered, set(MAIN_WRITERS))
 
-    def test_all_fifteen_writers_retain_the_old_whole_workflow_lock(self) -> None:
-        self.assertEqual(len(WRITERS), 15)
-        for filename in WRITERS:
-            text = (WORKFLOWS / filename).read_text(encoding="utf-8")
-            self.assertIn("group: live-data-feed-writes-${{ github.ref }}", text, filename)
-            self.assertRegex(text, r"(?m)^  cancel-in-progress: false$", filename)
-            self.assertRegex(text, r"(?m)^  queue: max$", filename)
-
-    def test_only_migrated_writers_use_the_new_main_publication_lock(self) -> None:
-        self.assertEqual(len(MIGRATED), 15)
-        for filename in WRITERS:
-            text = (WORKFLOWS / filename).read_text(encoding="utf-8")
-            expected = 1 if WORKFLOWS / filename in MIGRATED else 0
-            self.assertEqual(text.count("group: brim-live-main-publish"), expected, filename)
-        for workflow in MIGRATED:
+    def test_all_main_writers_serialize_only_publish_to_main(self) -> None:
+        for workflow in MAIN_WRITER_PATHS:
             text = workflow.read_text(encoding="utf-8")
-            publish_job = text.split("  publish-to-main:\n", 1)[1]
-            self.assertIn("    concurrency:\n      group: brim-live-main-publish", publish_job)
-            self.assertIn("      cancel-in-progress: false", publish_job)
-            self.assertIn("      queue: max", publish_job)
+            self.assertNotIn("live-data-feed-writes-", text, workflow.name)
+            self.assertNotRegex(text, r"(?m)^concurrency:\s*$", workflow.name)
+            self.assertEqual(text.count("\n  publish-to-main:\n"), 1, workflow.name)
+            self.assertEqual(text.count("group: brim-live-main-publish"), 1, workflow.name)
+            self.assertEqual(text.count("cancel-in-progress: false"), 1, workflow.name)
+            self.assertEqual(text.count("queue: max"), 1, workflow.name)
 
-    def test_migrated_writers_have_read_only_prepare_and_main_only_publish(self) -> None:
-        for workflow in MIGRATED:
-            text = workflow.read_text(encoding="utf-8")
             prepare, publish = text.split("  publish-to-main:\n", 1)
+            publish_header = publish.split("    steps:\n", 1)[0]
+            self.assertIn(
+                "    concurrency:\n"
+                "      group: brim-live-main-publish\n"
+                "      cancel-in-progress: false\n"
+                "      queue: max",
+                publish_header,
+                workflow.name,
+            )
             self.assertIn("  prepare-candidate:\n", prepare, workflow.name)
             self.assertIn("      contents: read", prepare, workflow.name)
             self.assertNotIn("contents: write", prepare, workflow.name)
+            self.assertNotIn("scripts/main_publisher.py publish", prepare, workflow.name)
+            self.assertNotRegex(
+                prepare,
+                r"(?m)^\s+git (?:add|commit|push|merge|rebase)\b",
+                workflow.name,
+            )
             self.assertIn("github.ref == 'refs/heads/main'", publish, workflow.name)
-            self.assertIn("      contents: write", publish, workflow.name)
+            self.assertEqual(text.count("contents: write"), 1, workflow.name)
+            self.assertIn("      contents: write", publish_header, workflow.name)
+            self.assertEqual(
+                prepare.count("scripts/main_publisher.py prepare"), 1, workflow.name
+            )
+            self.assertEqual(
+                publish.count("scripts/main_publisher.py publish"), 1, workflow.name
+            )
             self.assertIn("actions/upload-artifact@v7", prepare, workflow.name)
             self.assertIn("actions/download-artifact@v8", publish, workflow.name)
-            self.assertNotRegex(text, r"(?m)^\s+git (add|commit|push)\b", workflow.name)
+            callbacks = []
+            for option in (
+                "candidate-validator",
+                "reconcile-callback",
+                "staged-validator",
+            ):
+                matches = re.findall(
+                    rf"--{option}\s+(scripts/[A-Za-z0-9_./-]+\.py)", publish
+                )
+                self.assertEqual(len(matches), 1, f"{workflow.name}:{option}")
+                callbacks.extend(matches)
+            self.assertEqual(len(set(callbacks)), 1, workflow.name)
 
         cdec_text = CDEC.read_text(encoding="utf-8")
         self.assertIn('source("scripts/build_cdec_reservoir_latest.R")', cdec_text)
@@ -238,7 +245,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("SNOW_PILLOW_BUILD_ROOT:", snow_pillow)
 
     def test_migrated_workflows_resolve_runner_temp_only_after_allocation(self) -> None:
-        for workflow in MIGRATED:
+        for workflow in MAIN_WRITER_PATHS:
             text = workflow.read_text(encoding="utf-8")
             for block in job_level_env_blocks(text):
                 self.assertNotRegex(block, r"\$\{\{\s*runner\.", workflow.name)

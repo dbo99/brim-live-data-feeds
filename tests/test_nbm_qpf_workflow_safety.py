@@ -70,13 +70,12 @@ class NbmQpfWorkflowSafetyTests(unittest.TestCase):
             self.publish.index("actions/checkout@v6"),
         )
 
-    def test_schedules_and_whole_workflow_lock_are_unchanged(self) -> None:
+    def test_schedules_are_unchanged_and_prepare_is_not_serialized(self) -> None:
         self.assertIn('- cron: "18 2,8,14,20 * * *"', self.text)
         self.assertIn('- cron: "10 3,9,15,21 * * *"', self.text)
         self.assertEqual(self.text.count("- cron:"), 2)
-        self.assertIn("group: live-data-feed-writes-${{ github.ref }}", self.text)
-        self.assertRegex(self.text, r"(?m)^  cancel-in-progress: false$")
-        self.assertRegex(self.text, r"(?m)^  queue: max$")
+        self.assertNotIn("live-data-feed-writes-", self.text)
+        self.assertNotRegex(self.text, r"(?m)^concurrency:\s*$")
 
     def test_prepare_and_publisher_timeouts_are_unchanged(self) -> None:
         prepare_header = self.prepare.split("    steps:\n", 1)[0]

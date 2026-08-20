@@ -10,15 +10,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  # Retain the established whole-workflow writer lock during the migration.
-  group: live-data-feed-writes-${{ github.ref }}
-  cancel-in-progress: false
-
-  # Keep queued live-feed writers instead of allowing a newer queued writer to
-  # replace an older pending one in this shared concurrency group.
-  queue: max
-
 jobs:
   prepare-candidate:
     runs-on: ubuntu-latest

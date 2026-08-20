@@ -89,26 +89,12 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertLess(build_index, publish_index)
         self.assertIn("if: ${{ needs.prepare-candidate.outputs.publish == 'true'", self.text)
 
-    def test_writer_concurrency_queues_instead_of_cancelling(self) -> None:
-        match = re.search(
-            r"(?ms)^concurrency:\n(?P<body>(?:^  [^\n]+\n)+)", self.text
-        )
-        self.assertIsNotNone(match)
-        assert match is not None
-        concurrency = dict(
-            re.findall(r"^  ([a-z-]+):\s*(\S.*?)\s*$", match.group("body"), re.MULTILINE)
-        )
-        self.assertEqual(
-            set(concurrency), {"group", "queue", "cancel-in-progress"}
-        )
-        self.assertEqual(
-            concurrency.get("group"), "live-data-feed-writes-${{ github.ref }}"
-        )
-        self.assertEqual(concurrency.get("queue"), "max")
-        self.assertEqual(concurrency.get("cancel-in-progress"), "false")
-        self.assertIn("group: live-data-feed-writes-${{ github.ref }}", self.text)
-        self.assertIn("queue: max", self.text)
-        self.assertIn("cancel-in-progress: false", self.text)
+    def test_prepare_may_run_concurrently_and_publish_queues(self) -> None:
+        self.assertNotIn("live-data-feed-writes-", self.text)
+        self.assertNotRegex(self.text, r"(?m)^concurrency:\s*$")
+        self.assertEqual(self.text.count("group: brim-live-main-publish"), 1)
+        self.assertEqual(self.text.count("queue: max"), 1)
+        self.assertEqual(self.text.count("cancel-in-progress: false"), 1)
 
     def test_payload_promotion_is_a_single_validated_rename(self) -> None:
         helper = STATE_HELPER.read_text()

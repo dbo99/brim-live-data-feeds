@@ -112,19 +112,12 @@ workflow but is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Two direct writers request `contents: write`. Thirteen migrated workflows use
-  `contents: read` for preparation and `contents: write` only in their
-  `publish-to-main` job.
+- All fifteen production writers use `contents: read` for preparation and
+  `contents: write` only in their `publish-to-main` job.
 - Wind watchdog requests `contents: read` to inspect wind manifests/state and
   `actions: write` to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the
   selected ref; it does not itself commit or publish repository data.
 - Sandbox and preview request `contents: read`.
-
-**Gap**
-
-The two remaining direct writers share build and publication under a write-
-capable token; migrated workflows have separate least-privilege build and
-publisher jobs.
 
 **Recommended**
 
@@ -138,23 +131,22 @@ publisher jobs.
 
 **Implemented**
 
-- Writers use `live-data-feed-writes-${{ github.ref }}`,
-  `cancel-in-progress: false`, and `queue: max`.
-- Migrated publisher jobs additionally use `brim-live-main-publish`, reconcile
-  against fresh `origin/main`, and push normally only to `main`.
-- Direct writers check out the selected ref and push non-force under their
-  product-specific branch rules. Unexpected branch advancement fails the run.
+- Production writers have no top-level concurrency block, so their isolated,
+  read-only candidate preparation jobs may run concurrently.
+- Every `publish-to-main` job uses `brim-live-main-publish` with
+  `cancel-in-progress: false` and `queue: max`, reconciles against fresh
+  `origin/main`, and pushes normally only to `main`.
+- Candidate artifacts and integrity metadata remain run-local until the
+  serialized publisher downloads them. Unexpected branch advancement receives
+  at most the shared publisher's one bounded fresh-main reconciliation retry.
 
 **Recommended**
 
-- Preserve one serialization group for writers that share a branch.
+- Preserve the one job-scoped publication group for writers that share `main`.
 - Include the ref in any new nonproduction group.
 - Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
   feature-to-main publication.
 - Re-evaluate queue behavior when schedules or runtime increase materially.
-- Winter Storm Levels and NBM wind guidance remain direct writers
-  inside the existing whole-workflow queue. Their migration and later removal
-  of the compatibility lock require separate review.
 
 ## Runner and action versions
 
