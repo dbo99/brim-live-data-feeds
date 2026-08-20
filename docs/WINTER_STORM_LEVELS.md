@@ -304,7 +304,8 @@ attempts run at 02:08/08:08/14:08/20:08 UTC (+128 minutes after the correspondin
 minutes). The fallback normally exits as `NO_NEW_CYCLE` after primary success.
 An incomplete newer nominal cycle exits successfully as `SOURCE_NOT_READY`,
 while unexpected inventory/source errors remain visible failures. Neither case
-starts the full producer or alters canonical LKG. The current implementation
-retains repository-wide whole-workflow writer serialization; parallel build and
-job-level publication locking remain a separate required optimization before
-NBM QPF. Merge and any official rollback remain maintainer decisions.
+starts the full producer or alters canonical LKG. The read-only, run-local
+candidate preparation may overlap other writers. Only `publish-to-main` is
+serialized through `brim-live-main-publish`; it reconciles the validated
+candidate against fresh `main`. Merge and any official rollback remain
+maintainer decisions.

@@ -15,11 +15,10 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 
 The official product has two stages:
 
-1. A scheduled writer retrieves, transforms and validates data. Thirteen writers,
-   including the seeded NBM QPF integration, prepare validated candidate
-   artifacts and delegate bounded fresh-main reconciliation to a separate
-   `main`-authorized publisher job. Two writers—NBM wind guidance and Winter
-   Storm Levels—still stage and push their own declared paths.
+1. Each of the fifteen scheduled writers retrieves, transforms and validates
+   data in a read-only `prepare-candidate` job, then delegates a validated,
+   run-local candidate artifact to a separate `main`-authorized
+   `publish-to-main` job for bounded fresh-main reconciliation.
 2. GitHub Pages separately deploys `main:/docs`.
 
 The public URL is `https://dbo99.github.io/brim-live-data-feeds/`.
@@ -33,19 +32,13 @@ newer product than the hosted site.
 All fifteen scheduled production writers currently:
 
 - support schedules and manual dispatch;
-- use the shared concurrency group
-  `live-data-feed-writes-${{ github.ref }}`;
-- set `cancel-in-progress: false` and `queue: max`;
+- allow their isolated `prepare-candidate` jobs to run concurrently;
+- grant preparation only `contents: read` and publication `contents: write`;
+- serialize only `publish-to-main` through `brim-live-main-publish`, with
+  `cancel-in-progress: false` and `queue: max`;
 - follow their documented checkout/ref contract with full history;
 - preserve product-specific validation and last-known-good behavior.
 
-The two direct writers still request `contents: write`, reject
-non-branch publication refs, stage their declared product paths, commit only
-when those paths changed, push non-force to `HEAD:${GITHUB_REF}`, and fail if
-the branch advanced unexpectedly.
-
-The thirteen migrated workflows have a read-only `prepare-candidate` job and a
-write-capable `publish-to-main` job separated by a short-lived Actions artifact.
 The shared schema-2 publisher validates inventory and hashes, enters
 `brim-live-main-publish`, fetches current `origin/main`, runs the product callback,
 stages only statically declared fixed paths and owned roots, and validates the
@@ -76,9 +69,8 @@ Consequences:
 
 - Scheduled events run from the default branch and can update official
   `main`.
-- Manual dispatch can target a feature branch. The two direct writers retain
-  their documented branch behavior; migrated writers produce only validated
-  candidate artifacts on a feature branch.
+- Manual dispatch can target a feature branch, where writers produce only
+  validated candidate artifacts.
 - A feature-branch run cannot update `main` through the writer's push command.
 - GitHub Pages publishes only `main:/docs`, so feature-branch products are not
   official hosted products.
@@ -92,24 +84,21 @@ remaining repository-level controls.
 
 ## Concurrency, cancellation and queueing
 
-All production writers retain one whole-workflow group per ref. On `main`, that
-continues to serialize the thirteen migrated workflows with the two direct
-writers during the mixed migration state.
+Production writers have no top-level workflow concurrency group. Their
+read-only preparation jobs may overlap because each candidate and its integrity
+metadata remain isolated to one workflow run and cross the job boundary only as
+a short-lived artifact.
 
-`queue: max` allows multiple pending runs instead of replacing the existing
-pending run. Ordering should not be treated as a data guarantee. Every queued
-writer re-resolves the selected branch when the job begins.
+Every `publish-to-main` job uses the constant repository-wide group
+`brim-live-main-publish` with `cancel-in-progress: false` and `queue: max`.
+Only publication is serialized. After entering that group, each publisher
+fetches fresh `origin/main`, reconciles its own candidate against that state,
+stages only its declared product paths, and pushes normally to `main`.
 
-Every migrated `publish-to-main` job additionally uses the constant repository-
-wide group `brim-live-main-publish` with `cancel-in-progress: false` and
-`queue: max`. The new lock applies only to that publisher job. Retaining the old
-whole-workflow lock prevents a migrated publisher from colliding with a direct
-writer; parallel builds remain deferred while the mixed state exists.
-
-Winter Storm Levels and NBM wind guidance continue to hold only the established
-whole-workflow lock. Only after those remaining product-specific
-migrations are complete may the old whole-workflow lock be removed in a separate
-reviewed change.
+`queue: max` retains multiple pending publication jobs instead of replacing an
+existing pending publisher. Ordering should not be treated as a data guarantee;
+fresh-main reconciliation is required for each publisher in the order it
+actually enters the group.
 
 The HRRR sandbox and wind watchdog use separate groups and
 `cancel-in-progress: true`; they are safe to supersede because they do not

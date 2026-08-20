@@ -62,11 +62,6 @@ EXPECTED_APT_JOBS = {
     ("preview-usgs-groundwater-candidates.yml", "preview-candidates"),
 }
 
-WRITER_CONCURRENCY = {
-    "group": "live-data-feed-writes-${{ github.ref }}",
-    "cancel-in-progress": "false",
-    "queue": "max",
-}
 PUBLISH_CONCURRENCY = {
     "group": "brim-live-main-publish",
     "cancel-in-progress": "false",
@@ -280,7 +275,7 @@ class AptWorkflowHardeningTests(unittest.TestCase):
                 if not has_exposure or not job.is_supported_ubuntu:
                     self.assertEqual(helpers, [], identity)
 
-    def test_schedules_permissions_and_concurrency_retain_baseline(self) -> None:
+    def test_schedules_permissions_and_job_controls_retain_baseline(self) -> None:
         for path in self.paths:
             text = path.read_text(encoding="utf-8")
             self.assertEqual(
@@ -297,9 +292,7 @@ class AptWorkflowHardeningTests(unittest.TestCase):
             lines = path.read_text(encoding="utf-8").splitlines()
             jobs = self.jobs[workflow]
             self.assertEqual(mapping(lines, 0, "permissions"), {}, workflow)
-            self.assertEqual(
-                mapping(lines, 0, "concurrency"), WRITER_CONCURRENCY, workflow
-            )
+            self.assertIsNone(mapping(lines, 0, "concurrency"), workflow)
             self.assertEqual(
                 set(jobs), {"prepare-candidate", "publish-to-main"}, workflow
             )

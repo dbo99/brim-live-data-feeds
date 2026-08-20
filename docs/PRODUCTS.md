@@ -672,9 +672,10 @@ ownership.
 - **Manual execution:** `workflow_dispatch` defaults to a runner-temporary dry
   run. A feature-branch dispatch cannot publish. An explicit publish input is
   honored only on `main`; scheduled publication also runs only from the selected
-  `main` branch tip. Shared writer concurrency, exact-path staging, normal
-  non-force push and branch-advance rejection remain in force. An official
-  manual dispatch still requires maintainer approval under the operations runbook.
+  `main` branch tip. Read-only preparation may overlap other writers; only the
+  shared `brim-live-main-publish` job is serialized. Exact-path staging, normal
+  non-force push and branch-advance rejection remain in force. An official manual
+  dispatch still requires maintainer approval under the operations runbook.
 - **Fixtures:** Focused excerpts and fuller sanitized representative pages under
   `tests/fixtures/cnrfc_forecasts/` cover product-9 basin/index, product-2 normal
   and explicit unavailability, product-7 basin/index and explicit unavailability,
@@ -865,8 +866,10 @@ ownership.
   daily runs and from the existing minute marks in this repository. Manual runs
   default to temporary dry run; feature branches cannot publish; scheduled or
   explicitly requested publication is restricted to selected `main` tip. The
-  workflow uses shared non-cancelling writer concurrency, exact-path staging,
-  normal non-force push and branch-advance rejection.
+  workflow prepares its run-local candidate under read-only permissions and may
+  overlap other preparation jobs. Its `publish-to-main` job uses the shared
+  non-cancelling `brim-live-main-publish` group, exact-path staging, normal
+  non-force push and branch-advance rejection.
 - **Comparison and display semantics:** The CBRFC April-July record and CNRFC product 7 both
   provide direct seasonal 50%-exceedance volumes in kaf. The independent CBRFC
   water-year record is a directly published full-forecast volume, not a renamed
@@ -982,9 +985,9 @@ ownership.
   without geospatial setup or a build when the newest nominal cycle is already
   canonical or a newer cycle is not complete. Unexpected inventory/source
   errors fail visibly; all guarded no-build outcomes leave the canonical LKG
-  unchanged. The workflow remains in the repository-wide whole-workflow writer
-  queue; parallel-build/job-level publication locking is a separate required
-  optimization before NBM QPF.
+  unchanged. Its read-only, run-local candidate preparation may overlap other
+  writers; only `publish-to-main` is serialized through the shared
+  `brim-live-main-publish` group and reconciles against fresh `main`.
 - **Browser QA:** [`qa/winter_storm_levels/index.html`](../qa/winter_storm_levels/index.html)
   is a standalone nonproduction renderer with source/cycle/valid-time selection,
   stale/error display, labeling, optional comparison/overlay loading, and render

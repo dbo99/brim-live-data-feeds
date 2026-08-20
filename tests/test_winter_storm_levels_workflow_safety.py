@@ -75,16 +75,14 @@ class WinterStormLevelsWorkflowSafetyTests(unittest.TestCase):
             self.text,
         )
 
-    def test_shared_writer_concurrency_queues(self) -> None:
-        self.assertIn("group: live-data-feed-writes-${{ github.ref }}", self.text)
+    def test_prepare_may_run_concurrently_and_publish_queues(self) -> None:
+        self.assertNotIn("live-data-feed-writes-", self.text)
+        self.assertNotRegex(self.text, r"(?m)^concurrency:\s*$")
         self.assertIn("group: brim-live-main-publish", self.text)
-        self.assertEqual(self.text.count("cancel-in-progress: false"), 2)
-        self.assertEqual(self.text.count("queue: max"), 2)
+        self.assertEqual(self.text.count("cancel-in-progress: false"), 1)
+        self.assertEqual(self.text.count("queue: max"), 1)
         groups = re.findall(r"(?m)^\s+group:\s*(.+)$", self.text)
-        self.assertEqual(
-            groups,
-            ["live-data-feed-writes-${{ github.ref }}", "brim-live-main-publish"],
-        )
+        self.assertEqual(groups, ["brim-live-main-publish"])
 
     def test_prepare_is_read_only_and_publish_is_the_only_write_job(self) -> None:
         prepare, publish = self.text.split("  publish-to-main:\n", 1)

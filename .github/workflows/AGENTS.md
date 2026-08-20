@@ -35,24 +35,31 @@ without an explicit design change.
 
 Preserve or deliberately improve all of these:
 
-- Explicit least-privilege `contents: write`.
+- Explicit least privilege: `contents: read` for `prepare-candidate` and
+  `contents: write` only for `publish-to-main`.
 - Checkout of the selected reference.
-- Shared concurrency group scoped to the selected Git reference.
+- A run-local isolated candidate artifact between preparation and publication.
+- No top-level production-writer concurrency block, so preparation jobs may run
+  concurrently.
+- The constant job-scoped `brim-live-main-publish` concurrency group on
+  `publish-to-main`.
 - `cancel-in-progress: false` so another product writer cannot be cancelled midway
   through publication.
+- `queue: max` so pending publication jobs are retained.
 - Bounded job timeout with margin for validation and Git publication.
 - One documented builder entry point.
 - An exact output-path allowlist matching `docs/PRODUCTS.md`.
 - Product-specific validation before Git staging/commit.
 - No-op success when accepted outputs are unchanged.
-- Product-specific generated-data commit message and normal non-force push back
-  to the selected branch.
+- Product-specific generated-data commit message and normal non-force push to
+  `main` from the authorized publisher job.
 - No broad staging of `docs/`, the repository root, or unrelated products.
 
-All writers share the branch because they commit generated files. Changing the
-concurrency group is a cross-product safety change. A manual run on a feature
-branch may write ordinary product paths on that branch; it does not update
-official Pages served from `main/docs`.
+All writers publish to the shared `main` branch through the bounded publisher.
+Changing the publication concurrency group is a cross-product safety change. A
+manual feature-branch run may prepare an ordinary-shaped candidate in isolated
+runner storage, but its publisher job cannot update `main`; official Pages
+continues to serve `main/docs`.
 
 ## Triggers and permissions
 
@@ -90,13 +97,15 @@ More retries are not always safer: leave time for validation and publication.
 
 For changes to Git commands, verify:
 
-1. The checked-out reference, concurrency reference, commit target, and push
-   target are the same selected branch.
+1. Preparation records the selected source SHA, publication is authorized only
+   for `main`, and the commit and push target are `main`.
 2. The path list includes every intended output and nothing else.
 3. A rejected/failed builder cannot create an accepted commit.
 4. An unchanged build exits without an empty commit.
-5. Concurrent writers serialize rather than force-push over each other.
-6. A push conflict fails visibly and preserves remote state.
+5. Concurrent `publish-to-main` jobs serialize through
+   `brim-live-main-publish` rather than force-push over each other.
+6. A push conflict receives only the bounded fresh-main reconciliation retry,
+   then fails visibly and preserves remote state.
 7. Generated files are coherent before staging.
 
 Do not add automatic force, destructive reset, or branch fallback behavior.

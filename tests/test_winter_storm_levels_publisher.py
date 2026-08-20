@@ -263,13 +263,9 @@ class WinterStormLevelsPublisherTests(WinterFixtureMixin, unittest.TestCase):
 
     def test_current_repository_product_validates(self):
         repository = Path(__file__).resolve().parents[1]
-        with self.assertRaises(winter.ProductError):
-            winter.validate_product(repository)
-        state = winter.validate_product(
-            repository, _target_leads=winter.LEGACY_TARGET_LEADS
-        )
+        state = winter.validate_product(repository)
         self.assertEqual(len(state.cycles), 2)
-        self.assertEqual(len(state.entries), 2 * len(winter.LEGACY_TARGET_LEADS))
+        self.assertEqual(len(state.entries), 2 * len(winter.TARGET_LEADS))
 
     def test_exact_legacy_sparse_state_migrates_to_one_complete_f240_cycle(self):
         self.write_product(

@@ -14,11 +14,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: live-data-feed-writes-${{ github.ref }}
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   prepare-candidate:
     runs-on: ubuntu-latest
