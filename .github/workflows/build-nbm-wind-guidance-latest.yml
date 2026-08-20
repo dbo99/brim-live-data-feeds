@@ -37,10 +37,7 @@ jobs:
         run: sudo bash scripts/configure_apt_mirror_order.sh
 
       - name: Set up R
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: "release"
-          use-public-rspm: true
+        uses: ./.github/actions/setup-r-hardened
 
       - name: Set up wgrib2
         uses: mamba-org/setup-micromamba@v3

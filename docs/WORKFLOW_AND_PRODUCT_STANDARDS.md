@@ -154,15 +154,23 @@ workflow but is not source-controlled in `.github/workflows`.
 
 - Jobs use `ubuntu-latest`.
 - Checkout is `actions/checkout@v6`.
-- R actions are `r-lib/actions/*@v2`.
+- R setup uses the repository-owned
+  [`.github/actions/setup-r-hardened/action.yml`](../.github/actions/setup-r-hardened/action.yml),
+  which pins R `4.6.1` and makes three bounded
+  `r-lib/actions/setup-r@v2` attempts with 5- and 15-second backoff. All fifteen
+  writers and both R-based support workflows use this one policy.
+- R dependency setup remains `r-lib/actions/setup-r-dependencies@v2`.
 - Micromamba is `mamba-org/setup-micromamba@v3`.
 - Every upload reference is `actions/upload-artifact@v7`.
 
 **Gaps**
 
 - Action major tags are mutable references rather than commit SHAs.
-- `ubuntu-latest`, R `release`, apt packages and most R packages are not locked
-  to one reproducible environment.
+- Exact R versions still require `setup-r` to call the r-hub resolver for a
+  platform package URL. Bounded retries cover transient failure, but a sustained
+  resolver outage still stops preparation before product work.
+- `ubuntu-latest`, apt packages and most R packages are not locked to one fully
+  reproducible environment.
 - HRRR sandbox and groundwater preview have not yet produced post-PR #4 runtime
   evidence for their updated artifact action.
 
@@ -170,6 +178,9 @@ workflow but is not source-controlled in `.github/workflows`.
 
 - Review upstream release notes, runner minimums and behavior changes before an
   action major update.
+- Advance the centralized R pin only in a reviewed repository-wide change after
+  Ubuntu 24.04 availability, local tests, and a minimum hosted canary establish
+  compatibility. Do not restore the floating `release` alias.
 - Preserve artifact name, path, archive/compression, retention and no-file
   behavior unless the product of the change is intentional.
 - Consider action SHA pinning and an R dependency lock in a separate,
