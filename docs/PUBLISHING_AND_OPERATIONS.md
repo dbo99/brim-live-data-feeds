@@ -216,7 +216,13 @@ The repository has product-specific, not universal, QA:
   11 or more fails closed. Every run logs before/omitted/after counts, threshold
   10, and at most 10 station/report identifiers. This narrow malformed-metadata
   policy does not supply the still-missing overall completeness threshold.
-- Delta validates PDF structure, date and a minimum feature set.
+- Delta validates the DWR response status, MIME, byte count, leading PDF magic
+  and terminal EOF marker before Poppler. It gives transient transport/HTTP and
+  successful non-PDF responses three total attempts with bounded timeouts and
+  increasing backoff, then validates the PDF date and minimum feature set. A
+  persistent non-PDF response fails in the product-specific prepare step before
+  candidate construction; the shared publisher and publication concurrency are
+  not implicated.
 - GFS validates downloads/JSON and at least one entry, but can retain partial
   target coverage.
 - HRRR validates GRIB inventory, grid orientation/dimensions and target
@@ -309,6 +315,7 @@ success" is not universally equivalent to "complete current product."
 | Failure point | Current remote behavior | Prior official product |
 |---|---|---|
 | Upstream retrieval stops the script | No commit step | Remains in Git and Pages |
+| Delta receives a persistent non-PDF response or exhausts transient retrieval retries | `DELTA_OPS_UPSTREAM_NON_PDF_RESPONSE`, HTTP, or transport diagnostics stop the prepare job before Poppler/candidate upload; the publish job is skipped | Prior canonical Delta four-file product remains unchanged in Git and Pages |
 | CoCoRaHS has 11 or more retained observations without a usable station name, or its strict candidate validator rejects any feature | Candidate construction/publication stops; diagnostics report the bounded station-name omission evidence | Prior canonical four-file product remains unchanged in Git and Pages |
 | One or more CNRFC pages fail after a valid prior exists | Successful families/records advance; failed metrics become unexpired `stale_last_known_good`, `expired`, explicit source `unavailable`, or `failed_no_data` | A complete, honestly degraded 51-record snapshot may replace the prior; values retain their original source and successful-retrieval provenance |
 | All CNRFC families fail after a valid prior exists | Complete 51-record degraded snapshot is constructed; family health becomes `outage_using_last_known_good` where provenance values remain, otherwise `unusable` | Prior values may remain as non-map LKG/expired provenance; the prior payload is not left online falsely marked current |

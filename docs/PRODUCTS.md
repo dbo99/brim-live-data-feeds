@@ -205,8 +205,14 @@ ownership.
   report lag greater than seven days. Scheduled attempts skip work when the
   current local report date is already published; manual dispatch forces a
   refresh attempt.
-- **QA/empty policy:** PDF length, recognizable content, report date, and a
-  minimum operational feature set are validated before output.
+- **QA/empty policy:** Before Poppler runs, the direct DWR response must have a
+  successful HTTP status, a compatible or absent PDF MIME type, a nontrivial
+  byte count, leading `%PDF-` magic and a terminal PDF EOF marker. Transient
+  transport/HTTP failures and successful non-PDF responses receive three total
+  attempts with bounded timeouts and increasing backoff. Persistent retrieval
+  failure stops candidate construction; the prior canonical four-file product
+  remains unchanged. Valid PDFs retain the existing report-date and minimum
+  operational-feature checks.
 - **Attribution:** California Department of Water Resources; preliminary data
   warning remains visible.
 - **Known gaps:** No manifest/schema version and no documented status for the
