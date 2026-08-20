@@ -105,6 +105,33 @@ The HRRR sandbox and wind watchdog use separate groups and
 directly publish product commits. The groundwater preview has no production
 write permission.
 
+## R runtime setup
+
+All fifteen production writers and the two R-based support workflows call the
+repository-owned
+[`setup-r-hardened`](../.github/actions/setup-r-hardened/action.yml) composite
+action. It fixes the hosted runtime at R `4.6.1`, the version demonstrated by
+healthy recent `ubuntu-24.04` runs, and makes at most three
+`r-lib/actions/setup-r@v2` attempts with 5- and 15-second backoff.
+
+An exact version does not remove r-hub from `setup-r`: the action still requests
+`api.r-hub.io/rversions/resolve/4.6.1/...` to obtain the platform package URL.
+The bounded attempts materially reduce a transient resolver single point but do
+not make a sustained r-hub outage successful. The floating `release` alias is
+not used because it would also permit an unreviewed runtime change.
+
+APT hardening is a separate layer. Each affected job still runs
+`scripts/configure_apt_mirror_order.sh` before R setup; the helper, subsequent
+`apt-get` commands, and product package declarations are unchanged. An R
+resolver failure should not be classified as an Ubuntu mirror failure merely
+because `setup-r` later performs package-system work after resolution succeeds.
+
+Advance the R runtime deliberately in one reviewed change: identify the target
+release, verify its Ubuntu 24.04 package and repository-wide dependency/test
+compatibility, update the single composite-action pin, and use the minimum
+hosted canary described by the change. Do not change workflows back to
+`release` or add an automated floating-version updater.
+
 ## Scheduled and manual execution
 
 Schedules are owned by the workflow files and summarized in

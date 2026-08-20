@@ -93,10 +93,7 @@ jobs:
 
       - name: Set up R
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: "release"
-          use-public-rspm: true
+        uses: ./.github/actions/setup-r-hardened
 
       - name: Install Linux system libraries
         if: steps.delta_ops_precheck.outputs.should_run == 'true'

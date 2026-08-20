@@ -9,6 +9,7 @@ REPO = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO / ".github" / "workflows"
 QPF = WORKFLOWS / "build-nbm-qpf.yml"
 HELPER_COMMAND = "sudo bash scripts/configure_apt_mirror_order.sh"
+HARDENED_R_SETUP = "uses: ./.github/actions/setup-r-hardened"
 PUBLISHER_SPEC = importlib.util.spec_from_file_location(
     "nbm_qpf_publisher_workflow_contract", REPO / "scripts/nbm_qpf_publisher.py"
 )
@@ -55,7 +56,7 @@ class NbmQpfWorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(self.publish.count(HELPER_COMMAND), 1)
         self.assertLess(
             self.prepare.index(HELPER_COMMAND),
-            self.prepare.index("r-lib/actions/setup-r@v2"),
+            self.prepare.index(HARDENED_R_SETUP),
         )
         self.assertGreater(
             self.prepare.index(HELPER_COMMAND),
