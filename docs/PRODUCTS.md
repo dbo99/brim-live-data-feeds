@@ -165,10 +165,17 @@ ownership.
   separate. BRIM displays user-facing times in Pacific Time.
 - **Freshness/fallback:** No formal feed-wide stale threshold or fallback
   product is implemented. A prior valid official product remains only when the
-  workflow fails before publication.
+  workflow fails or rejects a candidate before publication.
 - **QA/empty policy:** Requests retry and station reports are deterministically
-  deduplicated, but the producer lacks a contractual minimum feature count and
-  a strong all-pages completeness gate. A valid but truncated response is a
+  deduplicated. After latest-report selection and before the CA/CONUS split, the
+  producer omits retained observations whose station name is absent, null,
+  NA/NaN-like, empty, or whitespace-only. Zero through 10 omissions allow
+  candidate construction; 11 or more fail closed. Every run logs the retained
+  counts before and after this filter, the omission count, the threshold, and
+  at most 10 station/report identifiers. The canonical summaries and matching
+  GeoJSON metadata add `omitted_missing_station_name`; feature schema is
+  unchanged. The producer still lacks a contractual minimum feature count and
+  a strong all-pages completeness gate, so a valid but truncated response is a
   known risk.
 - **Attribution:** Community Collaborative Rain, Hail and Snow Network with
   station URLs.
