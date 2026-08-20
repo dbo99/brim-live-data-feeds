@@ -16,6 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import main_publisher  # noqa: E402
+import cocorahs_publisher  # noqa: E402
 
 
 COCORAHS_CALLBACK = SCRIPTS / "cocorahs_publisher.py"
@@ -427,6 +428,28 @@ class CoCoRaHSPublisherTests(CallbackCase, unittest.TestCase):
     product_id = "cocorahs-daily-precip"
     paths = COCORAHS_PATHS
     writer = staticmethod(write_cocorahs_product)
+
+    def assert_rejects_property(self, key: str, value: object) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_cocorahs_product(root, "2026-08-18T12:00:00Z")
+            for path in (COCORAHS_PATHS[0], COCORAHS_PATHS[2]):
+                geojson = json.loads((root / path).read_text(encoding="utf-8"))
+                geojson["features"][0]["properties"][key] = value
+                write_json(root / path, geojson)
+            with self.assertRaisesRegex(
+                cocorahs_publisher.ProductError,
+                f"missing string {key}",
+            ):
+                cocorahs_publisher.validate_product(root)
+
+    def test_station_name_contract_rejects_null_empty_and_whitespace(self) -> None:
+        for value in (None, "", " \t ", 123):
+            with self.subTest(value=value):
+                self.assert_rejects_property("stationName", value)
+
+    def test_other_required_string_field_remains_strict(self) -> None:
+        self.assert_rejects_property("source", None)
 
 
 class StreamflowPublisherTests(CallbackCase, unittest.TestCase):

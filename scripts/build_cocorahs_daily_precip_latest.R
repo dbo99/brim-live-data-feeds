@@ -47,6 +47,8 @@ suppressPackageStartupMessages({
   library(readr)
 })
 
+source("scripts/cocorahs_station_name_policy.R", local = TRUE)
+
 # ---- 2. Paths and constants -------------------------------------------------
 
 cocorahs_api_url <- Sys.getenv(
@@ -609,7 +611,25 @@ pt_record_features <- function(df) {
 
 # ---- 4. Fetch data ----------------------------------------------------------
 
-state_results <- purrr::map(cocorahs_states, pt_fetch_state)
+cocorahs_test_fixture_json <- Sys.getenv("COCORAHS_TEST_FIXTURE_JSON", unset = "")
+
+if (nzchar(cocorahs_test_fixture_json)) {
+  if (!file.exists(cocorahs_test_fixture_json)) {
+    stop("COCORAHS_TEST_FIXTURE_JSON does not exist: ", cocorahs_test_fixture_json)
+  }
+  message("Reading controlled CoCoRaHS test fixture: ", cocorahs_test_fixture_json)
+  fixture <- jsonlite::fromJSON(cocorahs_test_fixture_json, simplifyVector = FALSE)
+  fixture_rows <- pt_as_records(pt_api_results(fixture))
+  fixture_rows$brim_query_state <- "CONUS"
+  state_results <- list(list(
+    state = "CONUS",
+    rows = fixture_rows,
+    total_count = pt_api_total_count(fixture),
+    fetched_count = nrow(fixture_rows)
+  ))
+} else {
+  state_results <- purrr::map(cocorahs_states, pt_fetch_state)
+}
 
 rows <- purrr::map(state_results, "rows") |>
   dplyr::bind_rows()
@@ -652,6 +672,9 @@ station_duplicate_station_count <- latest_station$duplicate_station_count
 
 message("CoCoRaHS latest-station de-dup removed ", station_duplicate_reports_removed,
         " older duplicate station report(s).")
+
+station_name_policy <- cocorahs_apply_station_name_policy(rows)
+rows <- station_name_policy$rows
 
 features <- pt_record_features(rows)
 
@@ -729,6 +752,7 @@ pt_summary_for_scope <- function(features, scope_label, states, api_rows_scope_n
     station_duplicate_reports_removed = station_duplicate_reports_removed,
     station_duplicate_station_count = station_duplicate_station_count,
     station_dedup_rule = "One latest report per stationNumber, using obsDateTime first and entryDateTime/dateTimeStamp as tie-breakers; falls back to rounded coordinates when stationNumber is missing.",
+    omitted_missing_station_name = station_name_policy$omitted_count,
     measurable_count = measurable_count,
     zero_count = zero_count,
     trace_count = trace_count,

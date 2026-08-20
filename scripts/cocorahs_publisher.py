@@ -86,6 +86,16 @@ def _finite(value: object, label: str, *, nullable: bool = False) -> None:
         raise ProductError(f"{label} must be a finite number")
 
 
+def _optional_omission_count(summary: Dict[str, object], label: str) -> int | None:
+    key = "omitted_missing_station_name"
+    if key not in summary:
+        return None
+    value = summary[key]
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10:
+        raise ProductError(f"{label} {key} must be an integer from 0 through 10")
+    return value
+
+
 def _validate_collection(
     value: Dict[str, object],
     summary: Dict[str, object],
@@ -111,6 +121,7 @@ def _validate_collection(
     _date(summary.get("end_date"), f"{label} end_date")
     if not isinstance(summary.get("units"), str) or not summary["units"]:
         raise ProductError(f"{label} summary units are missing")
+    _optional_omission_count(summary, label)
 
     seen_stations = set()
     for index, feature in enumerate(features):
@@ -141,7 +152,11 @@ def _validate_collection(
             "sourceWindowStartDate",
             "sourceWindowEndDate",
         ):
-            if not isinstance(properties.get(key), str) or not properties[key]:
+            if (
+                not isinstance(properties.get(key), str)
+                or not properties[key]
+                or (key == "stationName" and not properties[key].strip())
+            ):
                 raise ProductError(f"{label} feature {index} is missing string {key}")
         if properties["stationNumber"] in seen_stations:
             raise ProductError(f"{label} duplicates stationNumber {properties['stationNumber']}")
@@ -187,6 +202,10 @@ def validate_product(root: Path) -> Tuple[str, int]:
     )
     if ca_time != conus_time:
         raise ProductError("CoCoRaHS CA and CONUS build times disagree")
+    if _optional_omission_count(ca_summary, "California CoCoRaHS") != (
+        _optional_omission_count(conus_summary, "CONUS CoCoRaHS")
+    ):
+        raise ProductError("CoCoRaHS CA and CONUS omission counts disagree")
     conus_by_station = {
         feature["properties"]["stationNumber"]: feature for feature in conus_features
     }
