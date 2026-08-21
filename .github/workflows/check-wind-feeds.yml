@@ -41,10 +41,17 @@ jobs:
           import math
           import os
           import sys
+          import time
           import urllib.error
           import urllib.parse
           import urllib.request
           from pathlib import Path
+
+          from scripts.wind_watchdog_policy import (
+              HEALTHY_NO_ACTION,
+              STALE_DISPATCHED,
+              decide_repair_action,
+          )
 
           UTC = dt.timezone.utc
           NOW = dt.datetime.now(UTC)
@@ -53,9 +60,6 @@ jobs:
           REF = os.environ.get("WATCHDOG_REF") or "main"
           API_ROOT = "https://api.github.com"
 
-          ACTIVE_STATUSES = {
-              "queued", "in_progress", "requested", "waiting", "pending"
-          }
           NBM_AVAILABLE_FORECAST_HOURS = (
               list(range(1, 49))
               + list(range(51, 193, 3))
@@ -175,82 +179,59 @@ jobs:
               return min(abs((value - target).total_seconds()) for value in times) / 3600.0
 
 
-          def minutes_since_hourly_slot(minutes):
-              # Scheduled workflow dispatch can be delayed. Do not launch a
-              # watchdog repair only a few minutes after a normal slot, because
-              # the delayed scheduled event may still appear and create a
-              # duplicate heavy build.
-              current = NOW.minute + NOW.second / 60.0
-              return min((current - minute) % 60.0 for minute in minutes)
-
-
-          def api_request(method, path, payload=None):
+          def api_request(method, path, payload=None, attempts=None):
               url = API_ROOT + path
               data = None
               if payload is not None:
                   data = json.dumps(payload).encode("utf-8")
-              request = urllib.request.Request(
-                  url,
-                  data=data,
-                  method=method,
-                  headers={
-                      "Accept": "application/vnd.github+json",
-                      "Authorization": f"Bearer {TOKEN}",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                      "User-Agent": "BRIM-wind-feed-watchdog/1.1",
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
-                      body = response.read()
-                      if not body:
-                          return None
-                      return json.loads(body.decode("utf-8"))
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", errors="replace")
-                  raise RuntimeError(
-                      f"GitHub API {method} {path} returned {exc.code}: {body}"
-                  ) from exc
+              # GET is safe to retry. Dispatch POST is deliberately attempted
+              # once because a timeout can be ambiguous after GitHub accepts it.
+              maximum_attempts = attempts or (3 if method == "GET" else 1)
+              for attempt in range(1, maximum_attempts + 1):
+                  request = urllib.request.Request(
+                      url,
+                      data=data,
+                      method=method,
+                      headers={
+                          "Accept": "application/vnd.github+json",
+                          "Authorization": f"Bearer {TOKEN}",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "User-Agent": "BRIM-wind-feed-watchdog/1.2",
+                      },
+                  )
+                  try:
+                      with urllib.request.urlopen(request, timeout=20) as response:
+                          body = response.read()
+                          if not body:
+                              return None
+                          return json.loads(body.decode("utf-8"))
+                  except urllib.error.HTTPError as exc:
+                      body = exc.read().decode("utf-8", errors="replace")[:500]
+                      retryable = exc.code == 429 or exc.code >= 500
+                      problem = (
+                          f"GitHub API {method} {path} returned {exc.code}: {body}"
+                      )
+                  except (TimeoutError, urllib.error.URLError) as exc:
+                      retryable = True
+                      problem = f"GitHub API {method} {path} failed: {exc}"
+
+                  if not retryable or attempt == maximum_attempts:
+                      raise RuntimeError(problem)
+                  time.sleep(attempt)
 
 
-          def workflow_run_state(workflow_file, cooldown_minutes):
+          def workflow_runs(workflow_file):
               encoded = urllib.parse.quote(workflow_file, safe="")
+              branch = urllib.parse.quote(REF, safe="")
               data = api_request(
                   "GET",
-                  f"/repos/{REPOSITORY}/actions/workflows/{encoded}/runs?per_page=20",
+                  f"/repos/{REPOSITORY}/actions/workflows/{encoded}/runs"
+                  f"?branch={branch}&per_page=30",
               ) or {}
               runs = data.get("workflow_runs", [])
-
-              active = [run for run in runs if run.get("status") in ACTIVE_STATUSES]
-              if active:
-                  run = active[0]
-                  return {
-                      "blocked": True,
-                      "reason": (
-                          f"workflow already {run.get('status')} "
-                          f"(run {run.get('run_number', '?')})"
-                      ),
-                  }
-
-              recent_times = []
-              for run in runs:
-                  for key in ("run_started_at", "created_at", "updated_at"):
-                      parsed = utc_time(run.get(key))
-                      if parsed is not None:
-                          recent_times.append(parsed)
-                          break
-              if recent_times:
-                  latest = max(recent_times)
-                  minutes = age_minutes(latest)
-                  if minutes < cooldown_minutes:
-                      return {
-                          "blocked": True,
-                          "reason": (
-                              f"latest workflow run started {minutes:.1f} minutes ago"
-                          ),
-                      }
-
-              return {"blocked": False, "reason": "no active/recent run"}
+              if not isinstance(runs, list):
+                  raise RuntimeError("GitHub Actions run response omitted workflow_runs")
+              return runs
 
 
           def dispatch(workflow_file):
@@ -427,9 +408,10 @@ jobs:
               {
                   "name": "ASOS/METAR",
                   "workflow": "build-asos-awos-wind-latest.yml",
-                  "cooldown": 20,
-                  "hourly_slots": [17, 42],
-                  "dispatch_grace": 15,
+                  "cooldown": 15,
+                  "schedules": ["17,42 * * * *"],
+                  "schedule_before": 15,
+                  "schedule_after": 5,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/asos_awos_wind_feed_manifest.json",
                       75,
@@ -439,9 +421,10 @@ jobs:
               {
                   "name": "GFS",
                   "workflow": "build-gfs-wind-latest.yml",
-                  "cooldown": 25,
-                  "hourly_slots": [47],
-                  "dispatch_grace": 15,
+                  "cooldown": 15,
+                  "schedules": ["47 * * * *"],
+                  "schedule_before": 10,
+                  "schedule_after": 45,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/gfs_surface_wind_feed_manifest.json",
                       90,
@@ -451,9 +434,10 @@ jobs:
               {
                   "name": "HRRR",
                   "workflow": "build-hrrr-wind-latest.yml",
-                  "cooldown": 25,
-                  "hourly_slots": [33],
-                  "dispatch_grace": 15,
+                  "cooldown": 15,
+                  "schedules": ["33 * * * *"],
+                  "schedule_before": 10,
+                  "schedule_after": 45,
                   "decision": lambda: standard_decision(
                       "docs/data/wind/hrrr_surface_wind_feed_manifest.json",
                       90,
@@ -463,7 +447,10 @@ jobs:
               {
                   "name": "NBM",
                   "workflow": "build-nbm-wind-guidance-latest.yml",
-                  "cooldown": 35,
+                  "cooldown": 15,
+                  "schedules": ["23 1,7,13,19 * * *"],
+                  "schedule_before": 15,
+                  "schedule_after": 45,
                   "decision": lambda: nbm_decision(
                       "docs/data/wind/nbm_wind_guidance_feed_manifest.json"
                   ),
@@ -476,44 +463,81 @@ jobs:
           for check in checks:
               name = check["name"]
               workflow = check["workflow"]
+              reason = "feed decision did not complete"
+              dispatch_attempted = False
               try:
                   due, reason = check["decision"]()
                   if not due:
-                      action = "healthy; no dispatch"
+                      action = HEALTHY_NO_ACTION
+                      detail = "feed checks passed"
                   else:
-                      slots = check.get("hourly_slots")
-                      grace = check.get("dispatch_grace", 0)
-                      elapsed = (
-                          minutes_since_hourly_slot(slots)
-                          if slots
-                          else math.inf
-                      )
+                      try:
+                          runs = workflow_runs(workflow)
+                      except Exception as exc:
+                          action = "STALE_SUPPRESSED_RUN_STATE_UNAVAILABLE"
+                          detail = (
+                              "run-state lookup failed after bounded retries; "
+                              "dispatch withheld: "
+                              f"{type(exc).__name__}: {exc}"
+                          )
+                          errors.append(f"{name}: {detail}")
+                          results.append(
+                              {
+                                  "feed": name,
+                                  "reason": reason,
+                                  "action": action,
+                                  "detail": detail,
+                              }
+                          )
+                          print(f"{name}: {action} — {detail} — {reason}")
+                          continue
 
-                      if elapsed < grace:
-                          action = (
-                              "repair deferred: only "
-                              f"{elapsed:.1f} min since normal schedule slot"
+                      policy = decide_repair_action(
+                          stale=True,
+                          now=NOW,
+                          runs=runs,
+                          ref=REF,
+                          cooldown_minutes=check["cooldown"],
+                          schedules=check["schedules"] if REF == "main" else [],
+                          schedule_before_minutes=check["schedule_before"],
+                          schedule_after_minutes=check["schedule_after"],
+                      )
+                      action = policy.code
+                      detail = policy.detail
+                      if policy.should_dispatch:
+                          dispatch_attempted = True
+                          dispatch(workflow)
+                          detail = (
+                              f"target={workflow} ref={REF}; " + policy.detail
                           )
-                      else:
-                          state = workflow_run_state(
-                              workflow,
-                              check["cooldown"],
-                          )
-                          if state["blocked"]:
-                              action = "repair deferred: " + state["reason"]
-                          else:
-                              dispatch(workflow)
-                              action = "repair workflow dispatched"
+                          if action != STALE_DISPATCHED:
+                              raise RuntimeError(
+                                  "dispatch policy returned an inconsistent action"
+                              )
 
                   results.append(
-                      {"feed": name, "reason": reason, "action": action}
+                      {
+                          "feed": name,
+                          "reason": reason,
+                          "action": action,
+                          "detail": detail,
+                      }
                   )
-                  print(f"{name}: {action} — {reason}")
+                  print(f"{name}: {action} — {detail} — {reason}")
               except Exception as exc:
                   message = f"{name}: {type(exc).__name__}: {exc}"
                   errors.append(message)
                   results.append(
-                      {"feed": name, "reason": str(exc), "action": "ERROR"}
+                      {
+                          "feed": name,
+                          "reason": reason,
+                          "action": (
+                              "STALE_DISPATCH_UNCERTAIN"
+                              if dispatch_attempted
+                              else "ERROR"
+                          ),
+                          "detail": str(exc),
+                      }
                   )
                   print(message, file=sys.stderr)
 
@@ -524,13 +548,14 @@ jobs:
                   summary.write(
                       f"Checked `{NOW.strftime('%Y-%m-%d %H:%M:%S UTC')}`.\n\n"
                   )
-                  summary.write("| Feed | Result | Reason |\n")
-                  summary.write("|---|---|---|\n")
+                  summary.write("| Feed | Result | Decision detail | Feed check |\n")
+                  summary.write("|---|---|---|---|\n")
                   for item in results:
                       result = item["action"].replace("|", "\\|")
+                      detail = item["detail"].replace("|", "\\|")
                       reason = item["reason"].replace("|", "\\|")
                       summary.write(
-                          f"| {item['feed']} | {result} | {reason} |\n"
+                          f"| {item['feed']} | {result} | {detail} | {reason} |\n"
                       )
 
           if errors:
