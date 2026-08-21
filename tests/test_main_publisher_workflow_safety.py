@@ -294,7 +294,7 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn('USGS_GW_MIN_FEATURES_TO_PUBLISH: "300"', groundwater)
         self.assertIn('USGS_GW_ALLOW_INDEX_FALLBACK: "true"', groundwater)
 
-    def test_phase4_asos_freshness_and_watchdog_contract_are_unchanged(self) -> None:
+    def test_phase4_asos_freshness_and_watchdog_contract(self) -> None:
         asos_awos = ASOS_AWOS.read_text(encoding="utf-8")
         watchdog = (WORKFLOWS / "check-wind-feeds.yml").read_text(encoding="utf-8")
         self.assertIn('cron: "17,42 * * * *"', asos_awos)
@@ -304,8 +304,8 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn('BRIM_OBS_MAX_AGE_HOURS: "3.0"', asos_awos)
         self.assertIn('BRIM_OBS_STALE_AFTER_HOURS: "2.0"', asos_awos)
         self.assertIn('"workflow": "build-asos-awos-wind-latest.yml"', watchdog)
-        self.assertIn('"hourly_slots": [17, 42]', watchdog)
-        self.assertIn('"cooldown": 20', watchdog)
+        self.assertIn('"schedules": ["17,42 * * * *"]', watchdog)
+        self.assertIn('"cooldown": 15', watchdog)
 
     def test_phase5_snow_pillow_schedule_and_provider_boundary_are_unchanged(self) -> None:
         snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")

@@ -186,6 +186,32 @@ HRRR, or NBM writers on the selected ref when checks indicate a repair is
 needed. It does not itself commit or publish repository data. A manual watchdog
 run on a feature branch can therefore initiate feature-branch writers.
 
+Before dispatching a stale product, the watchdog queries that target workflow's
+runs on the selected branch. It suppresses repair when an equivalent run is
+queued, requested, waiting, pending, or in progress, or when a successful run
+completed less than 15 minutes earlier. Failed and cancelled completed runs do
+not start that cooldown. This run-history check also prevents a following
+watchdog execution from repeating a dispatch once the first target run is
+visible.
+
+On `main`, the same shared decision policy applies bounded UTC schedule grace.
+ASOS/AWOS defers for 15 minutes before and 5 minutes after its normal slots.
+Hourly GFS and HRRR defer for 10 minutes before and 45 minutes after. Six-hourly
+NBM defers for 15 minutes before and 45 minutes after. These windows leave at
+least one nominal watchdog check outside grace for every product, so a stale
+feed with no viable normal run still receives a last-resort repair opportunity.
+Feature-branch watchdog runs do not apply `main`'s scheduled-run grace because
+normal writer schedules target `main`.
+
+The run-history GET has three bounded attempts. If all fail, the watchdog logs
+`STALE_SUPPRESSED_RUN_STATE_UNAVAILABLE`, withholds that product's dispatch, and
+fails visibly so a later scheduled watchdog can retry. The dispatch POST is not
+automatically retried: a timeout can be ambiguous after GitHub accepts the
+request, and blindly repeating it could create the duplicate the guard is meant
+to prevent. Normal results use `HEALTHY_NO_ACTION`, `STALE_DISPATCHED`,
+`STALE_SUPPRESSED_ACTIVE_RUN`, `STALE_SUPPRESSED_RECENT_RUN`, or
+`STALE_SUPPRESSED_IMMINENT_SCHEDULE` and include bounded run or schedule detail.
+
 ## Sandbox and preview
 
 ### HRRR sandbox
