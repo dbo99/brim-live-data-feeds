@@ -1,7 +1,7 @@
 {
   "feed_version": "RTW-NBM005",
-  "generated_at_utc": "2026-08-25T14:12:48Z",
-  "generated_at_local": "2026-08-25 07:12:48 AM PDT",
+  "generated_at_utc": "2026-08-25T19:53:08Z",
+  "generated_at_local": "2026-08-25 12:53:08 PM PDT",
   "model": "NOAA/NWS National Blend of Models",
   "product": "Wind central guidance and uncertainty",
   "description": "NBM median sustained wind/direction and median gust with 10th-90th percentile ranges.",
@@ -87,105 +87,13 @@
       "product": "NBM wind central guidance + p10-p90 uncertainty",
       "target_lead_hours": 6,
       "target_label": "+6 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
       "forecast_hour": 14,
       "forecast_hour_label": "f014",
-      "valid_time_utc": "2026-08-25T20:00:00Z",
-      "valid_time_local": "2026-08-25 01:00:00 PM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f014.geojson",
-      "feature_count": 1364,
-      "land_mask": {
-        "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
-        "polygon_database": "maps::world",
-        "coastal_buffer_cells": 1,
-        "operational_mask_id": "hydrologic_ca_operational_v1",
-        "operational_mask_label": "Hydrologic California operational envelope: southern Oregon, western/southern Nevada, and lower Colorado context",
-        "operational_mask_vertices": [
-          {
-            "lon": -125.5,
-            "lat": 31
-          },
-          {
-            "lon": -125.5,
-            "lat": 43.5
-          },
-          {
-            "lon": -119.75,
-            "lat": 43.5
-          },
-          {
-            "lon": -119,
-            "lat": 42
-          },
-          {
-            "lon": -117.5,
-            "lat": 40
-          },
-          {
-            "lon": -116,
-            "lat": 38
-          },
-          {
-            "lon": -114,
-            "lat": 36.5
-          },
-          {
-            "lon": -112.5,
-            "lat": 35
-          },
-          {
-            "lon": -112.5,
-            "lat": 31
-          }
-        ],
-        "source_grid_points": 2805,
-        "mapped_land_points": 1944,
-        "coastal_fringe_points": 109,
-        "land_and_coast_points": 2053,
-        "outside_operational_mask_removed": 689,
-        "retained_points": 1364,
-        "offshore_points_removed": 752
-      },
-      "grid": {
-        "nx": 55,
-        "ny": 51,
-        "resolution_degrees": 0.25
-      },
-      "wind_p50_mph": {
-        "min": 1.34216178,
-        "p50": 6.48711525,
-        "p75": 8.72405154,
-        "p90": 12.07945598,
-        "p95": 14.73022548,
-        "max": 23.04044381
-      },
-      "gust_p50_mph": {
-        "min": 3.16258053,
-        "p50": 12.1103257,
-        "p75": 15.91311739,
-        "p90": 21.72915175,
-        "p95": 24.4134753,
-        "max": 30.00581603
-      },
-      "recommended_gust_scale_mph": 24.4134753,
-      "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f014.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f014.co.grib2"
-    },
-    {
-      "feed_version": "RTW-NBM005",
-      "model": "NOAA/NWS National Blend of Models",
-      "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 12,
-      "target_label": "+12 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 20,
-      "forecast_hour_label": "f020",
       "valid_time_utc": "2026-08-26T02:00:00Z",
       "valid_time_local": "2026-08-25 07:00:00 PM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f020.geojson",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f014.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -248,36 +156,36 @@
         "min": 0,
         "p50": 5.59234073,
         "p75": 7.82927702,
-        "p90": 10.28990694,
-        "p95": 12.75053686,
-        "max": 23.26413744
+        "p90": 10.51360057,
+        "p95": 12.97423049,
+        "max": 23.7115247
       },
       "gust_p50_mph": {
-        "min": 2.19566258,
-        "p50": 10.69602273,
-        "p75": 14.05142717,
-        "p90": 18.07791249,
-        "p95": 20.31484878,
-        "max": 29.70986936
+        "min": 2.247517,
+        "p50": 10.74787491,
+        "p75": 14.10327935,
+        "p90": 18.12976467,
+        "p95": 20.36670097,
+        "max": 29.76176629
       },
-      "recommended_gust_scale_mph": 20.31484878,
+      "recommended_gust_scale_mph": 20.36670097,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f020.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f020.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f014.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f014.co.grib2"
     },
     {
       "feed_version": "RTW-NBM005",
       "model": "NOAA/NWS National Blend of Models",
       "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 18,
-      "target_label": "+18 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 26,
-      "forecast_hour_label": "f026",
+      "target_lead_hours": 12,
+      "target_label": "+12 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 20,
+      "forecast_hour_label": "f020",
       "valid_time_utc": "2026-08-26T08:00:00Z",
       "valid_time_local": "2026-08-26 01:00:00 AM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f026.geojson",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f020.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -342,34 +250,34 @@
         "p75": 6.03972799,
         "p90": 8.50035791,
         "p95": 10.96098783,
-        "max": 24.60629921
+        "max": 25.05368647
       },
       "gust_p50_mph": {
-        "min": 0.77689916,
-        "p50": 7.48769685,
-        "p75": 10.1720204,
-        "p90": 13.9748121,
-        "p95": 16.88282928,
-        "max": 31.19922155
+        "min": 0.60994094,
+        "p50": 7.3207543,
+        "p75": 10.00507785,
+        "p90": 13.80786954,
+        "p95": 17.16327398,
+        "max": 31.47973336
       },
-      "recommended_gust_scale_mph": 16.88282928,
+      "recommended_gust_scale_mph": 17.16327398,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f026.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f026.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f020.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f020.co.grib2"
     },
     {
       "feed_version": "RTW-NBM005",
       "model": "NOAA/NWS National Blend of Models",
       "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 24,
-      "target_label": "+24 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 32,
-      "forecast_hour_label": "f032",
+      "target_lead_hours": 18,
+      "target_label": "+18 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 26,
+      "forecast_hour_label": "f026",
       "valid_time_utc": "2026-08-26T14:00:00Z",
       "valid_time_local": "2026-08-26 07:00:00 AM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f032.geojson",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f026.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -433,35 +341,35 @@
         "p50": 3.57909807,
         "p75": 5.59234073,
         "p90": 7.82927702,
-        "p95": 9.61882606,
-        "max": 21.4745884
+        "p95": 9.84251969,
+        "max": 21.92197566
       },
       "gust_p50_mph": {
-        "min": 0.78011587,
-        "p50": 6.59614352,
-        "p75": 9.05677344,
-        "p90": 12.56876342,
-        "p95": 14.64911417,
-        "max": 28.07064245
+        "min": 1.06077756,
+        "p50": 6.42942466,
+        "p75": 9.11374821,
+        "p90": 12.69284628,
+        "p95": 14.89622853,
+        "max": 28.57507158
       },
       "recommended_gust_scale_mph": 15,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f032.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f032.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f026.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f026.co.grib2"
     },
     {
       "feed_version": "RTW-NBM005",
       "model": "NOAA/NWS National Blend of Models",
       "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 30,
-      "target_label": "+30 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 38,
-      "forecast_hour_label": "f038",
+      "target_lead_hours": 24,
+      "target_label": "+24 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 32,
+      "forecast_hour_label": "f032",
       "valid_time_utc": "2026-08-26T20:00:00Z",
       "valid_time_local": "2026-08-26 01:00:00 PM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f038.geojson",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f032.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -522,38 +430,38 @@
       },
       "wind_p50_mph": {
         "min": 0.22369363,
-        "p50": 6.93450251,
+        "p50": 6.71080888,
         "p75": 8.94774517,
         "p90": 12.07945598,
-        "p95": 14.76377953,
+        "p95": 15.21116679,
         "max": 23.93521833
       },
       "gust_p50_mph": {
-        "min": 4.25017895,
-        "p50": 12.97423049,
-        "p75": 16.32963493,
-        "p90": 21.4745884,
-        "p95": 24.60629921,
-        "max": 33.33035075
+        "min": 4.19676092,
+        "p50": 12.92081246,
+        "p75": 16.49991052,
+        "p90": 21.64486399,
+        "p95": 24.55283644,
+        "max": 33.72427523
       },
-      "recommended_gust_scale_mph": 24.60629921,
+      "recommended_gust_scale_mph": 24.55283644,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f038.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f038.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f032.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f032.co.grib2"
     },
     {
       "feed_version": "RTW-NBM005",
       "model": "NOAA/NWS National Blend of Models",
       "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 48,
-      "target_label": "+48 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 57,
-      "forecast_hour_label": "f057",
-      "valid_time_utc": "2026-08-27T15:00:00Z",
-      "valid_time_local": "2026-08-27 08:00:00 AM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f057.geojson",
+      "target_lead_hours": 30,
+      "target_label": "+30 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 38,
+      "forecast_hour_label": "f038",
+      "valid_time_utc": "2026-08-27T02:00:00Z",
+      "valid_time_local": "2026-08-26 07:00:00 PM PDT",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f038.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -614,38 +522,38 @@
       },
       "wind_p50_mph": {
         "min": 0,
-        "p50": 4.25017895,
-        "p75": 6.26342162,
-        "p90": 8.27666428,
-        "p95": 10.06621331,
-        "max": 23.26413744
+        "p50": 6.48711525,
+        "p75": 8.33258769,
+        "p90": 11.18468146,
+        "p95": 13.61175734,
+        "max": 25.50107373
       },
       "gust_p50_mph": {
-        "min": 1.50592117,
-        "p50": 7.7693495,
-        "p75": 10.45367305,
-        "p90": 13.36169023,
-        "p95": 15.37493289,
-        "max": 31.48085183
+        "min": 2.46062992,
+        "p50": 12.07945598,
+        "p75": 14.76377953,
+        "p90": 18.79026485,
+        "p95": 21.25089477,
+        "max": 31.98818898
       },
-      "recommended_gust_scale_mph": 15.37493289,
+      "recommended_gust_scale_mph": 21.25089477,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f057.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f057.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f038.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f038.co.grib2"
     },
     {
       "feed_version": "RTW-NBM005",
       "model": "NOAA/NWS National Blend of Models",
       "product": "NBM wind central guidance + p10-p90 uncertainty",
-      "target_lead_hours": 54,
-      "target_label": "+54 hr",
-      "model_cycle_utc": "2026-08-25T06:00:00Z",
-      "model_cycle_local": "2026-08-24 11:00:00 PM PDT",
-      "forecast_hour": 63,
-      "forecast_hour_label": "f063",
+      "target_lead_hours": 48,
+      "target_label": "+48 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 57,
+      "forecast_hour_label": "f057",
       "valid_time_utc": "2026-08-27T21:00:00Z",
       "valid_time_local": "2026-08-27 02:00:00 PM PDT",
-      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T06Z_f063.geojson",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f057.geojson",
       "feature_count": 1364,
       "land_mask": {
         "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
@@ -705,25 +613,117 @@
         "resolution_degrees": 0.25
       },
       "wind_p50_mph": {
-        "min": 1.44152872,
-        "p50": 8.37602899,
-        "p75": 11.06035254,
-        "p90": 13.96836972,
-        "p95": 16.20530601,
-        "max": 26.04778096
+        "min": 1.64958617,
+        "p50": 8.58408644,
+        "p75": 11.26840999,
+        "p90": 14.17642717,
+        "p95": 16.60350304,
+        "max": 26.25581603
       },
       "gust_p50_mph": {
-        "min": 6.00820956,
-        "p50": 15.40334198,
-        "p75": 19.20613368,
-        "p90": 23.67998389,
-        "p95": 25.69322656,
-        "max": 31.95664818
+        "min": 6.05216535,
+        "p50": 15.44729778,
+        "p75": 19.47378311,
+        "p90": 23.94774517,
+        "p95": 25.96098783,
+        "max": 32.67179671
       },
-      "recommended_gust_scale_mph": 25.69322656,
+      "recommended_gust_scale_mph": 25.96098783,
       "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
-      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/core/blend.t06z.core.f063.co.grib2",
-      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/06/qmd/blend.t06z.qmd.f063.co.grib2"
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f057.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f057.co.grib2"
+    },
+    {
+      "feed_version": "RTW-NBM005",
+      "model": "NOAA/NWS National Blend of Models",
+      "product": "NBM wind central guidance + p10-p90 uncertainty",
+      "target_lead_hours": 54,
+      "target_label": "+54 hr",
+      "model_cycle_utc": "2026-08-25T12:00:00Z",
+      "model_cycle_local": "2026-08-25 05:00:00 AM PDT",
+      "forecast_hour": 63,
+      "forecast_hour_label": "f063",
+      "valid_time_utc": "2026-08-28T03:00:00Z",
+      "valid_time_local": "2026-08-27 08:00:00 PM PDT",
+      "relative_url": "nbm/guidance/nbm_wind_guidance_20260825T12Z_f063.geojson",
+      "feature_count": 1364,
+      "land_mask": {
+        "method": "maps::map.where world land polygons plus grid-cell coastal fringe, then hydrologic-California operational polygon",
+        "polygon_database": "maps::world",
+        "coastal_buffer_cells": 1,
+        "operational_mask_id": "hydrologic_ca_operational_v1",
+        "operational_mask_label": "Hydrologic California operational envelope: southern Oregon, western/southern Nevada, and lower Colorado context",
+        "operational_mask_vertices": [
+          {
+            "lon": -125.5,
+            "lat": 31
+          },
+          {
+            "lon": -125.5,
+            "lat": 43.5
+          },
+          {
+            "lon": -119.75,
+            "lat": 43.5
+          },
+          {
+            "lon": -119,
+            "lat": 42
+          },
+          {
+            "lon": -117.5,
+            "lat": 40
+          },
+          {
+            "lon": -116,
+            "lat": 38
+          },
+          {
+            "lon": -114,
+            "lat": 36.5
+          },
+          {
+            "lon": -112.5,
+            "lat": 35
+          },
+          {
+            "lon": -112.5,
+            "lat": 31
+          }
+        ],
+        "source_grid_points": 2805,
+        "mapped_land_points": 1944,
+        "coastal_fringe_points": 109,
+        "land_and_coast_points": 2053,
+        "outside_operational_mask_removed": 689,
+        "retained_points": 1364,
+        "offshore_points_removed": 752
+      },
+      "grid": {
+        "nx": 55,
+        "ny": 51,
+        "resolution_degrees": 0.25
+      },
+      "wind_p50_mph": {
+        "min": 0,
+        "p50": 6.48711525,
+        "p75": 8.94774517,
+        "p90": 11.18468146,
+        "p95": 13.19792412,
+        "max": 25.72476736
+      },
+      "gust_p50_mph": {
+        "min": 1.85762124,
+        "p50": 11.92383232,
+        "p75": 15.05554313,
+        "p90": 18.41094757,
+        "p95": 20.87157749,
+        "max": 33.39835362
+      },
+      "recommended_gust_scale_mph": 20.87157749,
+      "color_scale_reference": "95th percentile of NBM median gust, clamped to 15-70 mph",
+      "source_core": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/core/blend.t12z.core.f063.co.grib2",
+      "source_qmd": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20260825/12/qmd/blend.t12z.qmd.f063.co.grib2"
     }
   ]
 }
