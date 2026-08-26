@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-08-25T16:08:05Z",
+  "generated_at": "2026-08-26T16:37:31Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
@@ -86,7 +86,7 @@
       "water_year": 2026,
       "forecast_type": "Unregulated",
       "status": "expired",
-      "missing_reason": "fetch_failed: retrieval_failed: Timeout was reached [www.cbrfc.noaa.gov]: Failed to connect to www.cbrfc.noaa.gov port 443 after 10002 ms: Timeout was reached",
+      "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
       "source_url": "https://www.cbrfc.noaa.gov/wsup/graph/espgraph_hc.html?id=GLDA3&year=2026",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dbdata/station/espgraph/espgraph_data_hc.py?id=GLDA3&year=2026",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -98,14 +98,14 @@
         "official_field_prefix": "off",
         "secondary_list_status": null,
         "secondary_list_diagnostic": null,
-        "error_class": "fetch_failed",
-        "error_message": "retrieval_failed: Timeout was reached [www.cbrfc.noaa.gov]: Failed to connect to www.cbrfc.noaa.gov port 443 after 10002 ms: Timeout was reached",
-        "failure_stage": "fetch"
+        "error_class": "validation_failed",
+        "error_message": "CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
+        "failure_stage": "validate"
       },
       "last_successful_retrieval_at": "2026-08-01T15:29:59Z",
-      "last_attempt_at": "2026-08-25T16:07:59Z",
-      "attempt_outcome": "fetch_failed",
-      "failure_stage": "fetch",
+      "last_attempt_at": "2026-08-26T16:37:30Z",
+      "attempt_outcome": "validation_failed",
+      "failure_stage": "validate",
       "metric_state": {
         "forecast_volume": {
           "status": "expired",
@@ -115,7 +115,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "fetch_failed: retrieval_failed: Timeout was reached [www.cbrfc.noaa.gov]: Failed to connect to www.cbrfc.noaa.gov port 443 after 10002 ms: Timeout was reached"
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         },
         "percent_average": {
           "status": "expired",
@@ -125,7 +125,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "fetch_failed: retrieval_failed: Timeout was reached [www.cbrfc.noaa.gov]: Failed to connect to www.cbrfc.noaa.gov port 443 after 10002 ms: Timeout was reached"
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         },
         "percent_median": {
           "status": "expired",
@@ -135,7 +135,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "fetch_failed: retrieval_failed: Timeout was reached [www.cbrfc.noaa.gov]: Failed to connect to www.cbrfc.noaa.gov port 443 after 10002 ms: Timeout was reached"
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         }
       },
       "value_origin": "last_known_good",
