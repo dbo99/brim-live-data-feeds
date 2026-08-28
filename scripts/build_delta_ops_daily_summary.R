@@ -35,6 +35,8 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+source("scripts/delta_ops_pdf_transport.R", local = TRUE)
+
 # ---- Paths/constants --------------------------------------------------------
 
 pdf_url <- Sys.getenv(
@@ -251,11 +253,8 @@ pt_geojson_from_df <- function(df, name = "BRIM Delta Ops Daily Summary") {
 
 # ---- Download/extract PDF ---------------------------------------------------
 
-pdf_tmp <- tempfile(fileext = ".pdf")
-message("Downloading DWR Delta Operations Daily Summary PDF...")
-curl::curl_download(pdf_url, pdf_tmp, quiet = FALSE, mode = "wb")
-
-raw_text <- paste(pdftools::pdf_text(pdf_tmp), collapse = "\n")
+message("Downloading and validating DWR Delta Operations Daily Summary PDF...")
+raw_text <- paste(delta_ops_fetch_pdf_text(pdf_url, pdftools::pdf_text), collapse = "\n")
 lines <- pt_clean_lines(raw_text)
 if (length(lines) < 20) stop("PDF text extraction returned too few lines; cannot parse Delta Ops summary.")
 
