@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-08-26T16:37:31Z",
+  "generated_at": "2026-09-01T18:33:10Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
@@ -149,7 +149,7 @@
       "product_type": "water_year_unregulated_inflow_forecast",
       "display_name": "Colorado River water-year unregulated inflow to Lake Powell / Glen Canyon Dam",
       "forecast_statistic": "official_full_forecast",
-      "forecast_volume": 3585,
+      "forecast_volume": 3515,
       "normalized_units": "kaf",
       "source_units": "kaf",
       "percent_average": 37,
@@ -165,7 +165,7 @@
       "retrieval_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "archive_url": "https://www.cbrfc.noaa.gov/product/hydrofcst/hydrofcst_archive.php?pdes=Upper+Basin+Reservoirs+%28Water+Year%29&pdir=espstr&pname=espstr.wy.csv",
-      "source_page_signature": "7798fe0893ad28f0fdaa3295899a8eaf0597abca25fe4ba4fd9c1bbc24baa774",
+      "source_page_signature": "7bd38a9aa1179c9a86dd490a52c4c3dc7bdc4e929e65a10dd812bfd1a86bbffa",
       "diagnostic": {
         "parser": "cbrfc_glda3_water_year_semantic_v1",
         "source_name": "Lake Powell Unregulated Inflow",
@@ -178,8 +178,8 @@
         "error_class": null,
         "error_message": null
       },
-      "last_successful_retrieval_at": "2026-08-11T16:15:16Z",
-      "last_attempt_at": "2026-08-11T16:15:16Z",
+      "last_successful_retrieval_at": "2026-09-01T18:33:09Z",
+      "last_attempt_at": "2026-09-01T18:33:09Z",
       "attempt_outcome": "success",
       "failure_stage": null,
       "metric_state": {
@@ -241,30 +241,30 @@
           "valid_through": "2026-09-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "current",
+              "status": "expired",
               "value_origin": "current_source",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-09-01T00:00:00-07:00",
-              "stale_since": null,
-              "map_eligible": true,
+              "stale_since": "2026-09-01T00:00:00-07:00",
+              "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": null
+              "missing_reason": "forecast_month_expired"
             },
             "percent_median": {
-              "status": "current",
+              "status": "expired",
               "value_origin": "current_source",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-09-01T00:00:00-07:00",
-              "stale_since": null,
-              "map_eligible": true,
+              "stale_since": "2026-09-01T00:00:00-07:00",
+              "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": null
+              "missing_reason": "forecast_month_expired"
             }
           },
-          "status": "current",
+          "status": "expired",
           "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": null
+          "stale_since": "2026-09-01T00:00:00-07:00",
+          "missing_reason": "forecast_month_expired"
         },
         {
           "raw_forecast_month_label": "September 2026",
@@ -282,30 +282,30 @@
           "valid_through": "2026-10-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
+              "status": "current",
               "value_origin": "current_source",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
               "stale_since": null,
-              "map_eligible": false,
+              "map_eligible": true,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": null
             },
             "percent_median": {
-              "status": "not_yet_valid",
+              "status": "current",
               "value_origin": "current_source",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
               "stale_since": null,
-              "map_eligible": false,
+              "map_eligible": true,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": null
             }
           },
-          "status": "not_yet_valid",
+          "status": "current",
           "value_origin": "current_source",
           "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "missing_reason": null
         },
         {
           "raw_forecast_month_label": "October 2026",
@@ -736,8 +736,8 @@
         "error_class": null,
         "error_message": null
       },
-      "last_successful_retrieval_at": "2026-08-04T17:07:16Z",
-      "last_attempt_at": "2026-08-04T17:07:16Z",
+      "last_successful_retrieval_at": "2026-09-01T18:33:09Z",
+      "last_attempt_at": "2026-09-01T18:33:09Z",
       "attempt_outcome": "success",
       "failure_stage": null,
       "value_origin": "current_source",
