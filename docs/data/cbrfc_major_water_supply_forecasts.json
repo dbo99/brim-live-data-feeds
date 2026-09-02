@@ -2,18 +2,18 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-09-01T18:33:10Z",
+  "generated_at": "2026-09-02T18:43:40Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
   "source_summary": {
     "rfc": "CBRFC",
-    "successful_attempt_count": 2,
-    "failed_attempt_count": 1,
+    "successful_attempt_count": 1,
+    "failed_attempt_count": 2,
     "current_count": 1,
-    "current_partial_count": 1,
+    "current_partial_count": 0,
     "source_stale_count": 0,
-    "stale_last_known_good_count": 0,
+    "stale_last_known_good_count": 1,
     "expired_count": 1,
     "source_unavailable_count": 0,
     "failed_no_data_count": 0
@@ -53,15 +53,15 @@
       "expected_structural_count": 1,
       "expected_available_count": 1,
       "current_count": 0,
-      "current_partial_count": 1,
+      "current_partial_count": 0,
       "source_stale_count": 0,
-      "stale_last_known_good_count": 0,
+      "stale_last_known_good_count": 1,
       "expired_count": 0,
       "source_unavailable_count": 0,
       "failed_no_data_count": 0,
-      "successful_attempt_count": 1,
-      "failed_attempt_count": 0,
-      "health": "healthy",
+      "successful_attempt_count": 0,
+      "failed_attempt_count": 1,
+      "health": "outage_using_last_known_good",
       "season_state": "active"
     }
   },
@@ -86,7 +86,7 @@
       "water_year": 2026,
       "forecast_type": "Unregulated",
       "status": "expired",
-      "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
+      "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
       "source_url": "https://www.cbrfc.noaa.gov/wsup/graph/espgraph_hc.html?id=GLDA3&year=2026",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dbdata/station/espgraph/espgraph_data_hc.py?id=GLDA3&year=2026",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -99,11 +99,11 @@
         "secondary_list_status": null,
         "secondary_list_diagnostic": null,
         "error_class": "validation_failed",
-        "error_message": "CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
+        "error_message": "CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
         "failure_stage": "validate"
       },
       "last_successful_retrieval_at": "2026-08-01T15:29:59Z",
-      "last_attempt_at": "2026-08-26T16:37:30Z",
+      "last_attempt_at": "2026-09-02T18:43:38Z",
       "attempt_outcome": "validation_failed",
       "failure_stage": "validate",
       "metric_state": {
@@ -115,7 +115,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         },
         "percent_average": {
           "status": "expired",
@@ -125,7 +125,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         },
         "percent_median": {
           "status": "expired",
@@ -135,7 +135,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-08-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
         }
       },
       "value_origin": "last_known_good",
@@ -149,11 +149,11 @@
       "product_type": "water_year_unregulated_inflow_forecast",
       "display_name": "Colorado River water-year unregulated inflow to Lake Powell / Glen Canyon Dam",
       "forecast_statistic": "official_full_forecast",
-      "forecast_volume": 3515,
+      "forecast_volume": 3516,
       "normalized_units": "kaf",
       "source_units": "kaf",
       "percent_average": 37,
-      "forecast_issue_date": "2026-08-01",
+      "forecast_issue_date": "2026-09-01",
       "source_time_precision": "date",
       "source_normal_term": "average",
       "forecast_period": "Water Year",
@@ -165,7 +165,7 @@
       "retrieval_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "archive_url": "https://www.cbrfc.noaa.gov/product/hydrofcst/hydrofcst_archive.php?pdes=Upper+Basin+Reservoirs+%28Water+Year%29&pdir=espstr&pname=espstr.wy.csv",
-      "source_page_signature": "7bd38a9aa1179c9a86dd490a52c4c3dc7bdc4e929e65a10dd812bfd1a86bbffa",
+      "source_page_signature": "f081ad3a9dc1cff81a74bda8aa63cc2e90933d6e9a47a5109eedfa1db8661219",
       "diagnostic": {
         "parser": "cbrfc_glda3_water_year_semantic_v1",
         "source_name": "Lake Powell Unregulated Inflow",
@@ -178,15 +178,15 @@
         "error_class": null,
         "error_message": null
       },
-      "last_successful_retrieval_at": "2026-09-01T18:33:09Z",
-      "last_attempt_at": "2026-09-01T18:33:09Z",
+      "last_successful_retrieval_at": "2026-09-02T18:43:39Z",
+      "last_attempt_at": "2026-09-02T18:43:39Z",
       "attempt_outcome": "success",
       "failure_stage": null,
       "metric_state": {
         "forecast_volume": {
           "status": "current",
           "value_origin": "current_source",
-          "source_issue_date": "2026-08-01",
+          "source_issue_date": "2026-09-01",
           "valid_through": "2026-10-01T00:00:00-07:00",
           "stale_since": null,
           "map_eligible": true,
@@ -196,7 +196,7 @@
         "percent_average": {
           "status": "current",
           "value_origin": "current_source",
-          "source_issue_date": "2026-08-01",
+          "source_issue_date": "2026-09-01",
           "valid_through": "2026-10-01T00:00:00-07:00",
           "stale_since": null,
           "map_eligible": true,
@@ -242,29 +242,29 @@
           "metric_state": {
             "forecast_volume": {
               "status": "expired",
-              "value_origin": "current_source",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-09-01T00:00:00-07:00",
               "stale_since": "2026-09-01T00:00:00-07:00",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_expired"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
               "status": "expired",
-              "value_origin": "current_source",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-09-01T00:00:00-07:00",
               "stale_since": "2026-09-01T00:00:00-07:00",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_expired"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
           "status": "expired",
-          "value_origin": "current_source",
+          "value_origin": "last_known_good",
           "stale_since": "2026-09-01T00:00:00-07:00",
-          "missing_reason": "forecast_month_expired"
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "September 2026",
@@ -282,30 +282,30 @@
           "valid_through": "2026-10-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "current",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
-              "stale_since": null,
-              "map_eligible": true,
+              "stale_since": "2026-09-02T18:43:39Z",
+              "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": null
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "current",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
-              "stale_since": null,
-              "map_eligible": true,
+              "stale_since": "2026-09-02T18:43:39Z",
+              "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": null
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "current",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": null
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "October 2026",
@@ -323,30 +323,30 @@
           "valid_through": "2026-11-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-11-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-11-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "November 2026",
@@ -364,30 +364,30 @@
           "valid_through": "2026-12-01T00:00:00-08:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-12-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-12-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "December 2026",
@@ -405,30 +405,30 @@
           "valid_through": "2027-01-01T00:00:00-08:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-01-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-01-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "January 2027",
@@ -446,30 +446,30 @@
           "valid_through": "2027-02-01T00:00:00-08:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-02-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-02-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "February 2027",
@@ -487,30 +487,30 @@
           "valid_through": "2027-03-01T00:00:00-08:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-03-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-03-01T00:00:00-08:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "March 2027",
@@ -528,30 +528,30 @@
           "valid_through": "2027-04-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-04-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-04-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "April 2027",
@@ -569,30 +569,30 @@
           "valid_through": "2027-05-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-05-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-05-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "May 2027",
@@ -610,30 +610,30 @@
           "valid_through": "2027-06-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-06-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-06-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "June 2027",
@@ -651,30 +651,30 @@
           "valid_through": "2027-07-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-07-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-07-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
           "raw_forecast_month_label": "July 2027",
@@ -692,34 +692,34 @@
           "valid_through": "2027-08-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-08-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "not_yet_valid",
-              "value_origin": "current_source",
+              "status": "stale_last_known_good",
+              "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2027-08-01T00:00:00-07:00",
-              "stale_since": null,
+              "stale_since": "2026-09-02T18:43:39Z",
               "map_eligible": false,
               "popup_eligible": true,
-              "missing_reason": "forecast_month_not_yet_valid"
+              "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "not_yet_valid",
-          "value_origin": "current_source",
-          "stale_since": null,
-          "missing_reason": "forecast_month_not_yet_valid"
+          "status": "stale_last_known_good",
+          "value_origin": "last_known_good",
+          "stale_since": "2026-09-02T18:43:39Z",
+          "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         }
       ],
-      "status": "current_partial",
-      "missing_reason": "one_or_more_forecast_months_not_current",
+      "status": "stale_last_known_good",
+      "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous.",
       "source_url": "https://www.cbrfc.noaa.gov/product/hydrofcst/espaz_lml/lakemead.txt",
       "retrieval_url": "https://www.cbrfc.noaa.gov/product/hydrofcst/espaz_lml/lakemead.txt",
       "summary_url": "https://www.cbrfc.noaa.gov/product/hydrofcst/hydrofcst.php",
@@ -733,16 +733,17 @@
         "source_percentage_label": "%Med",
         "source_date_override_count": 0,
         "source_date_override_ids": [],
-        "error_class": null,
-        "error_message": null
+        "error_class": "validation_failed",
+        "error_message": "CBRFC Lake Mead Local source identifier line was missing or ambiguous.",
+        "failure_stage": "validate"
       },
       "last_successful_retrieval_at": "2026-09-01T18:33:09Z",
-      "last_attempt_at": "2026-09-01T18:33:09Z",
-      "attempt_outcome": "success",
-      "failure_stage": null,
-      "value_origin": "current_source",
+      "last_attempt_at": "2026-09-02T18:43:39Z",
+      "attempt_outcome": "validation_failed",
+      "failure_stage": "validate",
+      "value_origin": "last_known_good",
       "valid_through": "2027-08-01T00:00:00-07:00",
-      "stale_since": null
+      "stale_since": "2026-09-01T00:00:00-07:00"
     }
   ]
 }
