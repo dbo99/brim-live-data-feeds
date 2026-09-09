@@ -115,6 +115,29 @@ pt_num <- function(x) {
   suppressWarnings(as.numeric(x))
 }
 
+pt_parse_x2 <- function(text) {
+  unavailable <- list(km = NA_real_, relation = NA_character_, value_raw = NA_character_)
+  # Parse the labeled source row before the generic section parser strips '='.
+  # pt_num() would otherwise include the '2' in 'X2' (e.g. '> 81 km' -> 281).
+  text <- paste(text, collapse = "\n")
+  pattern <- paste0(
+    "(*UCP)(?im)^\\h*X\\h*2(?:\\s+Position\\s*\\(\\s*yesterday\\s*\\))?\\s*",
+    "([<>]\\s*=?|[=\u2264\u2265])\\s*([0-9]+(?:\\.[0-9]+)?)\\s*km\\h*$"
+  )
+  rows <- regmatches(text, gregexpr(pattern, text, perl = TRUE))[[1]]
+  if (length(rows) != 1L) return(unavailable)
+  parts <- regmatches(rows, regexec(pattern, rows, perl = TRUE))[[1]]
+  km <- suppressWarnings(as.numeric(parts[[3]]))
+  if (!is.finite(km)) return(unavailable)
+  relation <- gsub("(*UCP)\\s+", "", parts[[2]], perl = TRUE)
+  list(
+    km = km,
+    relation = relation,
+    source_row = rows[[1]],
+    value_raw = paste0(if (relation == "=") "" else paste0(relation, " "), parts[[3]], " km")
+  )
+}
+
 pt_clean_lines <- function(text) {
   lines <- unlist(strsplit(text, "\n", fixed = TRUE), use.names = FALSE)
   lines <- trimws(lines)
@@ -256,7 +279,12 @@ message("Downloading DWR Delta Operations Daily Summary PDF...")
 curl::curl_download(pdf_url, pdf_tmp, quiet = FALSE, mode = "wb")
 
 raw_text <- paste(pdftools::pdf_text(pdf_tmp), collapse = "\n")
-lines <- pt_clean_lines(raw_text)
+x2_value <- pt_parse_x2(raw_text)
+# Keep a wrapped X2 row in one section slot so adjacent metrics cannot shift.
+section_text <- if (!is.na(x2_value$km)) {
+  sub(x2_value$source_row, paste0("X2 Position (yesterday) = ", x2_value$value_raw), raw_text, fixed = TRUE)
+} else raw_text
+lines <- pt_clean_lines(section_text)
 if (length(lines) < 20) stop("PDF text extraction returned too few lines; cannot parse Delta Ops summary.")
 
 # ---- Parse values -----------------------------------------------------------
@@ -336,7 +364,8 @@ vals <- c(
 san_luis_total_taf <- pt_num(vals$san_luis_total_storage)
 san_luis_swp_taf <- pt_num(vals$san_luis_swp_share)
 san_luis_cvp_taf <- if (!is.na(san_luis_total_taf) && !is.na(san_luis_swp_taf)) san_luis_total_taf - san_luis_swp_taf else NA_real_
-x2_km <- pt_num(vals$x2_position_yesterday)
+x2_km <- x2_value$km
+if (!is.na(x2_km)) vals$x2_position_yesterday <- x2_value$value_raw
 sac_cfs <- pt_num(vals$sacramento_river)
 sj_cfs <- pt_num(vals$san_joaquin_river)
 total_inflow_cfs <- pt_num(vals$total_delta_inflow)
@@ -363,6 +392,7 @@ parsed <- list(
   report_date_guard_lag_days = lag_days,
   x2_position_date = x2_position_date_chr,
   x2_position_date_source = "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
+  x2_position_relation = x2_value$relation,
   feed_build_time_utc = feed_build_time_utc,
   feed_build_time_local = feed_build_time_local,
   preliminary_notice = "PRELIMINARY DATA; SUBJECT TO REVISION WITHOUT NOTICE",
@@ -515,7 +545,7 @@ if (file.exists(x2_lookup_csv) && !is.na(x2_km)) {
       value_raw = vals$x2_position_yesterday,
       value_numeric = x2_km,
       units = "km",
-      label_text = paste0("X2 ", x2_position_date_label, ": ", format(round(x2_km), big.mark = ",", scientific = FALSE), " km"),
+      label_text = paste0("X2 ", x2_position_date_label, ": ", x2_value$value_raw),
       symbol_class = "x2_current",
       source_name = "DWR Delta Operations Daily Summary",
       source_url = pdf_url,
@@ -540,6 +570,13 @@ if (nrow(features) < 10) stop("Too few Delta Ops dashboard features to publish: 
 if (!is.na(x2_km) && !x2_lookup_added) stop("Parsed X2 value but did not add the X2 lookup feature.")
 
 geojson <- pt_geojson_from_df(features)
+# Preserve X2 decimal precision without changing other metrics' serialization.
+x2_numeric_json <- jsonlite::toJSON(x2_km, auto_unbox = TRUE, digits = NA, na = "null")
+if (x2_lookup_added) {
+  x2_feature_index <- which(features$feature_key == "x2_position_current")
+  geojson$features[[x2_feature_index]]$properties$x2_position_relation <- x2_value$relation
+  geojson$features[[x2_feature_index]]$properties$value_numeric <- x2_numeric_json
+}
 
 summary <- list(
   source_name = "DWR Delta Operations Daily Summary",
@@ -552,7 +589,8 @@ summary <- list(
   feed_build_time_local = feed_build_time_local,
   feature_count = nrow(features),
   static_location_count = nrow(loc),
-  x2_position_km = x2_km,
+  x2_position_km = x2_numeric_json,
+  x2_position_relation = x2_value$relation,
   x2_position_date = if (!is.na(x2_km)) x2_position_date_chr else NA_character_,
   x2_position_date_source = if (!is.na(x2_km)) "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday" else NA_character_,
   x2_lookup_added = x2_lookup_added,
@@ -573,8 +611,8 @@ summary <- list(
 )
 
 jsonlite::write_json(parsed, out_values_json, auto_unbox = TRUE, pretty = TRUE, na = "null")
-jsonlite::write_json(summary, out_summary_json, auto_unbox = TRUE, pretty = TRUE, na = "null")
-jsonlite::write_json(geojson, out_geojson, auto_unbox = TRUE, pretty = TRUE, na = "null")
+jsonlite::write_json(summary, out_summary_json, auto_unbox = TRUE, pretty = TRUE, na = "null", json_verbatim = TRUE)
+jsonlite::write_json(geojson, out_geojson, auto_unbox = TRUE, pretty = TRUE, na = "null", json_verbatim = TRUE)
 
 message("Delta Ops report date: ", as.character(report_date))
 message("Features written: ", nrow(features))

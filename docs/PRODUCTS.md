@@ -199,12 +199,24 @@ ownership.
 - **Format/domain/CRS:** GeoJSON operational points and X2 reference points in
   WGS84-compatible longitude/latitude, plus JSON summaries.
 - **Principal units:** cfs, km, TAF, KAF/day, and source-specific percentages.
+- **X2 parsing:** The labeled PDF row accepts `=`, `<`, `>`, `<=`, `>=`, `≤`
+  and `≥`, including decimal thresholds and whitespace/wrapped-row variation.
+  `x2_position_km` in the summary and `value_numeric` on `x2_position_current`
+  retain the reported numeric threshold in km, with the existing nearest-reference
+  map placement; an inequality is a bound, never an inferred midpoint.
+  Additive `x2_position_relation` preserves the operator in the summary,
+  parsed-values metadata and X2 feature. Raw values and labels retain inequalities
+  and source decimal text; equality raw values/labels keep their existing form.
+  Missing/malformed X2 stays unavailable, with no X2 feature and null summary
+  value/relation. Other metric parsing and publication gates are unchanged.
+  Offline regression: `Rscript tests/test_delta_ops_x2.R`.
 - **Time model:** Report date, X2 position date, feed build UTC, and Pacific
   build time are distinct.
 - **Freshness:** The producer rejects future report dates by default and a
   report lag greater than seven days. Scheduled attempts skip work when the
-  current local report date is already published; manual dispatch forces a
-  refresh attempt.
+  current local report date is already published. Manual dispatch bypasses that
+  precheck, but publication still retains the current product for a same-date
+  or older report; recovery through the existing publisher needs a newer report.
 - **QA/empty policy:** PDF length, recognizable content, report date, and a
   minimum operational feature set are validated before output.
 - **Attribution:** California Department of Water Resources; preliminary data
