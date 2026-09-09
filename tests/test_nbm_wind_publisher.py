@@ -278,6 +278,31 @@ class NbmWindPublisherTests(NbmFixtureMixin, unittest.TestCase):
         self.assertEqual([entry.target_lead for entry in state.entries], list(nbm.PUBLISHED_LEADS))
         self.assertEqual(len(nbm.semantic_key(self.candidate)), 64)
 
+    def test_invalid_percentiles_fail_closed_without_changing_canonical(self):
+        self.product(self.canonical, -6, -4)
+        before = {
+            path.relative_to(self.canonical): path.read_bytes()
+            for path in self.canonical.rglob("*") if path.is_file()
+        }
+        for field in ("wind", "gust"):
+            for values in ((7.2, 7.0, 16.7), (1.0, 3.0, 2.9),
+                           (-0.1, 0.0, 1.0), (None, 1.0, 2.0),
+                           (0.0, float("nan"), 2.0), (0.0, 1.0, float("inf"))):
+                with self.subTest(field=field, values=values):
+                    self.product(self.candidate, 0, 2)
+                    path = nbm.validate_product(self.candidate).entries[0].relative_path
+                    target = self.load(self.candidate, path)
+                    properties = target["features"][0]["properties"]
+                    for percentile, value in zip((10, 50, 90), values):
+                        properties[f"{field}_p{percentile}_mph"] = value
+                    self.dump(self.candidate, path, target)
+                    with self.assertRaises(nbm.ProductError):
+                        nbm.reconcile(self.candidate, self.canonical)
+                    self.assertEqual(before, {
+                        path.relative_to(self.canonical): path.read_bytes()
+                        for path in self.canonical.rglob("*") if path.is_file()
+                    })
+
     def test_newer_complete_cycle_is_new(self):
         self.product(self.canonical, -6, -4)
         self.product(self.candidate, 0, 2)

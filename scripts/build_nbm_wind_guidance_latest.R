@@ -481,7 +481,10 @@ nbm_regrid_to_csv <- function(input_grib, output_stub, interpolation = c("biline
     nbm_wgrib2,
     c(
       regrid_input,
-      "-set_grib_type", "same",
+      # Preserve interpolated floats until the final mph rounding. Reusing
+      # source packing rounds each percentile against a different reference
+      # value and can invert equal p10/p50/p90 guidance after interpolation.
+      "-set_grib_type", "ieee",
       "-new_grid_interpolation", interpolation,
       "-new_grid", "latlon", lon_spec, lat_spec, out_grib
     ),

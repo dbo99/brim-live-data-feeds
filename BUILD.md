@@ -183,6 +183,16 @@ The explicit cycle is an example, not a freshness or schedule promise. These
 commands create offline evidence only. Do not point them at `docs/data`, invoke
 the shared publisher, or treat a candidate artifact as an official feed.
 
+NBM wind's offline regrid regression uses synthetic GRIB fixtures and requires
+R plus the workflow's wgrib2 `3.8.*` on `PATH`; it needs no R packages or network.
+It exercises the production regrid functions without running the builder:
+
+```sh
+Rscript tests/test_nbm_wind_regrid.R
+python3 -m unittest -v tests/test_nbm_wind_publisher.py
+python3 -m unittest -v tests/test_main_publisher_workflow_safety.py
+```
+
 ## Inspect changes
 
 After a build, start with:
