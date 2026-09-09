@@ -486,6 +486,18 @@ and producer scripts.
 - Feature keys, numeric/raw values, labels, units, report date and source URL
   are contract-sensitive.
 - Current display units include cfs, km, TAF, KAF/day and percentages.
+- The summary's `x2_position_km:number|null` and X2 feature's
+  `value_numeric:number` are the reported km threshold, including decimals.
+  For inequalities, the threshold supplies the existing nearest-reference map
+  position; it is a bound, not an exact observation or a fabricated midpoint.
+- Additive `x2_position_relation:string|null` in the summary and parsed-values
+  metadata, and `x2_position_relation:string` on `x2_position_current`, retain
+  `=`, `<`, `>`, `<=`, `>=`, `≤` or `≥`. Whitespace within ASCII operators is
+  normalized; Unicode operators are retained. Existing consumers can continue
+  reading the numeric fields without requiring the additive relation field.
+  Inequality `value_raw` and `label_text` retain the relation and decimal text;
+  equality keeps the existing raw/label form. Missing/malformed X2 has null
+  summary value/relation and no X2 feature, never a substituted zero.
 - `delta_ops_daily_summary.json` is not a current registry entry and must be
   treated as producer/QA metadata or compatibility output until ownership is
   decided.
