@@ -10,6 +10,9 @@ publish a product, merge a pull request or change repository settings.
 
 Baseline audited: 2026-07-24; the audited commit is recorded in
 [README.md](README.md).
+Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
+(after PRs #43 and #44). Product acceptance details remain in
+[PRODUCTS.md](PRODUCTS.md) and [BRIM_CONSUMER_CONTRACT.md](BRIM_CONSUMER_CONTRACT.md).
 
 ## Official publication architecture
 
@@ -39,48 +42,59 @@ All fifteen scheduled production writers currently:
 - follow their documented checkout/ref contract with full history;
 - preserve product-specific validation and last-known-good behavior.
 
-The shared schema-2 publisher validates inventory and hashes, enters
-`brim-live-main-publish`, fetches current `origin/main`, runs the product callback,
-stages only statically declared fixed paths and owned roots, and validates the
-staged result. Same and stale candidates are successful no-ops. A non-fast-
-forward push gets at most one fresh-main reconciliation retry. A second race,
-unexpected path, ambiguous same-time identity, or validation failure stops
-without a force push. Feature-branch dispatches can prepare artifacts but the
-publisher job cannot update any branch.
+After the publisher job enters the queue, [`scripts/main_publisher.py`](../scripts/main_publisher.py)
+checks candidate inventory, hashes and source identity, fetches current
+`origin/main`, and creates a detached temporary transaction worktree at that tip.
+The product callback validates and reconciles the candidate with that current
+product. Fixed-file candidates use integrity metadata schema 1; candidates with
+owned target roots use schema 2. Neither is a common public feed schema.
 
-They do not pull, merge or rebase generated-product commits.
+Only a product-classified new candidate can advance the product. Same/stale
+candidates are no-ops according to the product callback; ambiguous identity or
+invalid state fails. The workflow supplies static `--allowlist` paths and, for
+rolling products, `--owned-root` boundaries. Candidate metadata cannot expand
+that ownership. The publisher checks changes before staging, stages only those
+paths, validates the staged product, and issues an ordinary non-force
+`HEAD:refs/heads/main` push. See the concurrency section for the bounded retry.
 
-Winter Storm Levels uses the same shared non-cancelling concurrency and
-normal-push contract. Manual dispatch defaults to runner-temporary dry-run
-output and explicit publication is accepted only from `main`. Its primary and
-fallback schedule paths perform an inventory-only newer-cycle preflight before
-installing geospatial dependencies or starting the producer.
+### Checkout and source identity
 
-The established writers retain their existing documented checkout behavior.
-The two major-basin forecast workflows select the current `main` branch tip for
-scheduled runs and the explicitly dispatched branch tip for manual dry runs.
-Manual publication for either major-basin feed remains permitted only from
-`main`; a feature-branch dispatch remains nonpublishing.
-Winter Storm Levels likewise checks out the selected branch tip and cannot
-publish from a feature branch. A scheduled event resolves to guarded official
-publication only when preflight finds a strictly newer complete cycle.
+Preparation selects the intended branch tip. The checked-out build SHA, publisher callback SHA
+and fresh-main transaction SHA are distinct evidence and must not be conflated:
+
+| Writers | Preparation checkout | Publisher callback/provenance checkout |
+|---|---|---|
+| CDEC, CoCoRaHS, Delta, SCAN, streamflow, groundwater, ASOS/AWOS, snow | `github.ref` with full history | Event `github.sha`; candidate metadata carries `GITHUB_SHA` |
+| CNRFC, CBRFC, GFS, HRRR, NBM wind, NBM QPF, Winter Storm Levels | `main` for schedules; `github.ref_name` for manual runs, with full history | Actual preparation HEAD recorded as `source-sha`, then used for metadata, checkout and publisher `GITHUB_SHA` |
+
+The first group does not record preparation HEAD separately. If the branch
+advances after the event, its candidate code and event-SHA callbacks can differ.
+Fresh-main reconciliation does not prove those code versions match. Investigate
+that distinction during source-related failures; extending recorded build-SHA
+binding is a separate workflow change, not an implemented universal guarantee.
 
 Consequences:
 
 - Scheduled events run from the default branch and can update official
   `main`.
-- Manual dispatch can target a feature branch, where writers produce only
-  validated candidate artifacts.
+- Manual dispatch can target a feature branch for candidate or dry-run evidence.
 - A feature-branch run cannot update `main` through the writer's push command.
 - GitHub Pages publishes only `main:/docs`, so feature-branch products are not
   official hosted products.
 - No producer workflow runs on `pull_request`.
 
-`main` has the active `main-history-safety` ruleset, which blocks deletion and
-non-fast-forward history with no bypass actors. Classic branch protection and
-required pull-request review/status checks remain absent. These workflow
-properties are therefore important safeguards, not a replacement for the
-remaining repository-level controls.
+## Maintainer authority and repository settings
+
+David approves merges, manual production dispatches/reruns and official
+rollbacks. Permission to diagnose, edit documentation or prepare a PR does not
+authorize those actions. Existing schedules and watchdog dispatch policy remain
+separate from a new manual intervention.
+
+Human access, automation identities, the dated GitHub ruleset verification and
+compatible settings guidance are owned by
+[SECURITY.md](../SECURITY.md#repository-access-and-branch-controls). Public read
+access is not write access. A Git commit cannot change or verify hosting-platform
+settings, and blanket PR/check/update requirements can block scheduled writers.
 
 ## Concurrency, cancellation and queueing
 
@@ -94,6 +108,15 @@ Every `publish-to-main` job uses the constant repository-wide group
 Only publication is serialized. After entering that group, each publisher
 fetches fresh `origin/main`, reconciles its own candidate against that state,
 stages only its declared product paths, and pushes normally to `main`.
+
+A non-fast-forward rejection receives exactly one retry: fetch fresh `main`,
+create a new transaction, rerun candidate validation, product reconciliation and
+staged validation, and try a new ordinary push if the product is still new.
+This separately implemented recovery design supersedes the older
+reject-on-first-advance behavior. It never pulls, merges, rebases or force-pushes
+the rejected generated commit. A second race, non-race push error, unexpected
+path or validation failure stops; there is no third attempt or broader recovery
+fallback. A rejected attempt makes no remote update.
 
 `queue: max` retains multiple pending publication jobs instead of replacing an
 existing pending publisher. Ordering should not be treated as a data guarantee;
@@ -137,17 +160,13 @@ hosted canary described by the change. Do not change workflows back to
 Schedules are owned by the workflow files and summarized in
 [PRODUCTS.md](PRODUCTS.md).
 
-Manual dispatch is an explicit operator action, but current production writers
-do not have:
-
-- a confirmation input;
-- a GitHub Environment approval;
-- a `main`-only manual condition;
-- an automatic nonproduction mode.
-
-The two major-basin forecast writers and Winter Storm Levels are documented
-exceptions: they expose a boolean publication input that defaults false, use
-temporary output for dry runs, and refuse feature-branch publication.
+Every production publisher job is gated to `main`; a feature-branch dispatch
+can produce runner/artifact evidence but cannot push even to that feature branch.
+Most writers have no separate confirmation input, so a manual run on `main` can
+publish after its gates pass. CNRFC, CBRFC and Winter Storm Levels expose a
+`publish` boolean that defaults false and use temporary dry-run output. No
+production publisher job declares a GitHub Environment approval gate. David's
+manual production approval is therefore a required process control.
 
 Winter Storm Levels also runs at two guarded UTC offsets for each selected NBM
 00/06/12/18 cycle:
@@ -246,9 +265,8 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
 | `winter-storm-levels-qa` | Winter Storm Levels writer | Complete manifest/GeoJSON bundle and browser QA when a build starts; concise inventory-preflight diagnostics for guarded no-build outcomes; no full GRIB files | Explicit 14 days |
-| `cdec-reservoir-candidate-<run>-<attempt>` | CDEC production workflow | Validated two-file candidate plus nonpublic inventory/hash/source metadata crossing the prepare/publish job boundary | Explicit 2 days |
-| `nbm-qpf-candidate-<run>-<attempt>` | Unseeded NBM QPF workflow | Validated one-cycle public-shape candidate plus schema-2 integrity metadata crossing the prepare/publish boundary | Explicit 2 days |
-| `nbm-qpf-qa-<run>-<attempt>` | Unseeded NBM QPF workflow | R producer preflight and validation diagnostics; no official publication status | Explicit 14 days |
+| Product-specific `*-candidate-<run>-<attempt>` | All fifteen production workflows; exact prefixes are in their upload/download steps | Validated product candidate plus inventory/hash/source metadata crossing the prepare/publish boundary; metadata is artifact-only, not secret or a public feed envelope | Explicit 2 days |
+| `nbm-qpf-qa-<run>-<attempt>` | Seeded NBM QPF workflow | R producer preflight and validation diagnostics; no official publication status | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
 An Actions artifact may disappear while its associated Git commit remains.
@@ -261,7 +279,7 @@ The repository has product-specific, not universal, QA:
 
 - ASOS requires a minimum feature count and valid recent wind observations.
 - CDEC validates usable latest/daily storage and minimum parsed coverage. Its
-  canary publisher revalidates feature/count/time/geometry invariants before
+  product publisher revalidates feature/count/time/geometry invariants before
   artifact creation and after fresh-main staging, and proves artifact hashes and
   the exact two-path allowlist without reserializing product bytes.
 - CoCoRaHS retries and deduplicates. After latest-report selection it omits zero
@@ -291,8 +309,10 @@ The repository has product-specific, not universal, QA:
   and summary before rollback-capable promotion. Its API and output minimums
   remain 300 sites; candidate-index value fallback cannot satisfy or bypass the
   API gate.
-- Streamflow validates only its static station index; the workflow's declared
-  minimum current-discharge threshold is not implemented by the script.
+- Streamflow's R builder gates its static station index. Its publication adapter
+  additionally checks structure, geometry, live-value flags and matching summary
+  counts, but neither enforces the workflow-declared current-discharge minimum.
+  Consistent zero-live-value counts can still pass.
 - Major water-supply basin forecasts validate the exact reviewed 51-record
   roster: 18 product-9 identities, 15 major-basin-only product-2 identities and
   18 product-7 April-July identities.
@@ -346,13 +366,13 @@ The repository has product-specific, not universal, QA:
   produces exactly two complete cycles; malformed, unsafe, missing,
   checksum-invalid, or uncopyable retained state fails instead of publishing a
   one-cycle degradation.
-- NBM QPF requires one complete 10-lead deterministic surface-APCP cycle. The R
-  producer and Python publication validator independently verify temporal/source
-  identity, exact lead closure, lossless WebP decode/dimensions/palette/alpha,
-  bounds, content-addressed paths, hashes, cycle legend metadata and bounded
-  inventory. Initial bootstrap may contain one explicitly labeled complete
-  cycle; the second and every later advancement must validate exactly current
-  plus previous complete cycles and 20 targets.
+- NBM QPF requires one complete 40-lead deterministic surface-APCP cycle, f006
+  through f240 every six hours, with a lossless WebP and numeric grid per target.
+  The R producer and Python validator check source/time identity, complete paired
+  targets, decode/dimensions, palette, numeric encoding, bounds and hashes.
+  Bootstrap is one explicit complete cycle; steady state retains exactly current
+  and previous complete cycles (80 paired targets). The precisely validated
+  legacy ten-lead state is only a migration source for a newer complete cycle.
 
 The CoCoRaHS completeness gap and streamflow current-value gap mean "workflow
 success" is not universally equivalent to "complete current product."
@@ -382,7 +402,7 @@ success" is not universally equivalent to "complete current product."
 | Implemented QA gate fails | No commit step | Remains |
 | Wind QA artifact upload fails | Later default-success commit step is skipped | Remains |
 | No artifact files with `if-no-files-found: ignore` | Artifact step succeeds without files | Product may still publish |
-| Branch advances before push | Non-force push is rejected | Remains |
+| Branch advances before push | Rejected attempt makes no remote update; the shared publisher reconciles once more against fresh `main` | A valid new candidate may advance on retry; same/stale becomes a no-op, while a second race or failure leaves the then-current remote state intact |
 | Product commit succeeds, Pages fails | Git has new product; hosted site may remain older | Git and hosted states diverge temporarily |
 | Script produces a degraded result that passes its checks | Commit may succeed | Prior product is replaced |
 | Local script fails after direct writes | Local checkout may contain partial files; snow and groundwater are product-specific staged-replacement exceptions | Remote remains until a later push |
@@ -391,8 +411,8 @@ Last-known-good protection is therefore partial, not universal.
 
 ## Atomicity
 
-At the remote Git-ref boundary, one successful commit updates all staged paths
-together. A rejected push updates none of them.
+At the remote Git-ref boundary, a successful push advances all committed product
+paths together. A rejected push updates none of them.
 
 The scripts do not universally construct complete product sets in a separate
 staging directory and atomically rename them into place. Snow, groundwater, and
@@ -422,7 +442,8 @@ Record:
 
 1. Workflow display name and file.
 2. Run ID and URL.
-3. Trigger, ref, event SHA and checked-out SHA.
+3. Trigger, ref, event SHA, preparation HEAD, publisher callback SHA and each
+   transaction's fresh-main base SHA, where retained evidence supplies them.
 4. Job and first meaningful failing step.
 5. Minimal relevant log excerpt.
 6. Most recent comparable successful run.
@@ -453,34 +474,8 @@ Cause classifications:
 - workflow configuration;
 - consumer contract.
 
-### Evidence-backed examples
-
-- Snow run `29933106803` timed out on all three NRCS/AWDB preflight stations
-  and stopped before the full fetch. A later comparable run succeeded; the
-  prior official product remained during the failed run. The snow producer now
-  continues to the CDEC attempt and can publish a partial refresh only when
-  CDEC passes and the prior AWDB latest/trace rows and all four prior product
-  files validate.
-- NBM run `29891617635` built seven entries and uploaded QA, then hit conflicts
-  while rebasing a stale event-SHA product commit. PR #1 replaced rebase
-  publication with latest-selected-branch checkout and reject-on-advance push.
-- A Node 20 annotation on older artifact runs led to PR #4, which moved every
-  source `actions/upload-artifact` reference to `@v7`. Scheduled ASOS/GFS runs
-  have since exercised the updated action; preview and HRRR sandbox still need
-  a future nonproduction post-change run for runtime evidence.
-- Groundwater run `30206927617` on July 26, 2026 sent all 38 outer chunks from
-  the primary client into its direct-request fallback, produced zero raw rows
-  and zero API-latest sites, then reported 50 or more warnings without exposing
-  their individual classifications. The source and dependency versions matched
-  successful July 25 and July 27 runs, while a July 29 run exposed one primary
-  HTTP 502 that the direct path recovered. This supports a transient upstream
-  response failure, likely widespread 5xx behavior, rather than a parser/filter
-  rejection; the exact failed statuses and bodies cannot be recovered from the
-  retained log. The unchanged 300-site gate prevented publication, the prior
-  official product remained, and the next three scheduled runs succeeded.
-  Groundwater now uses bounded retry classification, a three-consecutive-chunk
-  circuit breaker, concise structured diagnostics, parser/filter accounting,
-  all-chunk completeness, and staged two-file promotion.
+Notable incidents and their evidence limits are summarized in
+[DEVELOPMENT_HISTORY_AND_RISKS.md](DEVELOPMENT_HISTORY_AND_RISKS.md).
 
 ## Incident playbooks
 
@@ -492,7 +487,8 @@ Cause classifications:
 4. Inspect official manifest/summary age and Pages availability.
 5. Avoid reducing minimums or enabling degraded publication merely to obtain a
    green run.
-6. Retry only when provider recovery or the existing retry policy justifies it.
+6. Retry only when provider recovery or the existing retry policy justifies it;
+   obtain David's approval for a manual production dispatch or rerun.
 
 ### Upstream schema change
 
@@ -515,12 +511,13 @@ Cause classifications:
 
 1. Treat rejection as last-known-good protection.
 2. Do not force, pull, merge or rebase generated output in the runner.
-3. For the CDEC canary, confirm whether its one automatic fresh-main
-   reconciliation retry published or completed as a safe no-op; there is no
-   third attempt.
-4. For an unresolved CDEC retry or an unmigrated writer, confirm the remote
-   branch advanced and determine which writer committed.
-5. Run again from the latest branch tip if a fresh product is still needed.
+3. For any production writer, inspect both bounded attempts and distinguish a
+   successful retry, safe no-op, second race or non-race failure.
+4. Identify the intervening remote commit and compare the product's current
+   semantic state; do not assume every branch advance changes this product.
+5. If a fresh product is still needed, seek David's approval for a new manual
+   run from the intended latest branch tip. Do not extend the retry loop or
+   weaken freshness/completeness checks as an incident workaround.
 
 ### Artifact failure
 
@@ -561,6 +558,38 @@ Do not restore one file from a multi-file product while leaving its manifest or
 summary inconsistent.
 
 ## Backup and recovery model
+
+### Local Git-index recovery
+
+A suspicious local index or lock is not evidence of a remote feed incident or
+of a particular actor. Start read-only from the actual worktree root:
+
+```sh
+git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir --git-path index
+git rev-parse HEAD
+git status --short --branch
+git diff --name-only
+git diff --cached --name-only
+git ls-files --others --exclude-standard
+```
+
+Check whether `GIT_INDEX_FILE`, `GIT_DIR` or `GIT_WORK_TREE` overrides are set
+without dumping the environment. In a linked worktree, `.git` is normally a
+pointer file and the index belongs to that worktree's Git directory; never assume
+the canonical checkout's index is the repair target.
+
+Before an approved repair, preserve the index/lock evidence, available staged and
+unstaged patches, and independent copies of affected tracked/untracked files
+outside the public repository. If a Git read fails, retain its sanitized error
+and preserve files directly. A lock may belong to an active Git process: establish
+ownership before any removal. Do not reset, clean, rebuild an index or switch
+branches merely to make status clean. Agree on the exact repair with David after
+preservation, then reconcile saved work against the intended current base file by
+file, verify staged intent and unrelated files, and review the resulting diff.
+Local repair does not authorize a push, rollback or production dispatch.
+
+### Backup coverage
 
 | Asset | What protects it now | Limitation |
 |---|---|---|

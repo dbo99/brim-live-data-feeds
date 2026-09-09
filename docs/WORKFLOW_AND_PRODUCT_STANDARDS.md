@@ -6,6 +6,8 @@ control and does not authorize a workflow or product change.
 
 Baseline audited: 2026-07-24; the audited commit is recorded in
 [README.md](README.md).
+Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
+(after PRs #43 and #44).
 
 ## Status labels
 
@@ -37,8 +39,9 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
 
-GitHub's dynamic `pages build and deployment` workflow is a nineteenth active
-workflow but is not source-controlled in `.github/workflows`.
+These are eighteen tracked workflows: fifteen writers and three support
+workflows. GitHub Pages deployment is separate platform-managed behavior and is
+not source-controlled in `.github/workflows`.
 
 ## Names and entry points
 
@@ -47,7 +50,9 @@ workflow but is not source-controlled in `.github/workflows`.
 - Workflow filenames describe one product or diagnostic responsibility.
 - Display names identify product and action.
 - Writers call one principal R entry script.
-- Publication paths are explicit in each workflow's `git add`.
+- Each workflow passes explicit `--allowlist` paths and, where needed,
+  `--owned-root` boundaries to the shared publisher; Git staging lives in
+  `scripts/main_publisher.py`.
 
 **Recommended**
 
@@ -96,10 +101,16 @@ workflow but is not source-controlled in `.github/workflows`.
 - Most production manual dispatches have no confirmation/production-target
   input; the CNRFC, CBRFC, and Winter Storm Levels forecast writers are
   product-specific exceptions.
-- Most writers can be manually targeted at a feature branch and write ordinary
-  product paths on that branch; the CNRFC, CBRFC, and Winter Storm Levels
-  forecast writers are product-specific dry-run exceptions.
-- There is no GitHub Environment approval for official publication.
+- Most manual runs on `main` may publish without a separate confirmation input.
+- No production publisher job declares a GitHub Environment approval gate.
+
+**Required procedure**
+
+David approves manual production dispatches/reruns and merges. Feature-branch
+dispatches produce runner/artifact evidence and skip publication; they do not
+push generated files to the feature branch. Existing schedules and the watchdog
+remain governed by their reviewed automation policy. See
+[PUBLISHING_AND_OPERATIONS.md](PUBLISHING_AND_OPERATIONS.md#scheduled-and-manual-execution).
 
 **Recommended**
 
@@ -119,11 +130,18 @@ workflow but is not source-controlled in `.github/workflows`.
   selected ref; it does not itself commit or publish repository data.
 - Sandbox and preview request `contents: read`.
 
+**Gap**
+
+Streamflow still injects `API_USGS_PAT` into its build step without an explicit
+read in its builder. The current exposure and handling rules are documented in
+[SECURITY.md](../SECURITY.md#credential-handling).
+
 **Recommended**
 
 - Request only permissions required by the job.
-- Separate untrusted retrieval/build work from a narrow publisher when the
-  complexity and risk justify it.
+- Preserve the implemented preparation/publisher separation. Repository write
+  permission is not path-scoped; keep candidate and staged-path checks in code.
+- Remove unused secret injection in a separately scoped workflow correction.
 - Do not add secret or OIDC permissions without a documented identity and
   threat-model review.
 
@@ -139,6 +157,14 @@ workflow but is not source-controlled in `.github/workflows`.
 - Candidate artifacts and integrity metadata remain run-local until the
   serialized publisher downloads them. Unexpected branch advancement receives
   at most the shared publisher's one bounded fresh-main reconciliation retry.
+- Each attempt starts a detached transaction at freshly fetched `main` and
+  repeats product validation. Same/stale no-ops follow the product callback;
+  a second race, non-race push failure or invalid transaction fails closed.
+- Preparation selects the intended branch tip. Source binding differs:
+  CNRFC, CBRFC, GFS, HRRR, NBM wind, NBM QPF and Winter Storm Levels record
+  preparation HEAD; the other eight still use event-SHA metadata and callbacks.
+  The exact checkout matrix and resulting provenance gap are in
+  [operations](PUBLISHING_AND_OPERATIONS.md#checkout-and-source-identity).
 
 **Recommended**
 
@@ -147,6 +173,11 @@ workflow but is not source-controlled in `.github/workflows`.
 - Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
   feature-to-main publication.
 - Re-evaluate queue behavior when schedules or runtime increase materially.
+- Extend actual build-SHA binding only through a reviewed workflow change; do
+  not describe event provenance as proof of the code used to build a candidate.
+- Preserve ordinary scheduled writes when reviewing branch protections. Follow
+  the verified state and testing requirements in
+  [SECURITY.md](../SECURITY.md#repository-access-and-branch-controls).
 
 ## Runner and action versions
 
@@ -162,6 +193,7 @@ workflow but is not source-controlled in `.github/workflows`.
 - R dependency setup remains `r-lib/actions/setup-r-dependencies@v2`.
 - Micromamba is `mamba-org/setup-micromamba@v3`.
 - Every upload reference is `actions/upload-artifact@v7`.
+- Candidate downloads use `actions/download-artifact@v8`.
 
 **Gaps**
 
@@ -171,8 +203,8 @@ workflow but is not source-controlled in `.github/workflows`.
   resolver outage still stops preparation before product work.
 - `ubuntu-latest`, apt packages and most R packages are not locked to one fully
   reproducible environment.
-- HRRR sandbox and groundwater preview have not yet produced post-PR #4 runtime
-  evidence for their updated artifact action.
+- A source reference alone does not establish successful hosted runtime use;
+  inspect comparable recent runs when investigating a runtime failure.
 
 **Recommended**
 
@@ -392,10 +424,9 @@ directory and atomically promoted locally.
 - Retrieval, build and publication times are inconsistent or absent across
   product families.
 - Summary field names vary.
-- The four wind manifests and Winter Storm Levels express product-specific
-  machine freshness metadata.
-- Winter Storm Levels version 1 explicitly serializes a null publication time;
-  Git commit, push, and Pages deployment times remain external release evidence.
+- Product manifests express different freshness metadata. Winter Storm Levels
+  version 1 explicitly serializes a null publication time; Git commit, push and
+  Pages deployment times remain external release evidence.
 
 **Recommended**
 
@@ -411,14 +442,18 @@ directory and atomically promoted locally.
 
 - ASOS, GFS, HRRR, NBM, and Winter Storm Levels have product manifests.
 - NBM QPF has a tracked schema-1 manifest and product-specific validator.
+- Publication artifacts use shared integrity metadata: schema 1 for fixed paths,
+  schema 2 when owned roots are present. This metadata is not a consumer schema
+  or a new public manifest requirement.
 - Other families have ad hoc summaries.
 
 **Gaps**
 
 - The remaining families lack formal manifests.
 - Manifest envelopes and versions differ.
-- No JSON Schemas or repository-wide checksum convention exists; Winter Storm
-  Levels has product-specific SHA-256 target checksums.
+- There is no repository-wide public checksum convention; Winter Storm Levels
+  and NBM QPF have product-specific SHA-256 target checksums. Shared artifact
+  hashes verify transfer integrity but do not establish consumer compatibility.
 - Producer workflow/commit and publication time remain absent or inconsistent
   across most products.
 
@@ -434,6 +469,8 @@ directory and atomically promoted locally.
 
 **Implemented**
 
+- All publication candidate artifacts use explicit two-day retention and names
+  qualified by run ID and attempt; metadata stays outside delivered feed paths.
 - ASOS/GFS use default artifact retention.
 - HRRR/NBM and HRRR sandbox use 14 days.
 - Groundwater preview uses 30 days.
@@ -459,12 +496,14 @@ directory and atomically promoted locally.
 
 - Official products live under `docs/data`.
 - HRRR sandbox and groundwater preview do not publish there.
-- Feature-branch writers can change ordinary product paths only on that branch;
-  Pages remains `main:/docs`.
+- Feature-branch writer runs prepare isolated candidates or dry-run evidence;
+  every `publish-to-main` job is skipped and no branch receives a data push.
+- Pages remains `main:/docs`; a candidate artifact is never official delivery.
 
 **Gap**
 
-Production writers lack a dedicated artifact-only mode or test prefix.
+Most writers have no explicit artifact-only input for a manual run on `main`.
+Use an intended feature ref or a documented product-specific dry-run mode.
 
 **Recommended**
 
