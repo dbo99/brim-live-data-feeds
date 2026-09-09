@@ -289,6 +289,11 @@ ownership.
   than one simple stale field. BRIM selects within 3.1 hours of a target.
 - **QA/empty policy:** Complete source field sets, field coverage, grid
   alignment, finite values and minimum retained land points are required.
+- **Regrid precision:** Intermediate regridded GRIBs use IEEE float storage
+  until final one-decimal mph serialization. Reusing the source's scaled
+  packing can independently round equal percentiles into a crossed range.
+  The publication validator still rejects negative, nonfinite or unordered
+  percentiles and requires all seven configured current/support targets.
 - **Fallback:** BRIM may retain the previously displayed in-session field after
   a selected-entry failure.
 - **Attribution:** NOAA/NCEP NBM.
