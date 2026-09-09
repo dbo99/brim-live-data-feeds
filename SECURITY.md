@@ -27,11 +27,16 @@ the required mechanism rather than showing a credential-shaped example.
 
 ## Observed workflow permissions
 
-Production writers require `contents: write` to commit declared outputs. The wind
-watchdog uses `contents: read` to inspect wind manifests/state and `actions: write`
-to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the selected ref. It does
-not itself commit or publish repository data. Sandbox and preview workflows use
-read-only repository access and upload QA artifacts.
+All fifteen production writers use the per-job GitHub Actions `GITHUB_TOKEN`:
+`prepare-candidate` has `contents: read`, and only `publish-to-main` has
+`contents: write`. The publisher validates candidate integrity, product semantics
+and exact owned paths before an ordinary non-force push to `main`. Path limits
+are enforced by repository code; `contents: write` itself is not path-scoped.
+
+The wind watchdog has `contents: read` and `actions: write` to dispatch
+ASOS/AWOS, GFS, HRRR and NBM wind writers on the selected ref. It does not commit
+feed data. Sandbox and preview workflows have read-only repository permission
+and upload QA artifacts. No tracked workflow runs on pull requests.
 
 These are current operational facts, not a grant to broaden permissions.
 New workflows should start with read-only access and add only the minimum scope
@@ -40,8 +45,13 @@ reference-safe publication, bounded timeout, and non-force push behavior.
 
 ## Credential handling
 
-The groundwater workflow can provide the secret named `API_USGS_PAT` to its
-builder. The name is safe to document; its value is not. Builders and workflows
+The groundwater writer and candidate preview pass `API_USGS_PAT` to their build
+steps. The streamflow preparation job also passes it to its build step, although
+`scripts/build_usgs_streamflow_latest_ca.R` does not read it. Removing that unused
+injection remains a separate least-privilege correction; read-only repository
+permission does not eliminate exposure of an explicitly supplied secret.
+
+The secret name is safe to document; its value is not. Builders and workflows
 must not print it, interpolate it into artifact names, write it to `docs/`, retain
 it in debug output, or expose a request header containing it.
 
@@ -73,9 +83,9 @@ The public files function as an API. Relevant failure and abuse cases include:
 - A force push or history rewrite obscuring the publication record.
 
 Mitigations include strict path construction, size/time bounds, schema and numeric
-checks, allowlisted output staging, least-privilege permissions, reference-scoped
-concurrency, immutable action references where practical, maintained dependencies,
-and last-known-good retention.
+checks, allowlisted output staging, least-privilege permissions, the shared
+publication queue, immutable action references where practical, maintained
+dependencies, and product-specific last-known-good retention.
 
 ## Workflow and dependency review
 
@@ -105,28 +115,45 @@ Test fixtures should be public, minimal, attributed where needed, and reviewed f
 license/privacy constraints. Synthetic data should be visibly synthetic and must
 not resemble a real access value.
 
-## Branch and publication controls
+## Repository access and branch controls
 
-`main` has an active `main-history-safety` ruleset that blocks branch deletion
-and non-fast-forward history changes with no bypass actors. Classic branch
-protection remains absent, and the ruleset does not require pull-request review
-or status checks. Because Pages serves `main/docs`, remaining recommended
-repository settings are:
+Public visibility permits reading, forking and proposing pull requests; it does
+not grant upstream write access. Human access is distinct from Actions tokens,
+Apps and deploy keys. David, the repository owner and maintainer, retains merge,
+manual production-dispatch/rerun and official rollback decisions. Authorized
+agents may prepare a branch and PR; that authorization does not transfer these
+decisions. Scheduled writers and the scheduled watchdog operate under their
+existing workflow policy.
 
-- Require pull-request review for code, workflow, contract, and path changes.
-- Require relevant validation checks.
-- Restrict direct and force pushes to `main`.
-- Limit who can modify workflow files and repository secrets.
-- Review third-party workflow approvals and Actions settings.
+**Verified GitHub state, 2026-09-09 UTC:** the repository is public and the only
+direct human collaborator returned by the access API is its owner. The active
+`main-history-safety` branch ruleset matches only `refs/heads/main`, contains
+`deletion` and `non_fast_forward` rules, and has no bypass actors. Classic
+branch protection is absent; required review and status checks are not enabled
+by this ruleset. Pages uses `main:/docs`. This limited check does not establish
+an exhaustive inventory of tokens, keys or integrations.
 
-The history ruleset is useful but does not replace maintainer review and the
-publication checklist, which remain mandatory process controls.
+**Required procedure:** retain maintainer review and the
+[publication procedures](docs/PUBLISHING_AND_OPERATIONS.md). Do not enable a
+required-PR, required-check, signature, deployment or general update restriction
+without a separately reviewed nonproduction test of the exact human and Actions
+identities. Scheduled data writers intentionally push ordinary commits directly
+to `main`; a rule that blocks them would interrupt the feeds. The current history
+ruleset leaves those ordinary updates available and does not need bypass actors.
+
+Settings are external to Git. A documentation commit cannot activate or roll
+back access, rulesets, Actions permissions, secrets, Apps, keys, hooks or Pages.
+Recommended access reviews should cover those surfaces and pending invitations
+at least annually and after an integration change, permission failure or
+unexpected push. Record sanitized findings privately and obtain David's approval
+before changing access or settings.
 
 ## Security review checklist
 
 - No credential material, private source, or personal absolute path in the diff.
 - Workflow permissions are minimal and explicit.
-- Write jobs can modify only declared product outputs.
+- Publisher code rejects changes outside declared product paths; token scope is
+  reviewed separately.
 - No untrusted value is used as an unchecked path, command, or Git reference.
 - Downloads, retries, parsing, and output sizes are bounded.
 - Empty/partial/malformed upstream data fails safely.
@@ -152,3 +179,9 @@ rollback procedures in
 [docs/PUBLISHING_AND_OPERATIONS.md](docs/PUBLISHING_AND_OPERATIONS.md).
 Removing a value from the latest commit alone does not remove it from Git history
 or external caches; history remediation requires owner and platform coordination.
+
+If an unexpected human or integration appears able to write, preserve sanitized
+access and push evidence and report it privately to David. Do not remove access
+during a read-only audit. David determines any suspension, revocation, rotation
+or publication pause; verify the affected history and expected automation before
+resuming publication.
