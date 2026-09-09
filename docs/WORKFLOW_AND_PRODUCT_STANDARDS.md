@@ -108,9 +108,13 @@ workflow but is not source-controlled in `.github/workflows`.
 The build and publication steps share the writer's write-capable token; there
 is no separate least-privilege build job.
 
+The streamflow workflow injects `API_USGS_PAT` even though the streamflow builder
+does not read that variable. This unnecessarily exposes the secret to that job.
+
 **Recommended**
 
 - Request only permissions required by the job.
+- Remove the unused streamflow secret injection in a focused workflow change.
 - Separate untrusted retrieval/build work from a narrow publisher when the
   complexity and risk justify it.
 - Do not add secret or OIDC permissions without a documented identity and
@@ -133,6 +137,10 @@ is no separate least-privilege build job.
 - Do not reintroduce `git pull`, merge, rebase, force push or hardcoded
   feature-to-main publication.
 - Re-evaluate queue behavior when schedules or runtime increase materially.
+- Protect `main` from deletion and non-fast-forward updates without restricting
+  ordinary writer commits. Do not add required pull requests, checks, signatures,
+  deployments or a general update restriction until exact maintainer and Actions
+  bypass behavior passes an isolated nonproduction test.
 
 ## Runner and action versions
 

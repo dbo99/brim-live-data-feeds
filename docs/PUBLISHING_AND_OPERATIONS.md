@@ -65,6 +65,29 @@ Consequences:
 workflow properties are therefore important procedural safeguards, not a
 replacement for repository-level protection.
 
+## Repository access and main-history settings
+
+The intended access model has one human upstream writer/administrator: the
+repository maintainer. Public users may read, fork and propose pull requests.
+The expected automated repository writer is the per-job GitHub Actions
+`GITHUB_TOKEN` used by the thirteen declared production workflows. GitHub Pages
+deploys `main:/docs` through its platform bot; that deployment identity is not a
+feed-commit writer.
+
+The minimum compatible target protection for `main` is a branch ruleset that
+restricts deletion and blocks force pushes without restricting ordinary
+updates. It needs no bypass list because it does not block the maintainer's
+ordinary pushes, reviewed pull-request merges, or the writers' non-force
+publication commits. A required-pull-request, required-check, signed-commit,
+deployment, or general update-restriction rule must remain off until a dedicated
+nonproduction test proves the exact maintainer and Actions bypass behavior.
+
+Repository access, Actions permissions, secrets, Apps, deploy keys, hooks,
+environments, Pages configuration and rulesets are hosting-platform state. A
+commit or merge cannot activate, verify or roll back those settings. Review them
+at least annually and after an access/integration change, a permission failure or
+an unexpected push.
+
 ## Concurrency, cancellation and queueing
 
 All production writers share one group per ref. On `main`, that serializes

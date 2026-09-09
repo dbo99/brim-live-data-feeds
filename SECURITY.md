@@ -27,11 +27,13 @@ the required mechanism rather than showing a credential-shaped example.
 
 ## Observed workflow permissions
 
-Production writers require `contents: write` to commit declared outputs. The wind
-watchdog uses `contents: read` to inspect wind manifests/state and `actions: write`
-to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the selected ref. It does
-not itself commit or publish repository data. Sandbox and preview workflows use
-read-only repository access and upload QA artifacts.
+Production writers use the per-job GitHub Actions `GITHUB_TOKEN` and require
+`contents: write` to commit declared outputs. The wind watchdog uses
+`contents: read` to inspect wind manifests/state and `actions: write` to dispatch
+ASOS/AWOS, GFS, HRRR, and NBM writers on the selected ref. It does not itself
+commit or publish repository data. Sandbox and preview workflows use read-only
+repository access and upload QA artifacts. No current workflow runs on a pull
+request.
 
 These are current operational facts, not a grant to broaden permissions.
 New workflows should start with read-only access and add only the minimum scope
@@ -40,10 +42,13 @@ reference-safe publication, bounded timeout, and non-force push behavior.
 
 ## Credential handling
 
-The groundwater workflow can provide the secret named `API_USGS_PAT` to its
-builder. The name is safe to document; its value is not. Builders and workflows
-must not print it, interpolate it into artifact names, write it to `docs/`, retain
-it in debug output, or expose a request header containing it.
+The groundwater writer and candidate-preview workflow can provide the secret
+named `API_USGS_PAT` to their builders. The streamflow workflow also currently
+injects that secret, although its builder does not read it; removing that
+unnecessary exposure is a separate least-privilege correction. The name is safe
+to document; its value is not. Builders and workflows must not print it,
+interpolate it into artifact names, write it to `docs/`, retain it in debug
+output, or expose a request header containing it.
 
 For all credentials:
 
@@ -107,18 +112,30 @@ not resemble a real access value.
 
 ## Branch and publication controls
 
+The repository access policy is that the maintainer is the only human account
+with upstream write or administration access. Public users may read, fork and
+open pull requests, but should not be direct collaborators. The expected
+repository-content automation is the GitHub Actions `GITHUB_TOKEN` used by the
+declared production writers; the GitHub Pages bot deploys the configured Pages
+source but does not author feed commits.
+
 At the documentation baseline, `main` had no observed branch protection or
-ruleset. That is a high-priority control gap because Pages serves `main/docs`.
-Recommended repository settings are:
+ruleset. Settings are external to Git, so a branch or pull request cannot make a
+ruleset active. The minimum compatible target control is a branch ruleset that
+matches only `main`, restricts deletion and blocks force pushes, and has no
+bypass actors. It must leave ordinary non-force updates unrestricted so the
+scheduled writers, maintainer pushes and reviewed pull-request merges continue
+to work.
 
-- Require pull-request review for code, workflow, contract, and path changes.
-- Require relevant validation checks.
-- Restrict direct and force pushes to `main`.
-- Limit who can modify workflow files and repository secrets.
-- Review third-party workflow approvals and Actions settings.
+Do not require pull requests, status checks, signed commits, deployments, or a
+general update restriction on `main` until an isolated test proves the exact
+maintainer and GitHub Actions bypass behavior. Review direct collaborators,
+pending invitations, deploy keys, installed Apps, webhooks, repository
+credentials, Actions defaults and ruleset bypass actors at least annually and
+after any access/integration change or unexpected push.
 
-Until platform controls are enabled, contributors must treat maintainer review and
-the publication checklist as mandatory process controls.
+Until compatible platform controls are enabled, contributors must treat
+maintainer review and the publication checklist as mandatory process controls.
 
 ## Security review checklist
 
@@ -150,3 +167,14 @@ rollback procedures in
 [docs/PUBLISHING_AND_OPERATIONS.md](docs/PUBLISHING_AND_OPERATIONS.md).
 Removing a value from the latest commit alone does not remove it from Git history
 or external caches; history remediation requires owner and platform coordination.
+
+If an unexpected human, App, key, token or integration appears able to write:
+
+1. Stop the audit or settings change and report the actor and evidence privately
+   to the maintainer; do not remove access during a read-only review.
+2. Preserve the relevant access record, push/ref, workflow run and settings state
+   without reproducing credentials.
+3. Have the maintainer revoke or suspend the exact access path, rotate any
+   affected credential, and review `main`, workflows, rulesets, secrets and Pages.
+4. Restore publication only after the expected writer inventory and branch
+   history are verified.
