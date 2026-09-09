@@ -287,7 +287,13 @@ The repository has product-specific, not universal, QA:
   11 or more fails closed. Every run logs before/omitted/after counts, threshold
   10, and at most 10 station/report identifiers. This narrow malformed-metadata
   policy does not supply the still-missing overall completeness threshold.
-- Delta validates PDF structure, date and a minimum feature set.
+- Delta checks HTTP status, MIME, minimum size, leading PDF magic and terminal
+  EOF before Poppler, then validates report date and a minimum feature set.
+  The product-specific retrieval policy in [PRODUCTS.md](PRODUCTS.md#3-delta-operations)
+  bounds transient retries to three attempts. Attempt logs include status,
+  normalized MIME, byte count, SHA-256, source/final URL and validation outcome;
+  response bodies and raw request exceptions are omitted, URL userinfo/query/
+  fragment values are removed and logged values are length-limited.
 - GFS validates downloads/JSON and at least one entry, but can retain partial
   target coverage.
 - HRRR validates GRIB inventory, grid orientation/dimensions and target
@@ -382,6 +388,7 @@ success" is not universally equivalent to "complete current product."
 | Failure point | Current remote behavior | Prior official product |
 |---|---|---|
 | Upstream retrieval stops the script | No commit step | Remains in Git and Pages |
+| Delta receives persistent non-PDF bytes or exhausts retrieval retries | `DELTA_OPS_UPSTREAM_NON_PDF_RESPONSE`, `DELTA_OPS_UPSTREAM_HTTP_RESPONSE` or `DELTA_OPS_UPSTREAM_TRANSPORT_FAILURE` stops preparation before output writes/candidate upload; publication is skipped | Prior canonical Delta four-file product remains unchanged |
 | CoCoRaHS has 11 or more retained observations without a usable station name, or its strict candidate validator rejects any feature | Candidate construction/publication stops; diagnostics report the bounded station-name omission evidence | Prior canonical four-file product remains unchanged in Git and Pages |
 | One or more CNRFC pages fail after a valid prior exists | Successful families/records advance; failed metrics become unexpired `stale_last_known_good`, `expired`, explicit source `unavailable`, or `failed_no_data` | A complete, honestly degraded 51-record snapshot may replace the prior; values retain their original source and successful-retrieval provenance |
 | All CNRFC families fail after a valid prior exists | Complete 51-record degraded snapshot is constructed; family health becomes `outage_using_last_known_good` where provenance values remain, otherwise `unusable` | Prior values may remain as non-map LKG/expired provenance; the prior payload is not left online falsely marked current |
@@ -480,6 +487,16 @@ Notable incidents and their evidence limits are summarized in
 ## Incident playbooks
 
 ### Upstream outage or timeout
+
+For Delta, an HTTP 200 response can still be a DWR rejection HTML page.
+Historical [PR #40](https://github.com/dbo99/brim-live-data-feeds/pull/40) supplied
+transport-hardening evidence; its old availability observation is not evidence
+of a continuing outage. The current offline fixtures reproduce the rejection
+without contacting DWR. Bounded retries improve transient recovery and diagnosis
+but cannot restore access during a sustained upstream rejection. Neither the
+current implementation nor PR #40 contains Gmail/email ingestion; a dedicated
+email contingency remains separate future work, with no automatic CWC fallback.
+Same-report-date candidates remain publisher no-ops, including manual attempts.
 
 1. Confirm the first failing request and upstream provider.
 2. Compare with a successful run and provider status.

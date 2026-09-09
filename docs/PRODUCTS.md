@@ -217,8 +217,26 @@ ownership.
   current local report date is already published. Manual dispatch bypasses that
   precheck, but publication still retains the current product for a same-date
   or older report; recovery through the existing publisher needs a newer report.
-- **QA/empty policy:** PDF length, recognizable content, report date, and a
-  minimum operational feature set are validated before output.
+- **PDF retrieval:** `scripts/delta_ops_pdf_transport.R` requires HTTP 2xx,
+  at least 1 KiB, leading `%PDF-` magic and a final `%%EOF` line (only PDF
+  whitespace may follow, checked within the last 2 KiB) before Poppler.
+  Missing/empty MIME, `application/pdf`, `application/x-pdf`,
+  `application/octet-stream` and `binary/octet-stream` are accepted only when
+  those byte checks pass; other explicit MIME types are rejected. Each request
+  has a 10-second connection limit, 30-second total timeout and five-redirect
+  limit. Transient curl failures, HTTP 408/425/429/5xx, missing HTTP status and
+  successful non-PDF responses receive at most three attempts with 1- and
+  2-second backoff. Permanent HTTP/request failures and PDF parser errors do
+  not retry. No CWC or email fallback is implemented.
+- **QA/empty policy:** Retrieval rejection stops before Poppler and output
+  writes; the isolated candidate is not uploaded and the prior canonical
+  four-file product remains unchanged. Valid PDFs retain the current report-date
+  and minimum operational-feature checks. This is fail-and-retain, not a claim
+  that all later local multi-file writes are atomic.
+  Offline checks: `Rscript tests/test_delta_ops_pdf_transport.R`,
+  `python3 -m unittest -v tests/test_delta_ops_pdf_integration.py` (localhost
+  only), `Rscript tests/test_delta_ops_x2.R`, and the Delta cases in
+  `tests/test_phase2_product_publishers.py`.
 - **Attribution:** California Department of Water Resources; preliminary data
   warning remains visible.
 - **Known gaps:** No manifest/schema version and no documented status for the

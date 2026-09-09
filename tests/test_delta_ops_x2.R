@@ -45,7 +45,7 @@ main <- function() {
     overrides[["DELTA_OPS_OUT_DIR"]] <- file.path(root, "docs/data")
     do.call(Sys.setenv, as.list(overrides))
     scope <- new.env(parent = globalenv())
-    eval(builder[seq_len(index("pdf_tmp") - 1L)], scope)
+    eval(builder[seq_len(index("raw_text") - 1L)], scope)
     scope$feed_build_date_local <- "2026-09-08"
     scope$feed_build_time_utc <- "2026-09-08T19:00:19Z"
     scope$feed_build_time_local <- "2026-09-08 12:00:19 PDT"
