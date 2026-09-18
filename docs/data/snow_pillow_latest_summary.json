@@ -1,6 +1,6 @@
 {
   "layer": "Snow pillows / SWE latest",
-  "build_time_local": "2026-09-18 10:21 AM PDT",
+  "build_time_local": "2026-09-18 04:43 PM PDT",
   "build_date_local": "2026-09-18",
   "local_time_zone": "America/Los_Angeles",
   "current_water_year": 2026,
@@ -8,9 +8,9 @@
   "fetch_end_date": "2026-09-18",
   "station_rows": 304,
   "latest_geojson_rows": 304,
-  "current_wy_trace_rows": 98680,
-  "snotel_wteq_rows_returned": 58021,
-  "snotel_snwd_rows_returned": 61561,
+  "current_wy_trace_rows": 98681,
+  "snotel_wteq_rows_returned": 58022,
+  "snotel_snwd_rows_returned": 61562,
   "cdec_swe_rows_returned": 41008,
   "cdec_sensor3_rows_returned": 45537,
   "cdec_sensor82_rows_returned": 45537,
@@ -64,8 +64,8 @@
   "invalid_high_swe_rows_excluded": 19,
   "rows_with_latest_swe": 288,
   "rows_without_latest_swe": 16,
-  "rows_reported_zero": 257,
-  "rows_reported_positive": 24,
+  "rows_reported_zero": 261,
+  "rows_reported_positive": 20,
   "rows_missing_recent_value": 0,
   "rows_outside_snow_season_no_recent_report": 16,
   "rows_stale_last_value": 7,
@@ -85,18 +85,18 @@
   "awdb_preflight_message": "AWDB preflight passed: 301:CA:SNTL returned 352 parsed WTEQ row(s).",
   "refresh": {
     "mode": "full",
-    "build_time_utc": "2026-09-18T17:21:50Z",
+    "build_time_utc": "2026-09-18T23:43:43Z",
     "last_known_good_provider_data_preserved": false,
     "providers": {
       "nrcs_snotel": {
         "fetch_status": "success",
         "qa_status": "passed",
         "publication_action": "refreshed",
-        "fetch_started_at_utc": "2026-09-18T17:20:12Z",
-        "fetch_completed_at_utc": "2026-09-18T17:20:40Z",
-        "result_built_at_utc": "2026-09-18T17:21:47Z",
+        "fetch_started_at_utc": "2026-09-18T23:42:04Z",
+        "fetch_completed_at_utc": "2026-09-18T23:42:33Z",
+        "result_built_at_utc": "2026-09-18T23:43:40Z",
         "fresh_latest_rows": 175,
-        "fresh_trace_rows": 57672,
+        "fresh_trace_rows": 57673,
         "fresh_site_count": 165,
         "carried_forward_latest_rows": 0,
         "carried_forward_trace_rows": 0,
@@ -108,9 +108,9 @@
         "fetch_status": "success",
         "qa_status": "passed",
         "publication_action": "refreshed",
-        "fetch_started_at_utc": "2026-09-18T17:20:40Z",
-        "fetch_completed_at_utc": "2026-09-18T17:21:46Z",
-        "result_built_at_utc": "2026-09-18T17:21:47Z",
+        "fetch_started_at_utc": "2026-09-18T23:42:33Z",
+        "fetch_completed_at_utc": "2026-09-18T23:43:38Z",
+        "result_built_at_utc": "2026-09-18T23:43:40Z",
         "fresh_latest_rows": 129,
         "fresh_trace_rows": 41008,
         "fresh_site_count": 123,
@@ -129,11 +129,11 @@
     },
     {
       "latest_swe_report_status": "reported_positive",
-      "n": 24
+      "n": 20
     },
     {
       "latest_swe_report_status": "reported_zero",
-      "n": 257
+      "n": 261
     },
     {
       "latest_swe_report_status": "stale_last_value",
@@ -169,12 +169,12 @@
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_positive",
-      "n": 22
+      "n": 18
     },
     {
       "live_provider_key": "nrcs_snotel",
       "latest_swe_report_status": "reported_zero",
-      "n": 143
+      "n": 147
     }
   ],
   "data_notes": ["Missing SWE is not interpreted as zero.", "Zero SWE is shown only when the provider returned a numeric 0.", "For CDEC/CCSS, SNO ADJ (#82) is preferred; SNOW WC (#3) fills only a limited unrevised tail up to 21 days or acts as fallback if no #82 is available.", "Negative provider SWE values and values above 250 in are treated as invalid/missing and excluded from latest/trace products.", "Recent-change deltas are suppressed when the latest SWE observation is older than 7 days.", "When exactly one provider fails retrieval or QA, valid prior rows for that provider are carried forward unchanged while the healthy provider refreshes.", "A partial refresh is refused if all four prior snow outputs cannot be parsed and validated or if valid prior rows for the failed provider are unavailable.", "Popup % median values use station/day median SWE denominators from WY1991-WY2020 and the rolling 30 complete water years when support is sufficient and the denominator is greater than zero.", "Observation values are daily; browser-facing observation fields use local date labels rather than UTC/Z timestamps."],
@@ -194,34 +194,34 @@
     "min_cdec_sites": 119,
     "min_current_wy_trace_rows": 94305,
     "min_latest_swe_rows": 10,
-    "observed_snotel_wteq_rows": 58021,
-    "observed_snotel_snwd_rows": 61561,
+    "observed_snotel_wteq_rows": 58022,
+    "observed_snotel_snwd_rows": 61562,
     "observed_cdec_swe_rows": 41008,
     "observed_cdec_sensor3_rows": 45537,
     "observed_cdec_sensor82_rows": 45537,
-    "observed_current_wy_trace_rows": 98680,
+    "observed_current_wy_trace_rows": 98681,
     "observed_latest_swe_rows": 288,
     "provider_qa": {
       "nrcs_snotel": {
         "provider_id": "nrcs_snotel",
         "passed": true,
         "problems": [],
-        "row_count": 57672,
+        "row_count": 57673,
         "site_count": 165,
         "indexed_station_count": 175,
         "expected_fetch_days": 353,
         "expected_station_days": 61775,
         "station_coverage_fraction": 0.94285714,
-        "row_coverage_fraction": 0.93358155,
+        "row_coverage_fraction": 0.93359773,
         "min_rows": 55598,
         "min_sites": 158,
         "min_station_fraction": 0.9,
         "min_row_fraction": 0.9,
         "min_depth_rows": 55598,
-        "observed_depth_rows": 61486,
+        "observed_depth_rows": 61487,
         "observed_depth_sites": 175,
         "depth_station_coverage_fraction": 1,
-        "depth_row_coverage_fraction": 0.99532173
+        "depth_row_coverage_fraction": 0.99533792
       },
       "cdec_snow_sensor": {
         "provider_id": "cdec_snow_sensor",
@@ -244,7 +244,7 @@
       "passed": true,
       "problems": [],
       "latest_rows": 304,
-      "trace_rows": 98680,
+      "trace_rows": 98681,
       "latest_sites": 304,
       "trace_sites": 288
     }
