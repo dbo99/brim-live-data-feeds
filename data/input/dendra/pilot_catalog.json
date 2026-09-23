@@ -1,0 +1,928 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at_utc": "2026-09-20T07:20:07.554841+00:00",
+  "selection_status": "four_stations_five_streams_confirmed_by_root",
+  "selection_purpose": "Small daily-only water-year/day-of-water-year runner prototype, preserving sensors and explicit units.",
+  "station_count": 4,
+  "stream_count": 5,
+  "requested_window": {
+    "water_years": [
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025,
+      2026
+    ],
+    "start_local_date": "2016-10-01",
+    "complete_days_only": true,
+    "end_policy": "Up through yesterday in the daily aggregation timezone selected by the producer.",
+    "source_station_timezones_all": "PST",
+    "source_station_utc_offset_seconds_all": -28800,
+    "operational_day_timezone_not_selected_by_this_catalog": true,
+    "note": "At an early September20UTC run, California/PST may still be September19; calculate yesterday after choosing the daily timezone."
+  },
+  "stations": [
+    {
+      "station_id": "58e68cabdf5ce600012602bd",
+      "station_key": "deep_canyon",
+      "source_name": "Deep Canyon",
+      "source_full_name": "Boyd Deep Canyon Desert Research Center Weather Station",
+      "source_slug": "deep-canyon",
+      "organization_id": "58db17c424dc720001671378",
+      "organization_name": "UC Nature",
+      "organization_slug": "ucnrs",
+      "source_time_zone": "PST",
+      "source_utc_offset_seconds": -28800,
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "source_is_active": true,
+      "state": "ready",
+      "source_metadata": {
+        "evidence_file": "evidence/stations_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/stations?%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:31:10.051125+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "9a0fd45fc089f422d0ace68c1ff9c288354569947fab90bd0d7e87168be2ce34"
+      },
+      "dendra_station_page_url": "https://ui.dendra.science/orgs/ucnrs/stations/58e68cabdf5ce600012602bd",
+      "dendra_station_page_link_status": "browser_verified_anonymous",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -116.37833,
+          33.64805
+        ]
+      },
+      "selected_stream_ids": [
+        "5d8e42e72da5c3cc53f6531d"
+      ],
+      "selected_stream_count": 1
+    },
+    {
+      "station_id": "635319fcb055ac5348842453",
+      "station_key": "camp_cady_wa",
+      "source_name": "Camp Cady WA",
+      "source_full_name": null,
+      "source_slug": "camp-cady-wa",
+      "organization_id": "6092b070492ae15e05876ed8",
+      "organization_name": "CA Dept. of Fish and Wildlife",
+      "organization_slug": "cdfw",
+      "source_time_zone": "PST",
+      "source_utc_offset_seconds": -28800,
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "source_is_active": true,
+      "state": "ready",
+      "source_metadata": {
+        "evidence_file": "evidence/stations_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/stations?%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:31:10.051125+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "9a0fd45fc089f422d0ace68c1ff9c288354569947fab90bd0d7e87168be2ce34"
+      },
+      "dendra_station_page_url": "https://ui.dendra.science/orgs/cdfw/stations/635319fcb055ac5348842453",
+      "dendra_station_page_link_status": "browser_verified_anonymous",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -116.6084,
+          34.93652
+        ]
+      },
+      "selected_stream_ids": [
+        "63531a67a9b61453fa1ca4ed",
+        "63531a684b24f740d53623e6"
+      ],
+      "selected_stream_count": 2
+    },
+    {
+      "station_id": "6a63ad510b9807c39e56116a",
+      "station_key": "station_6a63ad510b9807c39e56116a",
+      "source_name": "Donner Lake West",
+      "source_full_name": null,
+      "source_slug": "station-6a63ad510b9807c39e56116a",
+      "organization_id": "6a6282fb2013c9765ad38b72",
+      "organization_name": "Central Sierra Snow Lab",
+      "organization_slug": "cssl",
+      "source_time_zone": "PST",
+      "source_utc_offset_seconds": -28800,
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "source_is_active": true,
+      "state": "ready",
+      "source_metadata": {
+        "evidence_file": "evidence/stations_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/stations?%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:31:10.051125+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "9a0fd45fc089f422d0ace68c1ff9c288354569947fab90bd0d7e87168be2ce34"
+      },
+      "dendra_station_page_url": "https://ui.dendra.science/orgs/cssl/stations/6a63ad510b9807c39e56116a",
+      "dendra_station_page_link_status": "pattern_derived_not_individually_browser_tested",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.3091,
+          39.31549
+        ]
+      },
+      "selected_stream_ids": [
+        "6a91b4c082e5d652e2b16ffa"
+      ],
+      "selected_stream_count": 1
+    },
+    {
+      "station_id": "58e68cabdf5ce600012602c0",
+      "station_key": "granites",
+      "source_name": "Granites",
+      "source_full_name": null,
+      "source_slug": "granites",
+      "organization_id": "58db17c424dc720001671378",
+      "organization_name": "UC Nature",
+      "organization_slug": "ucnrs",
+      "source_time_zone": "PST",
+      "source_utc_offset_seconds": -28800,
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "source_is_active": true,
+      "state": "ready",
+      "source_metadata": {
+        "evidence_file": "evidence/stations_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/stations?%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:31:10.051125+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "9a0fd45fc089f422d0ace68c1ff9c288354569947fab90bd0d7e87168be2ce34"
+      },
+      "dendra_station_page_url": "https://ui.dendra.science/orgs/ucnrs/stations/58e68cabdf5ce600012602c0",
+      "dendra_station_page_link_status": "browser_verified_anonymous",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -115.653,
+          34.78222
+        ]
+      },
+      "selected_stream_ids": [
+        "5ae879f1fe27f4c40b102ea4"
+      ],
+      "selected_stream_count": 1
+    }
+  ],
+  "streams": [
+    {
+      "datastream_id": "5d8e42e72da5c3cc53f6531d",
+      "station_id": "58e68cabdf5ce600012602bd",
+      "station_key": "deep_canyon",
+      "source_name": "Volumetric Water Content Vertical Avg",
+      "organization_id": "58db17c424dc720001671378",
+      "organization_name": "UC Nature",
+      "organization_slug": "ucnrs",
+      "source_terms": {
+        "dt": {
+          "Unit": "VolumetricWaterContent"
+        },
+        "ds": {
+          "Aggregate": "Average",
+          "Medium": "Soil",
+          "Variable": "VolumetricWaterContent"
+        },
+        "dq": {
+          "Measurement": "VolumetricWaterContent",
+          "Purpose": "ReadytoUse"
+        }
+      },
+      "source_attributes": {
+        "Orientation": "Vertical"
+      },
+      "native_unit_tag": "dt_Unit_VolumetricWaterContent",
+      "native_unit_name": "VolumetricWaterContent",
+      "unit_normalization": {
+        "target_unit": "% volumetric water content",
+        "status": "verified_percent_conversion",
+        "multiplier": 100,
+        "offset": 0,
+        "unit_definition_source": "https://api.dendra.science/v2/vocabularies/dt-unit",
+        "unit_definition_evidence": "pilot_catalog.json#/provenance/validated_unit_dictionary",
+        "unit_definition_evidence_note": "Relevant official unit terms and source response hash are embedded in this file."
+      },
+      "depth_mm": null,
+      "depth_cm": null,
+      "depth_source": "not_specified_or_unresolved",
+      "orientation": "Vertical",
+      "sensor_label": "Vertical (depth unspecified)",
+      "is_enabled": true,
+      "state": "ready",
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "configured_extent": {
+        "begins_at": "2010-09-30T02:10:00.000Z",
+        "ends_before": "2200-02-02T00:00:00.000Z"
+      },
+      "source_updated_at": "2025-02-18T21:04:35.475Z",
+      "source_metadata": {
+        "evidence_file": "evidence/candidate_streams_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/datastreams?%24or%5B0%5D%5Bterms.ds.Variable%5D=VolumetricWaterContent&%24or%5B1%5D%5Bterms.dq.Measurement%5D=SoilMoisture&%24or%5B2%5D%5Bterms.dq.Measurement%5D=VolumetricWaterContent&%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:33:26.951380+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "70eefdef678c4081e434ce43b0510b7f3fbdde7470af57c73c495724b0ce6772"
+      },
+      "access_check": {
+        "checked_at_utc": "2026-09-19T16:40:50.942055+00:00",
+        "http_status": 200,
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5d8e42e72da5c3cc53f6531d&%24sort%5Btime%5D=-1&%24limit=1",
+        "evidence_file": "evidence/latest/5d8e42e72da5c3cc53f6531d.json",
+        "status": "anonymous_access_observed",
+        "latest_observation": {
+          "lt": "2026-09-19T08:10:00.000",
+          "t": "2026-09-19T16:10:00.000Z",
+          "v": 0.046
+        },
+        "latest_value_kind": "numeric",
+        "observation_age_seconds_at_retrieval": 1850.942,
+        "recent_window_status": "latest_within_preceding_7_days"
+      },
+      "metadata_disabled_historical_record": false,
+      "observation_test_status": "anonymous_access_observed",
+      "observation_evidence": {},
+      "station_name": "Deep Canyon",
+      "observed_start_utc": "2010-09-30T02:10:00.000Z",
+      "dated_latest_utc": "2026-09-19T16:10:00.000Z",
+      "role": "long_recent_record",
+      "observed_start_evidence": {
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5d8e42e72da5c3cc53f6531d&%24sort%5Btime%5D=1&%24limit=1",
+        "retrieved_at_utc": "2026-09-20T04:49:03.939318+00:00",
+        "http_status": 200,
+        "first_returned_row": {
+          "lt": "2010-09-29T18:10:00.000",
+          "t": "2010-09-30T02:10:00.000Z",
+          "v": 0.123
+        },
+        "response_sha256": "2967751879c9f3359123cca5198572f381abf937f034964e53d55d6aae38ab80"
+      },
+      "cadence_evidence": {
+        "configured_interval_ms_from_seed": 600000,
+        "configured_interval_provenance": {
+          "source_url": "https://api.dendra.science/v2/datastreams?station_id=58e68cabdf5ce600012602bd&%24limit=2000",
+          "retrieved_at_utc": "2026-09-19T14:18:36.687641+00:00",
+          "http_status": 200,
+          "access_control_allow_origin": "*",
+          "original_capture_file": "deep_canyon_streams_response.json",
+          "original_capture_sha256": "db40d0e44548a1cb2082a4d0ea4015ba89613fac4f29468a1e6ec90b2157fac3",
+          "original_payload_file": "deep_canyon_streams.json",
+          "original_payload_sha256": "f1e688ce030733b592fff1ec35107a2b301a29988ecaf7569b44a3c630b567bc"
+        },
+        "sampled_adjacent_intervals_seconds": [
+          600.0,
+          600.0
+        ],
+        "sampled_interval_provenance": {
+          "fixture": "evidence/fixtures/deep_canyon_latest.json",
+          "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5d8e42e72da5c3cc53f6531d&%24sort%5Btime%5D=-1&%24limit=3",
+          "retrieved_at_utc": "2026-09-19T14:19:28.597418+00:00",
+          "observation": {
+            "lt": "2026-09-19T06:10:00.000",
+            "t": "2026-09-19T14:10:00.000Z",
+            "v": 0.046
+          },
+          "observation_age_minutes_at_retrieval": 9.477,
+          "sampled_adjacent_intervals_seconds": [
+            600.0,
+            600.0
+          ]
+        },
+        "status": "source_configuration_and_short_sample_do_not_establish_full_record_cadence",
+        "note": "Ten-minute spacing was observed in a short sample; outages and changes remain unmeasured."
+      }
+    },
+    {
+      "datastream_id": "63531a67a9b61453fa1ca4ed",
+      "station_id": "635319fcb055ac5348842453",
+      "station_key": "camp_cady_wa",
+      "source_name": "Soil Moisture 200 mm Average",
+      "organization_id": "6092b070492ae15e05876ed8",
+      "organization_name": "CA Dept. of Fish and Wildlife",
+      "organization_slug": "cdfw",
+      "source_terms": {
+        "dq": {
+          "Measurement": "SoilMoisture",
+          "Purpose": "ReadytoUse"
+        },
+        "dt": {
+          "Unit": "Percent"
+        },
+        "ds": {
+          "Aggregate": "Average",
+          "Medium": "Soil",
+          "Variable": "VolumetricWaterContent"
+        }
+      },
+      "source_attributes": {
+        "depth": {
+          "value": 200,
+          "unit_tag": "dt_Unit_Millimeter"
+        },
+        "orientation": "horizontal"
+      },
+      "native_unit_tag": "dt_Unit_Percent",
+      "native_unit_name": "Percent",
+      "unit_normalization": {
+        "target_unit": "% volumetric water content",
+        "status": "verified_percent_conversion",
+        "multiplier": 1,
+        "offset": 0,
+        "unit_definition_source": "https://api.dendra.science/v2/vocabularies/dt-unit",
+        "unit_definition_evidence": "pilot_catalog.json#/provenance/validated_unit_dictionary",
+        "unit_definition_evidence_note": "Relevant official unit terms and source response hash are embedded in this file."
+      },
+      "depth_mm": 200,
+      "depth_cm": 20.0,
+      "depth_source": "source_attribute_depth",
+      "orientation": "horizontal",
+      "sensor_label": "20 cm",
+      "is_enabled": true,
+      "state": "ready",
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "configured_extent": {
+        "begins_at": "2022-10-10T23:30:00.000Z",
+        "ends_before": "2200-02-02T00:00:00.000Z"
+      },
+      "source_updated_at": "2026-05-17T22:32:03.991Z",
+      "source_metadata": {
+        "evidence_file": "evidence/candidate_streams_page_000500.json",
+        "source_url": "https://api.dendra.science/v2/datastreams?%24or%5B0%5D%5Bterms.ds.Variable%5D=VolumetricWaterContent&%24or%5B1%5D%5Bterms.dq.Measurement%5D=SoilMoisture&%24or%5B2%5D%5Bterms.dq.Measurement%5D=VolumetricWaterContent&%24limit=500&%24skip=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:39:40.393699+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "d1de116f26e9893281eb5231213782ae67f9a64aad118173e6e7e72cd86f70b9"
+      },
+      "access_check": {
+        "checked_at_utc": "2026-09-19T16:40:56.606077+00:00",
+        "http_status": 200,
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=63531a67a9b61453fa1ca4ed&%24sort%5Btime%5D=-1&%24limit=1",
+        "evidence_file": "evidence/latest/63531a67a9b61453fa1ca4ed.json",
+        "status": "anonymous_access_observed",
+        "latest_observation": {
+          "lt": "2026-09-19T07:00:00.000",
+          "t": "2026-09-19T15:00:00.000Z",
+          "v": 42.69
+        },
+        "latest_value_kind": "numeric",
+        "observation_age_seconds_at_retrieval": 6056.606,
+        "recent_window_status": "latest_within_preceding_7_days"
+      },
+      "metadata_disabled_historical_record": false,
+      "observation_test_status": "anonymous_access_observed",
+      "observation_evidence": {},
+      "station_name": "Camp Cady WA",
+      "observed_start_utc": "2022-10-11T15:30:00.000Z",
+      "dated_latest_utc": "2026-09-19T15:00:00.000Z",
+      "role": "medium_recent_record_depth_20cm",
+      "observed_start_evidence": {
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=63531a67a9b61453fa1ca4ed&%24sort%5Btime%5D=1&%24limit=1",
+        "retrieved_at_utc": "2026-09-20T04:49:08.022809+00:00",
+        "http_status": 200,
+        "first_returned_row": {
+          "lt": "2022-10-11T07:30:00.000",
+          "t": "2022-10-11T15:30:00.000Z",
+          "v": -0.031
+        },
+        "response_sha256": "7de6f89bd384a1490348401deb48200fcba953075eeb00c97e9a904b3b293f47"
+      },
+      "cadence_evidence": {
+        "configured_interval_ms_from_seed": 3600000,
+        "configured_interval_provenance": {
+          "source_url": "https://api.dendra.science/v2/datastreams?station_id=635319fcb055ac5348842453&%24limit=2000",
+          "retrieved_at_utc": "2026-09-19T14:18:31.236752+00:00",
+          "http_status": 200,
+          "access_control_allow_origin": "*",
+          "original_capture_file": "camp_cady_streams_response.json",
+          "original_capture_sha256": "dff781b8b81030f7742926d45ef4f3ea43896881ae50ba6b5268cd73f7d3f6a2",
+          "original_payload_file": "camp_cady_streams.json",
+          "original_payload_sha256": "95629f5aeee4e38c478691e553bf819d4f3f4c5ed5cc951ce13b9b905d092184"
+        },
+        "sampled_adjacent_intervals_seconds": [
+          600.0,
+          600.0
+        ],
+        "sampled_interval_provenance": {
+          "fixture": "evidence/fixtures/camp_cady_latest.json",
+          "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=63531a67a9b61453fa1ca4ed&%24sort%5Btime%5D=-1&%24limit=3",
+          "retrieved_at_utc": "2026-09-19T14:19:08.083560+00:00",
+          "observation": {
+            "lt": "2026-09-19T04:00:00.000",
+            "t": "2026-09-19T12:00:00.000Z",
+            "v": 43.21
+          },
+          "observation_age_minutes_at_retrieval": 139.135,
+          "sampled_adjacent_intervals_seconds": [
+            600.0,
+            600.0
+          ]
+        },
+        "status": "source_configuration_and_short_sample_do_not_establish_full_record_cadence",
+        "note": "Camp Cady configured interval is one hour while 20 cm sample spacing was ten minutes; 60 cm cadence has not been observed independently."
+      }
+    },
+    {
+      "datastream_id": "63531a684b24f740d53623e6",
+      "station_id": "635319fcb055ac5348842453",
+      "station_key": "camp_cady_wa",
+      "source_name": "Soil Moisture 600 mm Average",
+      "organization_id": "6092b070492ae15e05876ed8",
+      "organization_name": "CA Dept. of Fish and Wildlife",
+      "organization_slug": "cdfw",
+      "source_terms": {
+        "dq": {
+          "Measurement": "SoilMoisture",
+          "Purpose": "ReadytoUse"
+        },
+        "dt": {
+          "Unit": "Percent"
+        },
+        "ds": {
+          "Aggregate": "Average",
+          "Medium": "Soil",
+          "Variable": "VolumetricWaterContent"
+        }
+      },
+      "source_attributes": {
+        "depth": {
+          "value": 600,
+          "unit_tag": "dt_Unit_Millimeter"
+        },
+        "orientation": "horizontal"
+      },
+      "native_unit_tag": "dt_Unit_Percent",
+      "native_unit_name": "Percent",
+      "unit_normalization": {
+        "target_unit": "% volumetric water content",
+        "status": "verified_percent_conversion",
+        "multiplier": 1,
+        "offset": 0,
+        "unit_definition_source": "https://api.dendra.science/v2/vocabularies/dt-unit",
+        "unit_definition_evidence": "pilot_catalog.json#/provenance/validated_unit_dictionary",
+        "unit_definition_evidence_note": "Relevant official unit terms and source response hash are embedded in this file."
+      },
+      "depth_mm": 600,
+      "depth_cm": 60.0,
+      "depth_source": "source_attribute_depth",
+      "orientation": "horizontal",
+      "sensor_label": "60 cm",
+      "is_enabled": true,
+      "state": "ready",
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "configured_extent": {
+        "begins_at": "2022-10-10T23:30:00.000Z",
+        "ends_before": "2200-02-02T00:00:00.000Z"
+      },
+      "source_updated_at": "2026-05-17T22:32:04.475Z",
+      "source_metadata": {
+        "evidence_file": "evidence/candidate_streams_page_000500.json",
+        "source_url": "https://api.dendra.science/v2/datastreams?%24or%5B0%5D%5Bterms.ds.Variable%5D=VolumetricWaterContent&%24or%5B1%5D%5Bterms.dq.Measurement%5D=SoilMoisture&%24or%5B2%5D%5Bterms.dq.Measurement%5D=VolumetricWaterContent&%24limit=500&%24skip=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:39:40.393699+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "d1de116f26e9893281eb5231213782ae67f9a64aad118173e6e7e72cd86f70b9"
+      },
+      "access_check": {
+        "checked_at_utc": "2026-09-19T16:41:06.505991+00:00",
+        "http_status": 200,
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=63531a684b24f740d53623e6&%24sort%5Btime%5D=-1&%24limit=1",
+        "evidence_file": "evidence/latest/63531a684b24f740d53623e6.json",
+        "status": "anonymous_access_observed",
+        "latest_observation": {
+          "lt": "2026-09-19T07:00:00.000",
+          "t": "2026-09-19T15:00:00.000Z",
+          "v": 57.37
+        },
+        "latest_value_kind": "numeric",
+        "observation_age_seconds_at_retrieval": 6066.506,
+        "recent_window_status": "latest_within_preceding_7_days"
+      },
+      "metadata_disabled_historical_record": false,
+      "observation_test_status": "anonymous_access_observed",
+      "observation_evidence": {},
+      "station_name": "Camp Cady WA",
+      "observed_start_utc": "2022-10-11T15:30:00.000Z",
+      "dated_latest_utc": "2026-09-19T15:00:00.000Z",
+      "role": "medium_recent_record_depth_60cm",
+      "observed_start_evidence": {
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=63531a684b24f740d53623e6&%24sort%5Btime%5D=1&%24limit=1",
+        "retrieved_at_utc": "2026-09-20T04:49:15.211438+00:00",
+        "http_status": 200,
+        "first_returned_row": {
+          "lt": "2022-10-11T07:30:00.000",
+          "t": "2022-10-11T15:30:00.000Z",
+          "v": 0.263
+        },
+        "response_sha256": "f02dd54839f74d2c58b37be3a0efae1414f402fd1be4a711bef3aef3f0695e99"
+      },
+      "cadence_evidence": {
+        "configured_interval_ms_from_seed": 3600000,
+        "configured_interval_provenance": {
+          "source_url": "https://api.dendra.science/v2/datastreams?station_id=635319fcb055ac5348842453&%24limit=2000",
+          "retrieved_at_utc": "2026-09-19T14:18:31.236752+00:00",
+          "http_status": 200,
+          "access_control_allow_origin": "*",
+          "original_capture_file": "camp_cady_streams_response.json",
+          "original_capture_sha256": "dff781b8b81030f7742926d45ef4f3ea43896881ae50ba6b5268cd73f7d3f6a2",
+          "original_payload_file": "camp_cady_streams.json",
+          "original_payload_sha256": "95629f5aeee4e38c478691e553bf819d4f3f4c5ed5cc951ce13b9b905d092184"
+        },
+        "sampled_adjacent_intervals_seconds": null,
+        "sampled_interval_provenance": null,
+        "status": "source_configuration_and_short_sample_do_not_establish_full_record_cadence",
+        "note": "Camp Cady configured interval is one hour while 20 cm sample spacing was ten minutes; 60 cm cadence has not been observed independently."
+      }
+    },
+    {
+      "datastream_id": "6a91b4c082e5d652e2b16ffa",
+      "station_id": "6a63ad510b9807c39e56116a",
+      "station_key": "station_6a63ad510b9807c39e56116a",
+      "source_name": "Soil Volumetric Water Content",
+      "organization_id": "6a6282fb2013c9765ad38b72",
+      "organization_name": "Central Sierra Snow Lab",
+      "organization_slug": "cssl",
+      "source_terms": {
+        "dq": {
+          "Measurement": "VolumetricWaterContent",
+          "Purpose": "ReadytoUse"
+        },
+        "ds": {
+          "Medium": "Soil",
+          "Variable": "VolumetricWaterContent"
+        },
+        "dt": {
+          "Unit": "VolumetricWaterContent"
+        }
+      },
+      "source_attributes": {},
+      "native_unit_tag": "dt_Unit_VolumetricWaterContent",
+      "native_unit_name": "VolumetricWaterContent",
+      "unit_normalization": {
+        "target_unit": "% volumetric water content",
+        "status": "verified_percent_conversion",
+        "multiplier": 100,
+        "offset": 0,
+        "unit_definition_source": "https://api.dendra.science/v2/vocabularies/dt-unit",
+        "unit_definition_evidence": "pilot_catalog.json#/provenance/validated_unit_dictionary",
+        "unit_definition_evidence_note": "Relevant official unit terms and source response hash are embedded in this file."
+      },
+      "depth_mm": null,
+      "depth_cm": null,
+      "depth_source": "not_specified_or_unresolved",
+      "orientation": null,
+      "sensor_label": "Soil Volumetric Water Content",
+      "is_enabled": true,
+      "state": "ready",
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "configured_extent": {
+        "begins_at": "2026-06-09T07:00:00.000Z",
+        "ends_before": "2200-02-02T00:00:00.000Z"
+      },
+      "source_updated_at": "2026-08-28T16:18:26.100Z",
+      "source_metadata": {
+        "evidence_file": "evidence/candidate_streams_page_000500.json",
+        "source_url": "https://api.dendra.science/v2/datastreams?%24or%5B0%5D%5Bterms.ds.Variable%5D=VolumetricWaterContent&%24or%5B1%5D%5Bterms.dq.Measurement%5D=SoilMoisture&%24or%5B2%5D%5Bterms.dq.Measurement%5D=VolumetricWaterContent&%24limit=500&%24skip=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:39:40.393699+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "d1de116f26e9893281eb5231213782ae67f9a64aad118173e6e7e72cd86f70b9"
+      },
+      "access_check": {
+        "checked_at_utc": "2026-09-19T16:40:59.630004+00:00",
+        "http_status": 200,
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=6a91b4c082e5d652e2b16ffa&%24sort%5Btime%5D=-1&%24limit=1",
+        "evidence_file": "evidence/latest/6a91b4c082e5d652e2b16ffa.json",
+        "status": "anonymous_access_observed",
+        "latest_observation": {
+          "lt": "2026-09-18T02:45:00.000",
+          "t": "2026-09-18T10:45:00.000Z",
+          "v": 0.02
+        },
+        "latest_value_kind": "numeric",
+        "observation_age_seconds_at_retrieval": 107759.63,
+        "recent_window_status": "latest_within_preceding_7_days"
+      },
+      "metadata_disabled_historical_record": false,
+      "observation_test_status": "anonymous_access_observed",
+      "observation_evidence": {},
+      "station_name": "Donner Lake West",
+      "observed_start_utc": "2026-06-29T06:15:00.000Z",
+      "dated_latest_utc": "2026-09-18T10:45:00.000Z",
+      "role": "very_new_recent_record",
+      "observed_start_evidence": {
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=6a91b4c082e5d652e2b16ffa&%24sort%5Btime%5D=1&%24limit=1",
+        "retrieved_at_utc": "2026-09-20T04:49:10.239694+00:00",
+        "http_status": 200,
+        "first_returned_row": {
+          "lt": "2026-06-28T22:15:00.000",
+          "t": "2026-06-29T06:15:00.000Z",
+          "v": 0.112
+        },
+        "response_sha256": "576a2b519fe654768007b7148ec8bec9bbb593c90b76f2ae4faec6cd8e585556"
+      },
+      "cadence_evidence": {
+        "configured_interval_ms_from_seed": null,
+        "configured_interval_provenance": null,
+        "sampled_adjacent_intervals_seconds": null,
+        "sampled_interval_provenance": null,
+        "status": "not_verified",
+        "note": "Donner endpoints occur at quarter-hour marks, which does not establish a 15-minute cadence."
+      }
+    },
+    {
+      "datastream_id": "5ae879f1fe27f4c40b102ea4",
+      "station_id": "58e68cabdf5ce600012602c0",
+      "station_key": "granites",
+      "source_name": "Volumetric Water Content Vertical Avg",
+      "organization_id": "58db17c424dc720001671378",
+      "organization_name": "UC Nature",
+      "organization_slug": "ucnrs",
+      "source_terms": {
+        "ds": {
+          "Medium": "Soil",
+          "Variable": "VolumetricWaterContent",
+          "Aggregate": "Average"
+        },
+        "dt": {
+          "Unit": "VolumetricWaterContent"
+        },
+        "dq": {
+          "Measurement": "VolumetricWaterContent",
+          "Purpose": "ReadytoUse"
+        }
+      },
+      "source_attributes": {
+        "Orientation": "Vertical"
+      },
+      "native_unit_tag": "dt_Unit_VolumetricWaterContent",
+      "native_unit_name": "VolumetricWaterContent",
+      "unit_normalization": {
+        "target_unit": "% volumetric water content",
+        "status": "verified_percent_conversion",
+        "multiplier": 100,
+        "offset": 0,
+        "unit_definition_source": "https://api.dendra.science/v2/vocabularies/dt-unit",
+        "unit_definition_evidence": "pilot_catalog.json#/provenance/validated_unit_dictionary",
+        "unit_definition_evidence_note": "Relevant official unit terms and source response hash are embedded in this file."
+      },
+      "depth_mm": null,
+      "depth_cm": null,
+      "depth_source": "not_specified_or_unresolved",
+      "orientation": "Vertical",
+      "sensor_label": "Vertical (depth unspecified)",
+      "is_enabled": true,
+      "state": "ready",
+      "public_level": 3,
+      "source_is_hidden": false,
+      "source_is_geo_protected": false,
+      "configured_extent": {
+        "begins_at": "2010-10-01T00:50:00.000Z",
+        "ends_before": "2200-02-02T00:00:00.000Z"
+      },
+      "source_updated_at": "2026-07-02T20:36:59.574Z",
+      "source_metadata": {
+        "evidence_file": "evidence/candidate_streams_page_000000.json",
+        "source_url": "https://api.dendra.science/v2/datastreams?%24or%5B0%5D%5Bterms.ds.Variable%5D=VolumetricWaterContent&%24or%5B1%5D%5Bterms.dq.Measurement%5D=SoilMoisture&%24or%5B2%5D%5Bterms.dq.Measurement%5D=VolumetricWaterContent&%24limit=500&%24sort%5B_id%5D=1",
+        "retrieved_at_utc": "2026-09-19T16:33:26.951380+00:00",
+        "http_status": 200,
+        "raw_response_sha256": "70eefdef678c4081e434ce43b0510b7f3fbdde7470af57c73c495724b0ce6772"
+      },
+      "access_check": {
+        "checked_at_utc": "2026-09-19T16:40:50.110034+00:00",
+        "http_status": 200,
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5ae879f1fe27f4c40b102ea4&%24sort%5Btime%5D=-1&%24limit=1",
+        "evidence_file": "evidence/latest/5ae879f1fe27f4c40b102ea4.json",
+        "status": "anonymous_access_observed",
+        "latest_observation": {
+          "lt": "2026-06-16T13:50:00.000",
+          "t": "2026-06-16T21:50:00.000Z",
+          "v": 0.035
+        },
+        "latest_value_kind": "numeric",
+        "observation_age_seconds_at_retrieval": 8189450.11,
+        "recent_window_status": "latest_older_than_7_days"
+      },
+      "metadata_disabled_historical_record": false,
+      "observation_test_status": "anonymous_access_observed",
+      "observation_evidence": {},
+      "station_name": "Granites",
+      "observed_start_utc": "2010-10-01T02:00:00.000Z",
+      "dated_latest_utc": "2026-06-16T21:50:00.000Z",
+      "role": "long_record_nonrecent_selected_soil_stream",
+      "observed_start_evidence": {
+        "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5ae879f1fe27f4c40b102ea4&%24sort%5Btime%5D=1&%24limit=1",
+        "retrieved_at_utc": "2026-09-20T04:49:03.327002+00:00",
+        "http_status": 200,
+        "first_returned_row": {
+          "lt": "2010-09-30T18:00:00.000",
+          "t": "2010-10-01T02:00:00.000Z",
+          "v": 0.026
+        },
+        "response_sha256": "fb79b66d7de1e61dde4a6105b59e846dba627cb60a5d23847774c0cb04f4e97e"
+      },
+      "cadence_evidence": {
+        "configured_interval_ms_from_seed": 600000,
+        "configured_interval_provenance": {
+          "source_url": "https://api.dendra.science/v2/datastreams?station_id=58e68cabdf5ce600012602c0&%24limit=2000",
+          "retrieved_at_utc": "2026-09-19T14:18:36.372881+00:00",
+          "http_status": 200,
+          "access_control_allow_origin": "*",
+          "original_capture_file": "granites_streams_response.json",
+          "original_capture_sha256": "e6141d3c5da5e2b4e37609573b0e0148b4dda470fcc94f51b5595266eb226c95",
+          "original_payload_file": "granites_streams.json",
+          "original_payload_sha256": "02374cb957859720030de336c3bd0dabac83105c4b1739f17e4f4c170d20de72"
+        },
+        "sampled_adjacent_intervals_seconds": [
+          600.0,
+          600.0
+        ],
+        "sampled_interval_provenance": {
+          "fixture": "evidence/fixtures/granites_latest.json",
+          "source_url": "https://api.dendra.science/v2/datapoints?datastream_id=5ae879f1fe27f4c40b102ea4&%24sort%5Btime%5D=-1&%24limit=3",
+          "retrieved_at_utc": "2026-09-19T14:19:28.476474+00:00",
+          "observation": {
+            "lt": "2026-06-16T13:50:00.000",
+            "t": "2026-06-16T21:50:00.000Z",
+            "v": 0.035
+          },
+          "observation_age_minutes_at_retrieval": 136349.475,
+          "sampled_adjacent_intervals_seconds": [
+            600.0,
+            600.0
+          ]
+        },
+        "status": "source_configuration_and_short_sample_do_not_establish_full_record_cadence",
+        "note": "Ten-minute spacing was observed in a short sample; outages and changes remain unmeasured."
+      }
+    }
+  ],
+  "provenance": {
+    "input_files": [
+      {
+        "name": "dendra_sandbox/catalog/stations.geojson",
+        "sha256": "12282538e35f3e4570e9b6507a7936b74bfa4a9019d5f5308c835413139af3d3"
+      },
+      {
+        "name": "dendra_sandbox/catalog/streams.json",
+        "sha256": "7abfbc3b63b6361cbcddc3a52109196a8027af654490df2fd7d0e5c5232891a8"
+      },
+      {
+        "name": "dendra_runner_assessment/record_age_audit.json",
+        "sha256": "138a7102fe568ebda82da54e3630c1df956c2c818faa0dea942e70d95b3b62cd"
+      },
+      {
+        "name": "dendra_handoff/data/pilot_streams.json",
+        "sha256": "215592159a8b23eb57745b2db69146f1ce25e52170fcf1a7e99a54e23918dc6b"
+      },
+      {
+        "name": "dendra_handoff/evidence/verification_summary.json",
+        "sha256": "233b488890f7e11983243b4b87eaa1e7c8c4b9f981568a3ac017dab41d86fe08"
+      }
+    ],
+    "validated_unit_dictionary": {
+      "source_url": "https://api.dendra.science/v2/vocabularies/dt-unit",
+      "retrieved_at_utc": "2026-09-19T16:34:53.433640+00:00",
+      "http_status": 200,
+      "raw_response_sha256": "462486ec8646d92a08603cb2aa00f9c94f4b9f74ba03dbdfcb784a675f50c06b",
+      "vocabulary_id": "dt-unit",
+      "source_unit_terms": [
+        {
+          "abbreviation": "cm",
+          "label": "Centimeter"
+        },
+        {
+          "abbreviation": "mm",
+          "label": "Millimeter"
+        },
+        {
+          "abbreviation": "%",
+          "label": "Percent"
+        },
+        {
+          "abbreviation": "m^3/m^3",
+          "label": "VolumetricWaterContent",
+          "name": "Volumetric Water Content"
+        }
+      ],
+      "normalization_rules": {
+        "VolumetricWaterContent": {
+          "native_definition": "m^3/m^3",
+          "to_vwc_percent_multiplier": 100
+        },
+        "Percent": {
+          "native_definition": "%",
+          "to_vwc_percent_multiplier": 1
+        }
+      }
+    }
+  },
+  "backfill_budget_estimate": {
+    "status": "planning_estimate_only_no_history_fetched",
+    "assumption": "Uniform ten-minute spacing for every selected stream between requested start or observed first date and the dated latest endpoint, with no gaps. Actual cadence is not established for the full record.",
+    "wy_start_utc_for_budget": "2016-10-01T08:00:00Z",
+    "wy_start_timezone_for_budget": "Fixed UTC-08:00 source station metadata; operational daily timezone remains a producer choice.",
+    "dated_latest_used_as_nominal_end": "Includes any partial endpoint day for a conservative planning estimate; complete-day clipping will slightly reduce totals.",
+    "effective_raw_page_cap_used": 2016,
+    "raw_cap_evidence": "Dendra supplied one-day query and later sandbox paging tests; actual cap must still be respected per returned response.",
+    "streams": [
+      {
+        "datastream_id": "5d8e42e72da5c3cc53f6531d",
+        "station_name": "Deep Canyon",
+        "sensor_label": "Vertical (depth unspecified)",
+        "role": "long_recent_record",
+        "assumed_spacing_seconds": 600,
+        "begin_utc": "2016-10-01T08:00:00+00:00",
+        "dated_latest_utc": "2026-09-19T16:10:00+00:00",
+        "nominal_raw_observations_no_gaps": 524210,
+        "minimum_cap_2016_pages": 261,
+        "monthly_chunk_page_estimate": 351,
+        "intersected_utc_calendar_months": 120,
+        "observed_full_first_to_dated_latest_span_days": 5833.583333
+      },
+      {
+        "datastream_id": "63531a67a9b61453fa1ca4ed",
+        "station_name": "Camp Cady WA",
+        "sensor_label": "20 cm",
+        "role": "medium_recent_record_depth_20cm",
+        "assumed_spacing_seconds": 600,
+        "begin_utc": "2022-10-11T15:30:00+00:00",
+        "dated_latest_utc": "2026-09-19T15:00:00+00:00",
+        "nominal_raw_observations_no_gaps": 207214,
+        "minimum_cap_2016_pages": 103,
+        "monthly_chunk_page_estimate": 139,
+        "intersected_utc_calendar_months": 48,
+        "observed_full_first_to_dated_latest_span_days": 1438.979167
+      },
+      {
+        "datastream_id": "63531a684b24f740d53623e6",
+        "station_name": "Camp Cady WA",
+        "sensor_label": "60 cm",
+        "role": "medium_recent_record_depth_60cm",
+        "assumed_spacing_seconds": 600,
+        "begin_utc": "2022-10-11T15:30:00+00:00",
+        "dated_latest_utc": "2026-09-19T15:00:00+00:00",
+        "nominal_raw_observations_no_gaps": 207214,
+        "minimum_cap_2016_pages": 103,
+        "monthly_chunk_page_estimate": 139,
+        "intersected_utc_calendar_months": 48,
+        "observed_full_first_to_dated_latest_span_days": 1438.979167
+      },
+      {
+        "datastream_id": "6a91b4c082e5d652e2b16ffa",
+        "station_name": "Donner Lake West",
+        "sensor_label": "Soil Volumetric Water Content",
+        "role": "very_new_recent_record",
+        "assumed_spacing_seconds": 600,
+        "begin_utc": "2026-06-29T06:15:00+00:00",
+        "dated_latest_utc": "2026-09-18T10:45:00+00:00",
+        "nominal_raw_observations_no_gaps": 11692,
+        "minimum_cap_2016_pages": 6,
+        "monthly_chunk_page_estimate": 9,
+        "intersected_utc_calendar_months": 4,
+        "observed_full_first_to_dated_latest_span_days": 81.1875
+      },
+      {
+        "datastream_id": "5ae879f1fe27f4c40b102ea4",
+        "station_name": "Granites",
+        "sensor_label": "Vertical (depth unspecified)",
+        "role": "long_record_nonrecent_selected_soil_stream",
+        "assumed_spacing_seconds": 600,
+        "begin_utc": "2016-10-01T08:00:00+00:00",
+        "dated_latest_utc": "2026-06-16T21:50:00+00:00",
+        "nominal_raw_observations_no_gaps": 510564,
+        "minimum_cap_2016_pages": 254,
+        "monthly_chunk_page_estimate": 342,
+        "intersected_utc_calendar_months": 117,
+        "observed_full_first_to_dated_latest_span_days": 5737.826389
+      }
+    ],
+    "total_nominal_raw_observations_no_gaps": 1460894,
+    "sum_minimum_cap_2016_pages": 727,
+    "sum_monthly_chunk_page_estimates": 980,
+    "total_stream_month_chunks": 337,
+    "extra_request_caveat": "Estimates omit metadata/latest queries, retries, overlap checks, and a possible terminal empty-page request for each chunk; gaps can reduce row/page counts."
+  },
+  "interpretation_notes": [
+    "Granites selected soil stream was nonrecent at its latest check; station-wide inactivity is not established.",
+    "Deep Canyon and Granites numeric depths are unspecified; retain Vertical (depth unspecified). Donner depth is unspecified and original sensor description is retained.",
+    "Camp Cady20cm and60cm are separate streams; do not combine or average across depths.",
+    "All five have verified native unit definitions; preserve raw zero/negative/null semantics before any unit conversion.",
+    "First and dated latest observations do not establish uninterrupted coverage or stable historical cadence.",
+    "No data backfill or new live metadata/observation requests were made to prepare this selection."
+  ]
+}

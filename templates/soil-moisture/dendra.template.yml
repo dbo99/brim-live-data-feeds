@@ -1,0 +1,241 @@
+name: dendra soil operations (INACTIVE SM3A TEMPLATE)
+# Outside .github/workflows. Proposed nightly UTC 10:37; no cron installed.
+# Hosted syntax, dependencies, artifact durability and queue behavior require verification.
+on:
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: Explicit UTC cycle key (YYYY-MM-DD); same key for a morning retry
+        required: true
+        type: string
+      health_run_id:
+        description: Prior same-network run holding its independent health snapshot
+        required: true
+        type: string
+      health_artifact:
+        description: Exact prior same-network health artifact (publication result when available)
+        type: choice
+        required: true
+        options:
+          - dendra-health-publication
+          - dendra-health
+      health_manifest_sha256:
+        description: Reviewed SHA256 of prior health snapshot manifest.json
+        required: true
+        type: string
+      pending_run_id:
+        description: Same-parent failed run carrying completed query work; blank requires reviewed refetch
+        required: false
+        type: string
+      pending_manifest_sha256:
+        description: Independently bound SHA256 of pending manifest, never trust an artifact name
+        required: false
+        type: string
+      pending_policy:
+        description: Missing or incompatible progress holds by default; refetch loses prior progress
+        type: choice
+        default: require_snapshot
+        options:
+          - require_snapshot
+          - reviewed_bounded_refetch
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && vars.DENDRA_SM3A_MANUAL_APPROVED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-r-hardened
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::digest
+            any::yaml
+            any::curl
+            any::dplyr
+            any::readr
+            any::lubridate
+            any::tibble
+            any::purrr
+            any::stringr
+            any::tidyr
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.health_artifact }}
+          run-id: ${{ inputs.health_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/prior-health
+      - name: Restore health independently from observation acknowledgement
+        env:
+          HEALTH_SHA: ${{ inputs.health_manifest_sha256 }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py restore
+          --input "$RUNNER_TEMP/prior-health" --sha256 "$HEALTH_SHA"
+          --output "$RUNNER_TEMP/soil-operations"
+      - name: Exact acknowledged parent and explicit fresh metadata selection
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git worktree add --detach "$RUNNER_TEMP/dendra-public" refs/remotes/origin/main
+          python3 scripts/dendra_state.py restore-public --repo "$RUNNER_TEMP/dendra-public" --state "$RUNNER_TEMP/dendra-state"
+          station_id="$(python3 -c 'import json;print(json.load(open("data/input/dendra/archive_selection.REVIEW_REQUIRED.json"))["station_id"])')"
+          python3 scripts/dendra/bridge.py discover --catalog data/input/dendra/pilot_catalog.json --station "$station_id" --output "$RUNNER_TEMP/dendra-discovery" --ledger "$RUNNER_TEMP/dendra-http.json" --budget 80
+          python3 scripts/dendra_workflow.py select --catalog data/input/dendra/pilot_catalog.json --discovery "$RUNNER_TEMP/dendra-discovery" --selection data/input/dendra/archive_selection.REVIEW_REQUIRED.json --output "$RUNNER_TEMP/dendra-catalog.json"
+      - uses: actions/download-artifact@v8
+        if: ${{ inputs.pending_run_id != '' }}
+        with:
+          name: dendra-pending-collection
+          run-id: ${{ inputs.pending_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/prior-pending
+      - name: Restore complete pending queries after public parent and before planning
+        env:
+          PENDING_SHA: ${{ inputs.pending_manifest_sha256 }}
+          PENDING_POLICY: ${{ inputs.pending_policy }}
+        run: |
+          flag=""
+          if [ "$PENDING_POLICY" = reviewed_bounded_refetch ]; then flag=--reviewed-refetch; fi
+          python3 scripts/dendra_pending.py restore --state "$RUNNER_TEMP/dendra-state" \
+            --catalog "$RUNNER_TEMP/dendra-catalog.json" --input "$RUNNER_TEMP/prior-pending" \
+            --sha256 "$PENDING_SHA" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --report "$RUNNER_TEMP/pending-restore-result.json" $flag
+      - name: Source-specific preparation; failure cannot produce a publication artifact
+        env:
+          CYCLE: ${{ inputs.cycle }}
+        run: |
+          set -euo pipefail
+          python3 scripts/soil_network_workflow.py prepare --network dendra \
+            --root "$RUNNER_TEMP/dendra-prepare" --health "$RUNNER_TEMP/soil-operations" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --cycle "$CYCLE" \
+            --source-sha "$GITHUB_SHA" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --enable-acquisition --state "$RUNNER_TEMP/dendra-state" --catalog "$RUNNER_TEMP/dendra-catalog.json" --budget 80 --ledger "$RUNNER_TEMP/dendra-http.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dendra-transfer
+          path: |
+            ${{ runner.temp }}/dendra-prepare/transfer
+            ${{ runner.temp }}/dendra-prepare/run-result.json
+          if-no-files-found: error
+          retention-days: 2
+      - name: Export complete pending queries even without a prepared candidate
+        if: ${{ always() }}
+        run: >-
+          python3 scripts/dendra_pending.py export --state "$RUNNER_TEMP/dendra-state"
+          --catalog "$RUNNER_TEMP/dendra-catalog.json" --output "$RUNNER_TEMP/pending-snapshot"
+          --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --report "$RUNNER_TEMP/pending-export-result.json"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: dendra-pending-collection
+          path: ${{ runner.temp }}/pending-snapshot
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: dendra-pending-recovery-results
+          path: ${{ runner.temp }}/pending-*-result.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve setup and acquisition failure results
+        if: ${{ always() }}
+        env:
+          CYCLE: ${{ inputs.cycle }}
+        run: |
+          python3 scripts/soil_network_workflow.py fallback-result --network dendra \
+            --root "$RUNNER_TEMP/dendra-prepare" --health "$RUNNER_TEMP/soil-operations" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --cycle "$CYCLE"
+      - name: Export preparation health independently of earlier step status
+        if: ${{ always() }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py export --root "$RUNNER_TEMP/soil-operations" --output "$RUNNER_TEMP/health-snapshot"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: dendra-health
+          path: ${{ runner.temp }}/health-snapshot
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+      # Durable queue semantics and total lock budget remain deployment decisions.
+    env:
+      BRIM_LIVE_MAIN_PUBLISH: 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-r-hardened
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::digest
+      - uses: actions/download-artifact@v8
+        with:
+          name: dendra-transfer
+          path: ${{ runner.temp }}/dendra-prepare
+      - uses: actions/download-artifact@v8
+        with:
+          name: dendra-health
+          path: ${{ runner.temp }}/health-snapshot
+      - name: Merge prepare result into independent local operations state
+        run: |
+          health_sha="$(python3 -c 'import hashlib,os;print(hashlib.sha256(open(os.environ["RUNNER_TEMP"]+"/health-snapshot/manifest.json","rb").read()).hexdigest())')"
+          python3 scripts/soil_moisture_operations.py restore --input "$RUNNER_TEMP/health-snapshot" --sha256 "$health_sha" --output "$RUNNER_TEMP/soil-operations"
+      - name: Existing shared publisher and source-owned callbacks
+        id: transaction
+        run: >-
+          python3 scripts/soil_network_workflow.py publish --network dendra
+          --repo "$GITHUB_WORKSPACE" --transfer "$RUNNER_TEMP/dendra-prepare/transfer"
+      - name: Read exact committed result independently of prepared candidate
+        if: ${{ success() }}
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git worktree add --detach "$RUNNER_TEMP/committed" refs/remotes/origin/main
+      - name: Publication outcome does not overwrite query clocks
+        if: ${{ always() }}
+        env:
+          PUBLISH_OUTCOME: ${{ steps.transaction.outcome }}
+        run: |
+          flag=""
+          if [ "$PUBLISH_OUTCOME" = success ]; then flag=--success; fi
+          python3 scripts/soil_network_workflow.py publication-result --health "$RUNNER_TEMP/soil-operations" \
+            --prepared "$RUNNER_TEMP/dendra-prepare/run-result.json" --repo "$RUNNER_TEMP/committed" $flag
+      - name: Export publication health even when receipt finalization fails
+        if: ${{ always() }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py export --root "$RUNNER_TEMP/soil-operations" --output "$RUNNER_TEMP/published-health"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: dendra-health-publication
+          path: ${{ runner.temp }}/published-health
+          if-no-files-found: error
+          retention-days: 14

@@ -665,3 +665,71 @@ Nonproduction validation:
 Rollback/recovery:
 Remaining uncertainty:
 ```
+
+### Dendra durable recovery and publication acknowledgement
+
+The integrated Dendra product has one authoritative published generation: the
+validated complete product committed on public `main`. Its retained daily
+statistics, frozen cadence context, date-indexed source-query evidence and small
+source index are sufficient durable state; full native observations are excluded
+from production Git. A hash-closed public index binds every required file.
+
+`scripts/dendra_state.py restore-public --repo CHECKOUT --state NEW_DIRECTORY`
+extracts exact committed product bytes and records the actual publication commit.
+It ignores uncommitted working-tree bytes. `export` / `restore` create and verify a
+portable candidate/manifest snapshot. Restored pointers use relative candidate
+paths and freshly verified generation inventories; no old machine path is needed.
+The snapshot's role distinguishes prepared evidence from acknowledged publication.
+Use a trusted reviewed snapshot or exact committed checkout; checksums detect
+corruption, not an untrusted party's forged provenance.
+
+`current.json` is prepared local state. `published.json` is acknowledged state.
+Live updates/reconciliations use only the latter. A failed push must never promote
+a prepared pointer, and a retry must restore current committed main before
+rebuilding when another generation won. A same-generation identical candidate is
+a no-op; old candidates cannot roll back main; unrelated updates are preserved;
+conflicting descendants require a rebuild from the winner. Publication time is
+set only by the transaction callback; the receipt's commit identifies actual Git
+history, while source-byte manifests identify uncommitted review implementations.
+
+No existing product permits silent first-run fallback. With no public product, the
+inactive template requires explicit bootstrap and creates a bounded 30-day moisture /
+90-day temperature start. It does not claim to import ten years of unavailable
+history. Migrating the larger accepted frozen history into a first live publication
+requires a separately reviewed bootstrap/migration procedure; replay state is not
+an acknowledged live parent. Existing published history is always restored first.
+
+Retained public data are bounded to 10 WY moisture / 90 completed temperature days;
+Git history preserves previous public generations. Candidate transfers (2 days)
+and failure evidence (14 days) are proposed workflow artifacts, not durable history.
+Local interval responses, failed runs and prepared artifacts are disposable only
+after verifying the acknowledged generation and keeping needed review evidence.
+Automatic cleanup and history rewriting are not implemented. A stale `writer.lock`
+is never stolen: establish that its writer has exited, preserve the failed-run
+record, verify/restore the acknowledged product into a new directory, then retry.
+Any source failure holds the complete candidate. Suspicious removals retain R1's
+exact-assessment review requirement; planned retention expiry is not source loss.
+
+### SM2A version-2 archive migration and recovery (inactive)
+
+The preceding retention/bootstrap description applies to integration 1. Version 2
+retains all acquired moisture rows; a display-window change cannot authorize
+removal. `bootstrap --seed-manifest` prepares checksum-bound saved daily data into
+`seed.json` and a prepared pointer, never an acknowledged publication. Portable
+state `dendra-portable-state-2` carries immutable partitions with bounded manifest
+and explicit seed/prepared/published role. Restore requires a new directory and
+validates candidate bounds before inventory hashing/copying.
+
+A later live descendant selects acknowledged publication first, otherwise the
+explicit seed; never an unpublished prepared child. A seed cannot itself be
+published as live. Reviewed stream additions retain old history and require exact
+selection evidence; deletions and source failures hold the whole candidate.
+Publication still uses the unchanged shared publisher and existing narrow owned
+roots. See [the archive contract](dendra-archive-2.md) for lineage and corrections.
+The archive template requires separately approved metadata/selection and deployment
+configuration. Saved migration and local transaction tests do not establish live
+metadata acquisition, remote publication, Actions, or hosted-consumer acceptance.
+
+### SM3A local operations (unpublished)
+
+SM3A local proof uses the unchanged shared publisher for independent SCAN and Dendra transactions. Coverage, immutable failure records, ancestry-bound publication health, morning proposals and inactive templates are specified in [the SM3A contract](SOIL_MOISTURE_SM3A_CONTRACT.md). No public status product or schedule is activated.

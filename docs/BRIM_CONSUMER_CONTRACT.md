@@ -743,3 +743,104 @@ When evidence disagrees:
 
 Documentation does not silently override implementation, and implementation
 does not make an undocumented breaking change acceptable.
+
+### Dendra candidate contract (unpublished)
+
+[Dendra D1](DENDRA_D1.md) proposes `docs/data/dendra/index.json` plus hashed
+per-stream water-year histories, diagnostics/CSV and a bounded soil-temperature
+companion. Separate stream identity, explicit units/depth, fixed UTC-08:00 dates,
+recent-change eligibility and wall-clock feed expiry are required. These are
+local candidate paths; current BRIM does not consume them and no hosted
+compatibility or freshness behavior is claimed.
+
+### Dendra integrated selected-history reads
+
+The opt-in Dendra index (`docs/data/dendra/index.json`) uses schema
+`dendra-daily-1.1.0`, integration `dendra-integration-1`, and modern safeguards
+`dendra-safeguards-1.1.0`. Public activation requires live mode. Frozen examples
+remain explicitly frozen. Read the index first; use its authoritative recent
+change summaries and at most 60 compact moisture rows for map/hover context.
+Fetch only selected history partitions or CSV. Do not retrieve raw Dendra data or
+full diagnostics to color a point. Resolve paths relative to the configured
+static index's product directory, preserving a Pages project-path prefix.
+
+Verify each selected file's declared bytes/SHA-256, daily schema, numerical policy,
+parameter, station/stream IDs, depth, units and water year. Content hashes permit
+reuse across generations only while those hashes remain in the new index.
+A generation switch invalidates pending selection responses. Retry a missing or
+incompatible static file with at most one fresh index; otherwise show unavailable.
+A static host must serve complete sets coherently and allow CORS for distributed
+HTML, including a `null` Origin when file-origin use is intended.
+
+`summary.last_plottable_date` is the latest accepted daily date;
+`latest_observation_utc` is the latest retained observation timestamp, not simply
+the last refetched old interval. `last_retrieved_at_utc` may describe an old
+reconciliation; `current_interval_retrieved_at_utc` and per-stream `expires_at_utc`
+control recent-data freshness alongside observation lag. Evaluate against the
+reader's wall clock independently for each parameter. Run start, generation and
+publication timestamps are distinct. A fresh build never makes old observations
+fresh. Map context remains moisture: 20/60 cm are distinct; the verified 20 cm
+Celsius companion has a 90-day recent-context window. A 60 cm moisture selection
+must disclose the still-20 cm temperature or show no matching temperature.
+
+
+### SM1 review adapter (not a published product)
+
+`scripts/soil_moisture/prepare_snapshots.py` creates offline versioned common
+station/sensor views from the existing SCAN prepared snapshot, accepted D2A
+candidate and dated public dendra inventory. It does not alter either ingestion
+job, compute means, publish, or trim archives. Source defaults reduce repeated
+metadata; per-sensor values override them. Unresolved native scales have null
+percent units and no fabricated values. Exact native depths/IDs survive.
+
+SCAN's saved Daily SMS.I values retain the existing same-depth composite policy
+and published precision; synthetic package noon is not an observation time.
+Existing reference and monthly/WY tables stay source-specific. dendra's accepted
+fixed-PST calculations and all 2,990 combined rows remain unchanged. Companion
+capability pairs actual station/parameter/exact-depth metadata; never a nearest
+sensor. Each source has its own generation and failure state.
+
+`nrcs_pilot.R` is a bounded adaptation of this repository's snow-pillow AWDB curl
+helper. `run_pilot.R CACHE [--live]` defaults to offline, validates three fixed
+CA triplets and six exact moisture identities before collection, and caches
+hashed original responses. A persistent lock/ledger reserves each attempt
+before transport, max80, serial, redirects disabled, finite timeouts/retries.
+It stops on repeated service errors or long Retry-After. The fixed date plan is
+90 completed daily dates plus seven hourly days for one sensor. Reruns replay
+cache at zero API cost. It is not a statewide/production SNOTEL collector.
+
+`pilot_analysis.R` computes explicitly experimental means from the short hourly
+sample, preserving support and source QC separately from agency DAILY values.
+No derived diagnostic replaces a source series. DAILY reduction is unresolved;
+common change/reference capabilities remain false. Promotion, calendar/era
+verification, winter diagnostics, durable archive and publication remain gates.
+
+SM1R1 uses lossless `sm1-scan-popup-2` column/row bundles decoded to the original
+SCAN tables, retaining the 6,000,000-byte delivery bound. Offline preparation now
+requires the private consumer's explicit `--consumer-check` QA path and a fresh
+output directory; producer and actual-consumer preflight must both pass before
+installation. See `SOIL_MOISTURE_SM1_CONTRACT.md` for fixed schemas and finite
+cache/decoded-table bounds. No collection or production contract is changed.
+
+### SM2A archive2 and common catalog compatibility (unpublished)
+
+The version-1 path above remains strict and replayable. `dendra-daily-2.0.0` /
+`dendra-integration-2` has explicit reader dispatch: load and validate the complete
+bounded catalog before activation, then fetch only the selected stream manifest
+and immutable WY partitions. Full acquired-history CSV is assembled on explicit
+request. Preserve per-stream acquired cutoff, observation/retrieval times, stale
+latest accepted values and unqueried intervals; a shared build date is not coverage.
+
+The native root remains capped at 256000 bytes. Common Dendra catalogs over 262144
+bytes use `brim-soil-moisture-2` and at most 128 immutable 262144-byte shards; partial
+load failure does not commit an empty/partial network. SCAN transport is unchanged.
+Versioned file, partition, cache and export limits are in
+[the archive contract](dendra-archive-2.md). Bounds apply during reads. Changing
+display between current plus nine prior WYs and all acquired history never deletes
+archived rows or computes a reference ribbon. Temperature pairing uses explicit
+sensor/depth/orientation metadata; multiple probes require a choice. Current
+protected/withheld native coordinates override older catalog coordinates.
+
+### SM3A local operations (unpublished)
+
+SM3A leaves the accepted shared interface, daily fields and reader bytes unchanged. Local health stays outside the observation manifests; no health URL or UI freshness reinterpretation is introduced. See [the SM3A operations contract](SOIL_MOISTURE_SM3A_CONTRACT.md).

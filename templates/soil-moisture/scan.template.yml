@@ -1,0 +1,184 @@
+name: scan soil operations (INACTIVE SM3A TEMPLATE)
+# Outside .github/workflows. Proposed nightly UTC 10:17; no cron installed.
+# Hosted syntax, dependencies, artifact durability and queue behavior require verification.
+on:
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: Explicit UTC cycle key (YYYY-MM-DD); same key for a morning retry
+        required: true
+        type: string
+      health_run_id:
+        description: Prior same-network run holding its independent health snapshot
+        required: true
+        type: string
+      health_artifact:
+        description: Exact prior same-network health artifact (publication result when available)
+        type: choice
+        required: true
+        options:
+          - scan-health-publication
+          - scan-health
+      health_manifest_sha256:
+        description: Reviewed SHA256 of prior health snapshot manifest.json
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && vars.SCAN_SM3A_MANUAL_APPROVED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-r-hardened
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::digest
+            any::yaml
+            any::curl
+            any::dplyr
+            any::readr
+            any::lubridate
+            any::tibble
+            any::purrr
+            any::stringr
+            any::tidyr
+            any::soilDB
+            any::httr
+      - name: No-provider direct dependency preflight
+        run: Rscript --vanilla scripts/soil_moisture/scan_dependency_preflight.R --output "$RUNNER_TEMP/scan-dependency-preflight.json"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.health_artifact }}
+          run-id: ${{ inputs.health_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/prior-health
+      - name: Restore health independently from observation acknowledgement
+        env:
+          HEALTH_SHA: ${{ inputs.health_manifest_sha256 }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py restore
+          --input "$RUNNER_TEMP/prior-health" --sha256 "$HEALTH_SHA"
+          --output "$RUNNER_TEMP/soil-operations"
+
+      - name: Source-specific preparation; failure cannot produce a publication artifact
+        env:
+          CYCLE: ${{ inputs.cycle }}
+        run: |
+          set -euo pipefail
+          python3 scripts/soil_network_workflow.py prepare --network scan \
+            --root "$RUNNER_TEMP/scan-prepare" --health "$RUNNER_TEMP/soil-operations" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --cycle "$CYCLE" \
+            --source-sha "$GITHUB_SHA" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --enable-acquisition
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scan-transfer
+          path: |
+            ${{ runner.temp }}/scan-prepare/transfer
+            ${{ runner.temp }}/scan-prepare/run-result.json
+          if-no-files-found: error
+          retention-days: 2
+      - name: Preserve setup and acquisition failure results
+        if: ${{ always() }}
+        env:
+          CYCLE: ${{ inputs.cycle }}
+        run: |
+          python3 scripts/soil_network_workflow.py fallback-result --network scan \
+            --root "$RUNNER_TEMP/scan-prepare" --health "$RUNNER_TEMP/soil-operations" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --cycle "$CYCLE"
+      - name: Export preparation health independently of earlier step status
+        if: ${{ always() }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py export --root "$RUNNER_TEMP/soil-operations" --output "$RUNNER_TEMP/health-snapshot"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: scan-health
+          path: ${{ runner.temp }}/health-snapshot
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+      # Durable queue semantics and total lock budget remain deployment decisions.
+    env:
+      BRIM_LIVE_MAIN_PUBLISH: 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-r-hardened
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::digest
+      - uses: actions/download-artifact@v8
+        with:
+          name: scan-transfer
+          path: ${{ runner.temp }}/scan-prepare
+      - uses: actions/download-artifact@v8
+        with:
+          name: scan-health
+          path: ${{ runner.temp }}/health-snapshot
+      - name: Merge prepare result into independent local operations state
+        run: |
+          health_sha="$(python3 -c 'import hashlib,os;print(hashlib.sha256(open(os.environ["RUNNER_TEMP"]+"/health-snapshot/manifest.json","rb").read()).hexdigest())')"
+          python3 scripts/soil_moisture_operations.py restore --input "$RUNNER_TEMP/health-snapshot" --sha256 "$health_sha" --output "$RUNNER_TEMP/soil-operations"
+      - name: Existing shared publisher and source-owned callbacks
+        id: transaction
+        run: >-
+          python3 scripts/soil_network_workflow.py publish --network scan
+          --repo "$GITHUB_WORKSPACE" --transfer "$RUNNER_TEMP/scan-prepare/transfer"
+      - name: Read exact committed result independently of prepared candidate
+        if: ${{ success() }}
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git worktree add --detach "$RUNNER_TEMP/committed" refs/remotes/origin/main
+      - name: Publication outcome does not overwrite query clocks
+        if: ${{ always() }}
+        env:
+          PUBLISH_OUTCOME: ${{ steps.transaction.outcome }}
+        run: |
+          flag=""
+          if [ "$PUBLISH_OUTCOME" = success ]; then flag=--success; fi
+          python3 scripts/soil_network_workflow.py publication-result --health "$RUNNER_TEMP/soil-operations" \
+            --prepared "$RUNNER_TEMP/scan-prepare/run-result.json" --repo "$RUNNER_TEMP/committed" $flag
+      - name: Export publication health even when receipt finalization fails
+        if: ${{ always() }}
+        run: >-
+          python3 scripts/soil_moisture_operations.py export --root "$RUNNER_TEMP/soil-operations" --output "$RUNNER_TEMP/published-health"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: scan-health-publication
+          path: ${{ runner.temp }}/published-health
+          if-no-files-found: error
+          retention-days: 14

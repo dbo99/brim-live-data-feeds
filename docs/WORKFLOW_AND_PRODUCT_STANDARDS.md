@@ -565,3 +565,19 @@ At minimum:
 9. Prove official `main` and hosted paths were not changed by the test.
 10. Test private BRIM when path/schema/time/unit/fallback behavior changed.
 11. Record remaining uncertainty and obtain explicit publication approval.
+
+## Inactive Dendra archive2 proposal
+
+`templates/build-dendra-daily-archive.template.yml` is outside active workflows.
+Its manual-only proposal uses R with jsonlite/digest/yaml, the existing Python
+transport/publisher, explicit run cutoff, version-2 acknowledged-state restore,
+and a prepared snapshot handoff to separately gated publication. A reviewed
+selection/metadata plan and deployment approval variable are prerequisites.
+It does not silently bootstrap live data when committed state is absent.
+Static YAML/dependency/shell checks and disposable local Git transactions are
+local evidence only, not an Actions or hosted-publication pass. Versioned product
+bounds and state roles are defined in [the archive contract](dendra-archive-2.md).
+
+### SM3A local operations (unpublished)
+
+SM3A adds three inactive source-specific templates under `templates/soil-moisture/`. Pure retry proposals require matching fresh scheduler evidence and do not dispatch. Exact controls and remaining hosted gates are in [the SM3A contract](SOIL_MOISTURE_SM3A_CONTRACT.md).

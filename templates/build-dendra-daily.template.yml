@@ -1,0 +1,87 @@
+name: Dendra manual candidate preparation (inactive template)
+# Outside .github/workflows. D2 storage and activation review required.
+on:
+  workflow_dispatch:
+    inputs:
+      checkpoint_url:
+        description: Approved durable HTTPS state archive (required)
+        required: true
+        type: string
+      checkpoint_sha256:
+        description: Verified state archive SHA-256
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  prepare-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-r-hardened
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::jsonlite
+            any::digest
+      - name: Restore declared durable state
+        shell: bash
+        env:
+          STATE_URL: ${{ inputs.checkpoint_url }}
+          STATE_SHA: ${{ inputs.checkpoint_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$STATE_URL" in https://*) ;; *) exit 2 ;; esac
+          test -n "$STATE_SHA"
+          curl --fail --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 120 --max-filesize 536870912 "$STATE_URL" -o "$RUNNER_TEMP/dendra-state.tar.gz"
+          python3 scripts/dendra_workflow.py restore --archive "$RUNNER_TEMP/dendra-state.tar.gz" --sha256 "$STATE_SHA" --state "$RUNNER_TEMP/dendra-state"
+      - name: Verify public metadata and selected stream identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          station_id="$(python3 -c 'import json; print(json.load(open("data/input/dendra/primary_selection.json"))["station_id"])')"
+          python3 scripts/dendra/bridge.py discover --catalog data/input/dendra/pilot_catalog.json --station "$station_id" --output "$RUNNER_TEMP/dendra-discovery" --ledger "$RUNNER_TEMP/dendra-http.json" --budget 80
+          python3 scripts/dendra_workflow.py select --catalog data/input/dendra/pilot_catalog.json --discovery "$RUNNER_TEMP/dendra-discovery" --selection data/input/dendra/primary_selection.json --output "$RUNNER_TEMP/dendra-catalog.json"
+      - name: Build bounded R candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          Rscript --vanilla scripts/build_dendra_daily.R --mode update --catalog "$RUNNER_TEMP/dendra-catalog.json" --state "$RUNNER_TEMP/dendra-state" --output "$RUNNER_TEMP/dendra-output" --days 7 --ledger "$RUNNER_TEMP/dendra-http.json" --budget 80
+          Rscript --vanilla tests/dendra/test_core.R
+          python3 -m unittest discover -s tests/dendra -p 'test_*.py' -v
+          candidate="$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/dendra-state/current.json"))["candidate_root"])')"
+          python3 scripts/dendra_candidate.py validate --root "$candidate"
+          python3 scripts/dendra_candidate.py prepare --root "$candidate" --source-sha "$GITHUB_SHA"
+      - name: Export validated review candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: dendra-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dendra-output
+          retention-days: 2
+          if-no-files-found: error
+      - name: Export checkpoint transfer (not durable storage)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/dendra-state/current.json"
+          mkdir -p "$RUNNER_TEMP/dendra-transfer"
+          # Normalize archive root to state/ for the guarded restore helper.
+          python3 -c 'import os,tarfile; r=os.environ["RUNNER_TEMP"]; t=tarfile.open(r+"/dendra-transfer/state.tar.gz","w:gz"); t.add(r+"/dendra-state",arcname="state"); t.close()'
+          sha256sum "$RUNNER_TEMP/dendra-transfer/state.tar.gz" > "$RUNNER_TEMP/dendra-transfer/state.tar.gz.sha256"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: dendra-checkpoint-transfer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dendra-transfer
+            ${{ runner.temp }}/dendra-http.json
+          retention-days: 14
+          if-no-files-found: error

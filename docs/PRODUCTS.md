@@ -1160,3 +1160,76 @@ Update this inventory when any of the following changes:
 - an observed product class changes from active to compatibility/deprecated;
 - an empty-result or last-known-good guard changes;
 - a material payload or runtime trend changes operational planning.
+
+## Dendra local preparation slice (unpublished)
+
+The scoped [Dendra D1 implementation](DENDRA_D1.md) prepares a configurable daily
+soil-moisture candidate and a bounded soil-temperature companion in explicit
+sandbox paths. It does not add a scheduled product or modify current published
+feeds. The template is outside `.github/workflows/`; durable remote storage,
+publisher callback activation and hosted BRIM integration require later review.
+
+### Dendra combined integration contract (inactive until separately approved)
+
+The integrated profile is selected by `data/input/dendra/combined_selection.json`.
+It retains available moisture dates within the current plus nine previous water
+years, and exactly 90 completed temperature dates. Initialization and maintenance
+intervals are configured separately by parameter (30/90 and 7/7 days). The R entry
+point remains `scripts/build_dendra_daily.R`; `scripts/dendra/core.R` remains the
+sole daily and comparison-window numerical authority. The full five-stream frozen
+replay profile remains supported. A replay is never a live publication candidate.
+
+Public index schema `dendra-daily-1.1.0` adds integration version
+`dendra-integration-1`, retention, compact recent moisture rows and date-indexed
+source-query provenance. Daily schema and numerical policy are unchanged;
+`safeguard_version` remains `dendra-safeguards-1.1.0`. Histories use immutable
+`<water-year>-<sha256>.json` names under `history/` or `companion/` by stream.
+`diagnostics/` contains complete retained daily statistics and CSV; `state/source-index.json`
+binds the original generation index. All paths are under `docs/data/dendra/`.
+The public index declares every file's byte count/hash and exact stream identity.
+
+`scripts/dendra_publisher.py` supplies candidate/reconcile/staged callbacks to the
+unchanged shared publisher. Its ownership is one fixed index and four narrow
+roots: history, diagnostics, companion and state. No other product is owned.
+`templates/build-dendra-daily-integrated.template.yml` is a manual-only inactive
+proposal with a separate write-permission publish job. The older D1 template is
+historical preparation-only evidence, not the integrated activation route.
+
+
+### SM1R1 offline review transport
+
+`scripts/soil_moisture/prepare_snapshots.py` adapts saved SCAN/Dendra/SNOTEL inputs
+for the shared control. SCAN version-2 column/row encoding is lossless, finite and
+validated by producer plus the actual consumer before installing a fresh target.
+The required `--consumer-check` points explicitly at the BRIM QA script. This is
+not a published product, new collector, or change to existing scheduled writers.
+See `docs/SOIL_MOISTURE_SM1_CONTRACT.md` for decoding and failure behavior.
+
+### SM2A archive delivery version 2 (local review only)
+
+The older combined profile above is the retained integration-1 compatibility path.
+A catalog explicitly declaring `dendra-integration-2` selects the R-driven archive
+path and `dendra-daily-2.0.0`. All acquired validated moisture daily rows, diagnostics,
+query provenance and cadence context remain stored. Current plus nine prior WYs
+is the default display window; the separate reference status is `not_computed`.
+Temperature has an explicit configurable recent window, default 90 completed days.
+
+History, diagnostics and CSV use immutable stream/WY partitions; bounded catalog,
+stream and file-inventory manifests replace the flat integration-1 inventory.
+See [the archive contract](dendra-archive-2.md) for exact limits and ownership.
+The offline common adapter supports both versions; catalog-only stations remain
+metadata-only. Scientific calculations, SCAN values and unrelated products are
+unchanged. The new inactive archive template does not activate a published product.
+
+SM2B retains that archive2 contract and scientific policy while bounding complete
+R semantic validation and streaming per-stream R update serialization. See the
+archive contract's SM2B section. No live workflow or hosted product is activated.
+
+SM2C keeps the numerical/public archive contract while removing duplicate local
+validation and materialization inside bounded operations. Shared publication callbacks
+remain independently validated. The approved inactive three-network direction and
+remaining operational gaps are in [the operating design](SOIL_MOISTURE_OPERATIONS.md).
+
+### SM3A local operations (unpublished)
+
+SM3A adds local coverage-driven catch-up and separate network-health records without changing soil calculations or public ownership. See [the versioned SM3A contract](SOIL_MOISTURE_SM3A_CONTRACT.md). Three source-specific templates remain inactive; SNOTEL production and the performance target remain held.
