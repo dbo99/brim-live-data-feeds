@@ -36,7 +36,9 @@ class Journal:
         self.damage = None
         self.events = []
         try:
-            require(binding["mode"] == "offline_only", "Only offline campaign supported")
+            if binding["mode"] != "offline_only":
+                from .d3_plan import validate_binding
+                validate_binding(binding, tasks)
             require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
             require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
@@ -296,15 +298,28 @@ class Journal:
         require(self.snapshot()["attempts"][key]["state"] == "reserved", "Attempt not reserved")
         self._append("started", dict(attempt_key=key))
 
-    def received(self, key, body, *, source_rows, status=200, retain=True):
+    def received(self, key, body, *, source_rows, status=200, retain=True,
+                 sanitized_body=None, details=None):
         require(self.snapshot()["attempts"][key]["state"] == "started", "Attempt not started")
         require(source_rows is None or (type(source_rows) is int and source_rows >= 0), "Response row count")
+        extra = {}
+        if sanitized_body is not None or details is not None:
+            from .d3_plan import validate_receipt_details
+            validate_receipt_details(details)
+            require(self.binding["mode"] == "d3_explicit_adapter", "D3 receipt extension only")
+            require(sanitized_body is None or (not retain and
+                    self.snapshot()["attempts"][key]["interval_key"] is None and
+                    isinstance(sanitized_body, bytes)), "Sanitized metadata only")
+            extra = dict(details=details, representation="sanitized" if sanitized_body is not None
+                         else "original" if retain else "omitted")
         # Count actual received bytes even when too large; never refund them.
         descriptors = [] if len(body) > BODY_BYTES or not retain else [self.put_object(body)]
+        if sanitized_body is not None and len(body) <= BODY_BYTES:
+            descriptors = [self.put_object(sanitized_body)]
         self._append("received", dict(attempt_key=key, response_bytes=len(body),
                                      source_rows=source_rows, status=status, objects=descriptors,
                                      response_sha256=sha(body), body_retained=bool(descriptors),
-                                     elapsed_ms=self.elapsed()))
+                                     elapsed_ms=self.elapsed(), **extra))
         require(len(body) <= BODY_BYTES, "Response exceeds per-body ceiling")
         self.check_budget()
         return descriptors[0] if descriptors else None
