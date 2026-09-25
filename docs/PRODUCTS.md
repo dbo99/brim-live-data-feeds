@@ -457,6 +457,22 @@ ownership.
 - **Attribution:** USDA NRCS AWDB/SCAN.
 - **Known gaps:** Split ownership and provenance for static context; no common
   manifest or checksum.
+- **Additive offline history slice:**
+  [`brim-soil-history-1`](SOIL_HISTORY_CONTRACT.md) exports an explicit,
+  checksum-bound saved SCAN RDS and current products to a fresh local directory.
+  [`scan_history.py`](../scripts/soil_moisture/scan_history.py) produces an
+  immutable history index, 131 exact station/depth shards across 28 stations,
+  30-day hover data, and archive inventory. Four archive-only depths remain
+  inventory-only. Current-WY traces retain sole authority, including gaps.
+  This slice has zero provider calls and no scheduled or published outputs;
+  existing SCAN products and reference tables are unchanged.
+  Its contract closure adds explicit `hover_30d`, `history_last3`,
+  `history_all_available` and `reference_band` capabilities. Last-3 has one
+  immutable payload per pair containing producer-selected completed WYs;
+  current WY remains separate. The approved shared SCAN hover body is lazy on
+  first hover cache miss, with zero history/hover body bytes at activation.
+  All-available/hover bytes are preserved and the authoritative percentile
+  reference is bound without recomputing its science.
 
 ## 11. Snow-pillow SWE
 

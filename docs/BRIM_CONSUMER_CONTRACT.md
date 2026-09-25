@@ -571,6 +571,23 @@ and producer scripts.
   failed latest layer.
 - Daily/monthly/fallback files have split producer ownership and must not be
   assumed to refresh with the scheduled writer.
+- The additive [`brim-soil-history-1`](SOIL_HISTORY_CONTRACT.md) SCAN slice is
+  offline export-only pending lead/consumer review. Resolve its immutable index
+  and exact station/depth shards through its checksum-bound local manifest.
+  Its 30-day hover product preserves gaps as null and observations of zero as
+  zero. The current-WY trace remains authoritative over the entire current WY;
+  archive data cannot fill its gaps. Browser scope is 28 stations / 131 depth
+  histories; the four archive-only depths remain inventory-only. No existing
+  SCAN product, schema, freshness rule or reference table is replaced or activated.
+- SCAN history closure declares all four capabilities explicitly: `hover_30d`,
+  `history_last3`, `history_all_available`, `reference_band`. Normal activation
+  requires zero history/hover body bytes. The approved shared hover exception
+  loads only on first SCAN hover cache miss; same-generation/hash reuse is
+  allowed. Missing/mismatched products are unavailable; never mix generations.
+  Last-3 loads its own exact-pair shard and producer-declared latest up-to-three
+  usable completed WYs; consumers must not infer years or load the full archive
+  merely to slice Last-3. The existing reference product's science, eligibility
+  flags and generation are preserved. This exception applies only to SCAN.
 
 ### Snow-pillow SWE
 
