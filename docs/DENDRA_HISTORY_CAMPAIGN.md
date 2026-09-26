@@ -1,0 +1,488 @@
+# Dendra history campaign contract
+
+Status: reviewed eligibility, deterministic planning, durable campaign execution
+and conservative resume are implemented as an uncommitted integration candidate.
+This gate is offline: no metadata or observation request is authorized or made.
+The conditional first live batch remains **NOT_READY** because its Percent and
+VWC candidates require fresh metadata review. A plan, eligibility decision or
+fabricated authorization dictionary never supplies maintainer approval.
+
+This is an internal acquisition contract, not a public feed, scheduler, daily
+science implementation, or publication policy. The four technical sources of
+truth listed in [README.md](README.md) retain authority. Existing acquisition
+mechanics are described in [DENDRA_HISTORY_ACQUISITION.md](DENDRA_HISTORY_ACQUISITION.md);
+the deliberately narrower live adapter is described in
+[DENDRA_D3_ADAPTER.md](DENDRA_D3_ADAPTER.md).
+
+## Implementation and ownership
+
+The candidate additions in `scripts/dendra/history_acquisition/` are:
+
+- `eligibility.py`: explicit review proposals and versioned immutable decisions;
+  metadata admission alone does not approve acquisition.
+- `campaign.py`: offline state partitions and deterministic interval plans with
+  source/profile bindings and accepted coverage inputs.
+- `campaign_execution.py`: reconstructs reviewed tasks, binds them to the existing
+  Journal and verifies current eligibility before dispatch; derives status from
+  durable receipts and seals.
+- `journal.py` and `provider_adapter.py`: the existing ledger and HTTP stack also
+  accept `campaign_reviewed_adapter`, without changing the narrower D3 policy.
+- `campaign_cli.py`: offline plan/status/verify and separately authorized
+  collect/resume use these same interfaces. `prepare-product` remains unsupported.
+
+Reuse `model.Inventory`, `safety`, `scale_resolution`, timestamp parsing and
+normalization in `scripts/dendra/transport.py`, and the existing `Journal` object
+store, reservations, receipts and seals. No duplicate transport, source ledger,
+scale resolver, metadata admission parser, or archive writer is introduced.
+There is no BRIM launcher, service, bucket, schedule, or production output here.
+
+Exactly one execution authority is required for a campaign. Its durable
+request accounting and concurrency policy are independent of reasoning workers,
+threads used for review, or workstation capacity. Initial provider concurrency is
+one. Agents must never receive independent provider budgets or restart authority.
+
+## Independent stream state and roster closure
+
+The accepted byte-bound inventory remains 122 stations and 434 streams. Every
+campaign report must retain and reconcile all 434, including unselected, held,
+unresolved and covered streams. Selection changes a batch, not frozen identity.
+
+Each stream has independent dimensions:
+
+| Dimension | Meaning |
+| --- | --- |
+| Frozen membership | Exact station/stream association and inventory identity hash |
+| Current access | Fresh public/nonhidden evidence, unknown, or access HOLD |
+| Metadata review | Missing, proposed, accepted, changed, or review HOLD |
+| Scientific identity | Match, unknown, or identity HOLD |
+| Scale | Accepted baseline, exact-evidence resolution, conflict, or unresolved |
+| Historical applicability | Whole-history authority, bounded authority, or unknown history |
+| Native acquisition | Eligibility for explicitly reviewed native query scope |
+| Normalized percent | Scale sufficiency for an exact period plus other required gates |
+| Queried coverage | Complete query intervals, including complete empty intervals |
+| Archived coverage | Intervals with verified durable receipts and archive seals |
+| Daily eligibility | Separately accepted daily science, never inferred from retrieval |
+| Publication eligibility | Separately accepted product/publication gates |
+
+Partition labels summarize these dimensions; they do not replace them. Current
+offline planning reports have four primary partitions: `metadata_review_required`,
+`native_eligible`, `access_hold`, and `review_required`. Separate scale counts
+retain baseline and unresolved routes. Coverage fields are null (not loaded),
+and make no coverage claim. Journal summaries separately reconcile all 434 streams,
+including unselected streams, using task counts, verified seals, complete-empty
+counts, HOLD counts and `UNQUERIED`, `PARTIAL_OR_HOLD` or `COVERED` query coverage.
+They include durable counters and per-task recovery instructions. `COVERED` means
+the planned queries completed, not that continuous observations exist. A scale-only
+PASS cannot override access or metadata HOLD.
+
+## Explicit metadata-to-acquisition review
+
+Metadata packets deliberately keep `raw_eligible=false` and
+`observation_acquisition_authorized=false`. Do not edit those flags. A separate
+decision records explicit acceptance of a proposal after review of its exact
+evidence and permitted interval scope. Hashes establish byte identity, not
+signatures, provider truth, or reviewer authority. Acceptance is an explicitly
+trusted maintainer input; fabricating an acceptance object is not approval.
+
+Only exact supported packet/profile versions may enter this boundary:
+
+| Scope | Metadata profile | Packet | Configuration evidence |
+| --- | --- | --- | --- |
+| Historical exact Dimensionless target | `dendra-soil-temporal-config-review-1` | `dendra-soil-temporal-metadata-review-1` | `dendra-target-temporal-evidence-1` |
+| Any exact frozen roster member | `dendra-soil-campaign-temporal-config-review-1` | `dendra-soil-campaign-temporal-metadata-review-1` | `dendra-campaign-temporal-evidence-1` |
+
+The additive campaign profile reuses the temporal/scientific review parser and
+requires known depth/orientation to match. It admits no unreviewed projected
+scientific field. It does not fetch metadata or convert existing baseline scale
+routes into metadata evidence. Historical packet bytes and exact-target semantics
+remain unchanged. Unsupported, mixed-version, incomplete or HOLD evidence refuses
+eligibility; a successfully parsed packet cannot accept its own review.
+
+Bind inventory bytes and frozen identity, packet bytes/version/profile, source
+checkpoint, source response and selected-record hashes, scientific identity,
+configuration evidence, scale decision reference, review identity, and permitted
+scope. Bind fresh station and stream access evidence, check timestamps, and an
+explicit expiry. `dendra-native-eligibility-2` records these identities, decision
+hash, native unit/status, scientific and temporal status, access evidence/check
+times, historical applicability, scale-state hash, reviewer/policy versions,
+evaluation time, expiry and exact HOLD reasons. It separates
+`NATIVE_ACQUISITION_ELIGIBLE` / `NATIVE_ACQUISITION_HOLD` from
+`NORMALIZED_PERCENT_ELIGIBLE` / `NORMALIZED_PERCENT_HOLD`.
+
+`dendra-native-acquisition-review-1` is a trusted, explicit review input with
+`PENDING`, `ACCEPT_NATIVE` or `HOLD` disposition. Acceptance requires a reviewer
+reference, a review window of at most 24 hours and these exact acknowledgements:
+`backend_not_interpreted`, `history_not_science`,
+`native_only_no_scale_inference`, `unknown_identity_stays_unknown`.
+Station/stream/packet access checks must be nonfuture and at most 24 hours old;
+the earliest metadata or review expiry limits the decision.
+
+`validate_decision` reconstructs the decision from the original packet and trusted
+review at its original evaluation time, compares the complete canonical result,
+then re-evaluates freshness at dispatch time. Rehashing an edited decision does
+not authorize it. The adapter invokes this guard before every page reservation
+and immediately before dispatch. There is no automatic metadata refresh. A
+provider access refusal holds later tasks for that stream; freshness checks do
+not claim to detect an unobserved upstream revocation.
+
+Known frozen depth/orientation require matching reviewed evidence. Frozen unknown
+values remain explicitly unknown when accepted evidence does not contradict
+them; omission does not invent a depth or orientation. Scientific terms and native
+unit must match. Temporal review retains adjacency, gaps and open ends; overlap,
+duplicates, unknown fields, unreviewed actions and unsupported bounds HOLD.
+Missing interval does not invent cadence. Backend routing claims remain
+unreviewed and never become local transforms.
+
+Native acquisition may be accepted with unresolved scale if all non-scale gates
+and the explicitly reviewed native scope pass. Unknown historical applicability
+must remain visible; it cannot authorize historical conversion. Daily acceptance
+and publication remain false unless their separate authorities establish them.
+
+Access restrictions, identity changes, configuration changes and changed bound
+scientific evidence invalidate future use of the decision. Descriptive-only
+changes can require re-review without declaring previously archived bytes
+scientifically invalid. Never rewrite immutable prior receipts to fit new claims.
+
+## Scale policy
+
+The frozen routes remain 177 Percent streams with factor 1, 160
+VolumetricWaterContent streams with factor 100, and 97 Dimensionless streams with
+`native_only_scale_unresolved` unless accepted exact-stream evidence resolves a
+separate derived decision. These are scale routes, not current access approval.
+
+Reuse `scale_resolution` for source/hash/version-bound primary evidence and its
+temporal segments. Numeric ranges, sister streams, station family and current
+configuration alone cannot resolve scale. Native archives preserve original
+values; normalized-percent eligibility must cover the exact product period and
+remain separate from daily scientific acceptance. The campaign can progress
+without resolving every Dimensionless stream.
+
+## Deterministic planning and task identity
+
+The task unit is one stream and one half-open UTC interval. Select the whole
+campaign, an exact stream subset, or an exact station subset resolved against the
+frozen roster. Require an explicit campaign ID/version, exact horizon, bounded
+maximum task count, and deterministic ordering. No POR discovery, implicit
+horizon expansion, or network access occurs during planning.
+
+Split intervals at accepted configuration boundaries and into chunks no longer
+than 30 days. Preserve configuration gaps as explicit unplanned/HOLD scope rather
+than inferred empty coverage. Captured Release 2 semantics describe half-open
+configuration bounds, but are not proof of deployed stitching or scale
+continuity. Local splitting keeps provenance clear without implementing backend
+routing, precedence, transforms or provider stitching.
+
+Logical task identity binds campaign/source/profile versions, frozen inventory
+and stream identity, review decision, configuration evidence, exact interval and
+request policy. The associated scale-state reference is a
+sidecar outside the native task hash: changing only scale evidence does not
+rewrite native task or receipt identity. Batch selectors, report ordering,
+agent count and task-count limits must not redefine an otherwise identical task.
+Changing bound evidence creates new task identity; it does not migrate old state.
+
+The pure planner checks the campaign against the current `source_binding()`
+fingerprint. For an eligible decision, its caller must supply `now` within the
+decision's evaluation/validity interval. CLI planning regenerates decisions from
+packet bytes and an explicit review using the supplied evaluation time and current
+source. The caller must supply an honest current time; offline code does not turn
+a caller-provided clock into provider evidence. Status is a saved-state report,
+not a freshness re-evaluation.
+
+The pure `completed` parameter remains a trusted internal injection point: it
+checks task/campaign/source identity, terminal status and hash shape without
+reading receipts. The CLI does not expose it. Actual resume uses
+`Journal.completed(task_id)` and verified immutable sealed objects directly;
+caller-supplied completion booleans cannot skip provider work. The generalized
+journal binding reconstructs the exact reviewed configuration-boundary plan,
+including arbitrary canonical UTC cuts, rather than passing it through the old
+fixed-PST model planner.
+
+`dendra-campaign-execution-1` binds the campaign manifest, exact source manifest,
+inventory, reviewed packet/review/decision bundles, request policy and tasks.
+Tasks are keyed by their logical campaign task ID; each journal task retains its
+frozen identity, start/end and original native task/request. Observation lookup
+uses this exact key, so two intervals for one stream stay separate.
+`campaign_execution.prepare` accepts only a complete eligible selection, no
+configuration gaps or continuation remainder, positive explicit budgets and at
+most 128 tasks. It reconstructs this binding on journal open. A dry continuation
+plan never silently becomes a larger execution descriptor.
+
+## Request policy and provider failures
+
+`dendra-native-request-policy-1` fixes concurrency 1, retries 0, at most three
+pages per task, 2,016 requested rows per page, a 25-second total request deadline,
+8 MiB per response, no redirects and at least one second between dispatches.
+Explicit positive cumulative budgets bind logical requests, HTTP attempts, total
+bytes and wall seconds. Journal limits additionally bind source rows to
+`http_attempts * 2016`, selected interval count and 128 sessions. Elapsed accounting
+survives process restarts; the CLI authorization window is at most 600 seconds
+and cannot exceed the campaign wall budget.
+
+The campaign adapter performs observation GETs only. Its reviewed metadata is
+supplied locally; this collection path never refreshes metadata. Every page uses
+the existing `Adapter.exchange` reservation/receipt machinery and `DendraFetcher`
+with one attempt. It reserves and records started state before dispatch, charges
+actual received bytes including rejected responses and an overflow sentinel,
+and never refunds spent attempts on resume. A new root is not permission to
+repeat uncertain work.
+
+Current D3 behavior is serial, with 25-second request deadlines, 8 MiB response
+ceilings, a bounded campaign window, at most two attempts per page and at most
+15 seconds of retry delay within remaining budget. It uses bounded reads,
+anonymous allowlisted GETs, no redirects and no inherited proxy/auth handlers.
+Its journal circuit opens after two recent service failures (429 or 5xx); D3 can
+retry the first 429. The campaign mode retains its separate zero-retry policy.
+
+The campaign's stricter first-429 pause is enforced durably from receipt state;
+reopening the process does not clear it. There is no automatic retry or cooldown
+resume. A later recovery/retry decision requires its own bounded review. Live
+transport uses the same anonymous no-proxy/no-redirect opener as D3. Offline tests
+inject response and pacing functions into this same path and use no real sleeps.
+
+| Condition | Enforced scope and action |
+| --- | --- |
+| First 429, 5xx, 408, transport failure or timeout | Campaign PAUSE; retain spent accounting; no further dispatch or automatic retry |
+| 401, 403, 404 or 410 | Stream provider-access HOLD; later tasks for that stream cannot dispatch |
+| Malformed selected page with known accounting | Task HOLD; an unrelated untouched task may proceed when global guards pass |
+| Unknown envelope/row fields, unselected stream or restricted nested/scalar metadata | Campaign STOP for unreviewed schema/privacy/identity shape |
+| Unknown received-row count or ambiguous attempt | Campaign PAUSE pending operator review |
+| Oversized body or exhausted budget | Stop dispatch; charge received bytes and preserve evidence without refund |
+| Incomplete/nonadvancing pagination | Task incomplete/HOLD; never seal or infer empty coverage |
+| Local persistence or integrity failure | Campaign STOP; never convert into an HTTP retry |
+
+Each request must be an anonymous GET to the exact datapoints origin/path, with
+only the bound stream, inclusive start cursor, exclusive end, ascending sort and
+limit. Extra parameters, duplicate query keys, bodies and arbitrary headers are
+refused. A continuation cursor must equal the last timestamp of the preceding
+full received page and advance. No reservation or dispatch can precede local
+request and eligibility checks. The writer lock and main-thread requirement keep
+provider concurrency independent of agents or compute worker counts.
+
+## Durable receipt, archive and recovery
+
+Use the existing exclusive campaign registry, single-writer lock, immutable
+chained events/anchors, content-addressed objects and interval seals. Attempt
+identity adds run, cursor and attempt ordinal to its task. Receipts associate
+request specification, reservation, status, timing, original hash/size, safely
+retained representation and completion/error classification. Objects and receipts
+are never overwritten. The campaign index is derived state, not a second ledger.
+
+Journal task states include `unqueried`, `in_progress`, `incomplete`,
+`request_failed`, `held`, `complete_empty` and `complete_nonempty`; attempt state
+separately records `reserved`, `started`, `received` or `failure`. A seal supplies
+completion evidence. Query completion does not prove continuous observations or
+accepted daily science.
+
+| Interruption | Required recovery and new-attempt rule |
+| --- | --- |
+| 1. Before reservation | No attempt spent; may consume one first attempt only with current eligibility, authorization and remaining budget; a prior run event alone is not a reservation |
+| 2. Reservation persisted, request not dispatched | Attempt remains spent; durable state cannot prove nondelivery; operator review, no automatic new attempt |
+| 3. Request dispatched, response unknown | Preserve reserved/started ambiguity and pause campaign traffic; no automatic new attempt |
+| 4. Response received, receipt not persisted | Response accounting may be unknown; preserve possible orphan page and pause; no automatic new attempt |
+| 5. Receipt persisted, archive not persisted | Retain unsealed evidence; no coverage or automatic refetch; a crashed unsealed received page pauses further traffic |
+| 6. Archive persisted, interval seal not persisted | Orphan envelope is evidence only; operator review, no automatic promotion or new attempt |
+| 7. Interval sealed, summary not refreshed | Verify seal/object and derive summary; reuse complete-empty/nonempty result with no new request |
+
+The current object writer persists page objects before received events and the
+normalized envelope before its seal. There is no automatic promotion of orphan
+objects. A torn chain, missing anchor or failed persistence remains read-only
+evidence; there is no repair/refetch shortcut. Existing reservation counters
+survive reopening. Every spent unsealed task refuses automatic replay, including
+durably failed tasks. Fully accounted task-local failures may leave unrelated
+tasks available, subject to campaign pause and access guards.
+
+Changing source/profile requires a fresh compatible campaign identity and newly
+bound reviews, never migration or rewritten historical bytes. `inspect_only`
+opens known historical journal modes under a shared lock, verifies stored
+manifest/plan/anchor/object integrity and reports source compatibility without
+requiring the current collector fingerprint to equal the historical one. It
+cannot reserve, append, store objects or dispatch. The CLI exposes this read-only
+route separately from current-source offline manifest verification.
+
+Store subdaily native pages, safe normalized envelopes and provenance outside
+production Git. Index by campaign/task and station/stream/interval; compact
+manifests reference immutable hashes, lengths and receipt/seal identities. Count
+raw pages, envelopes, receipts, indexes and temporary headroom separately for
+storage estimates. Optional later packing must preserve original hashes and
+verified restore ability; it is not implemented here. Do not deploy storage.
+
+Current local limits include 8 MiB objects, 262,144-byte journal headers/index
+pages, at most 128 tasks in one prepared execution and 4,096 journal events.
+The header carries reviewed evidence, so its byte limit can constrain a selection
+before the task ceiling. Capacity is checked before registration. These limits
+do not establish capacity for an entire historical backfill. Campaign
+segmentation, retained global budgets,
+compaction and verified recovery transfer need separate review.
+
+## Native observation admission and daily science
+
+Reuse the existing parser, strict observation shape and seal verification. Exact
+stream association may be established by the bound request when rows omit the
+stream ID; a supplied conflicting ID rejects the response. Require parseable UTC
+timestamps without precision loss, ascending page order, requested half-open
+bounds, effective limits and full receipt/page closure. Short or empty terminal
+pages prove completion; full final pages or page exhaustion do not.
+
+Preserve zeros and original native numeric values. Preserve null, missing and
+invalid-value classifications separately. No guessed percent range, clipping,
+conversion, cadence interpolation or backend transformation occurs here. Quality
+and local-time fields remain provider claims, not accepted BRIM quality or UTC.
+
+The current normalizer counts duplicate timestamps, deduplicates its derived
+rows, retains conflicting value alternatives and flags quality conflicts. Exact
+safe raw pages remain available. Conflicting duplicates do **not** currently
+prevent a native archive seal; they must remain visible and cannot silently
+qualify for downstream science. The standalone normalizer counts/skips
+out-of-interval rows, while fetcher and seal reject them before accepted
+completion. Do not describe those distinct boundaries as equivalent.
+
+Raw archive admission, daily scientific acceptance and publication are separate.
+The fixed-PST completed-day calculations in `scripts/dendra/core.R` remain the
+daily numerical authority. No acquisition count, metadata PASS, native archive
+seal or scale decision weakens its accepted requirements.
+
+## Partial acquisition and first live batch
+
+A failed task does not erase unrelated verified archives. Per-task failures keep
+truthful task status; access/identity/configuration failures hold the affected
+stream; budget, throttling, integrity, persistence and source-binding failures
+stop the campaign. Product generation must explicitly exclude ineligible input.
+This is partial acquisition, not authorization for partial publication or a
+change to any existing cross-stream product transaction.
+
+The first live batch requires separate explicit Dave authorization of exact
+source, decisions, streams, intervals, root, window and budgets. Its inherited
+four-task selection stays fixed:
+
+| Stream | Exact half-open UTC interval | Readiness at the offline integration review |
+| --- | --- | --- |
+| Percent `63531a67a9b61453fa1ca4ed` | `2024-02-15T08:00:00.000Z` to `2024-03-01T08:00:00.000Z` | `NEEDS_FRESH_METADATA_REVIEW` |
+| VWC `5d8e42e72da5c3cc53f6531d` | `2024-02-15T08:00:00.000Z` to `2024-03-01T08:00:00.000Z` | `NEEDS_FRESH_METADATA_REVIEW` |
+| Dimensionless `5d9272a12da5c3cff0f655ed` | `2020-07-15T08:00:00.000Z` to `2020-07-16T08:00:00.000Z` | `HOLD_SCALE_ONLY_BUT_NATIVE_ELIGIBLE`, subject to the exact decision expiry |
+| Same Dimensionless stream | `2020-07-16T08:00:00.000Z` to `2020-07-17T08:00:00.000Z` | `HOLD_SCALE_ONLY_BUT_NATIVE_ELIGIBLE`, subject to the exact decision expiry |
+
+The accepted real Dimensionless packet retains two valid adjacent windows, both
+interval claims absent, Soil / VolumetricWaterContent / Dimensionless, absent
+attributes, unknown depth/orientation, unresolved scale and `unknown_history`.
+Explicit reviewed acceptance permits native archive acquisition within scope;
+normalized-percent eligibility stays HOLD. The integration result's task-local
+readiness/decision artifacts carry exact review times and decision/source hashes.
+This table grants no continuing permission after those decisions expire.
+
+**FIRST_LIVE_BATCH_STATUS=NOT_READY.** The minimum next gate is a separately
+approved metadata-only review for the two baseline candidates: fresh station and
+complete selected datastream-list evidence, followed by explicit reviewed native
+decisions. No observation request belongs to that gate. Recheck all decision
+expiries before proposing a later live batch. Do not substitute streams, merge
+configuration windows or silently expand the four proposed tasks.
+
+The task-local first-batch plan must state selected IDs, exact intervals, task
+count, metadata prerequisites, logical/attempt/page limits, concurrency one,
+zero retries, byte/time ceilings, first-429 PAUSE, expected receipts/objects/seals
+and acceptance criteria. Neither that plan nor representative membership claims
+that all 434 streams are currently eligible. Do not execute it in this gate.
+
+## Maintainer CLI and callable contract
+
+The maintainer entry module is `dendra.history_acquisition.campaign_cli`, invoked
+from the checkout with `PYTHONPATH=scripts python3 -B -m dendra.history_acquisition.campaign_cli`.
+The execution version is `dendra-campaign-execution-1`; campaign/task/request
+versions remain `dendra-native-campaign-1`, `dendra-native-task-1` and
+`dendra-native-request-policy-1`. Required modes are `plan`, `status`, `collect`,
+`resume` and `verify`. All require an explicit `--inventory` and
+`--inventory-sha256`; only the frozen inventory hash
+`f81b91bd86ade8e5380063e1ce3b37d1dddb1ca5d21368cd3ecb4514688190d9` is accepted.
+
+| Mode | Additional required inputs and behavior |
+| --- | --- |
+| `plan` | `--config`, `--state-root`, `--now`, `--dry-run`; reconstructs decisions and writes immutable offline artifacts |
+| `status`, `verify` for a saved offline manifest | `--manifest`; verifies current-source manifest integrity; status also prints planning partitions |
+| `status`, `verify` for durable journal state | `--state-root`, `--campaign-id`; verifies stored archive state with no source migration or provider activity, including older source bindings |
+| `collect` | `--execution`, `--authorization`, `--state-root`, and all four explicit budget flags below; exclusively registers new state, then runs exact prepared tasks |
+| `resume` | Same execution/authorization/state/budget arguments as collect; opens existing compatible state, reuses sealed tasks and refuses replay of spent unsealed tasks |
+| `prepare-product` | Unsupported; STOP before provider construction |
+
+Input files use absolute paths and the task-owned state root must already exist.
+`plan` optionally accepts repeated `--stream` or `--station`, `--max-tasks`
+(default 128) and `--after-task`. These select or paginate an offline plan; they
+are not collection/resume controls. A continuation plan, blocked selection,
+configuration gap, remainder or zero budget cannot yield an execution descriptor.
+
+The planning config contains exactly `campaign_id`, `horizons`, `chunk_days`,
+`budgets` and `reviews`. Horizons map stream IDs to explicit start/end values;
+chunk days range from 1 to 30. Budgets must equal the complete policy object from
+`campaign.policy`. Every review reference contains exactly `packet_path`,
+`review_path` and `review_sha256`. Packet/review inputs are bounded at 65,536
+bytes; generic planning and execution files are bounded at 2 MiB.
+
+Plan exclusively writes `manifest.json`, `plan.json` and `status.json` under
+`plans/<campaign-id>/<plan-sha256>/` in the state root. It also writes
+`execution.json`, containing exactly `binding` and `tasks`, only when the complete
+selected plan passes preparation. These are offline artifacts, not campaign
+registration, spending authority or a separate ledger. Partial writes are
+preserved; subsequent commands never overwrite them. The printed plan result
+contains `outcome`, `plan_path`, task/blocked-stream counts, `provider_requests=0`
+and `execution_ready=false`.
+
+Collection and resume require all four positive flags:
+
+- `--logical-requests`
+- `--http-attempts`
+- `--total-bytes`
+- `--wall-seconds`
+
+Their values must equal the immutable execution policy exactly. They cannot
+increase budget or reset counters. Execution rejects `--dry-run`, `--config`,
+`--manifest`, stream/station selectors, `--after-task` and `--campaign-id`.
+Live execution also rejects an injected `--now`: it uses real UTC/monotonic
+clocks. The Python `main` dependency arguments permit finite synthetic transport,
+pacing and clocks for offline tests, using the same CLI/journal/adapter path.
+
+The separate authorization file is bounded at 16,384 bytes and has exactly:
+
+| Field | Required meaning |
+| --- | --- |
+| `schema_version` | `dendra-campaign-dispatch-1` |
+| `approval_reference` | Actual separately granted maintainer approval, 1–128 characters |
+| `binding_sha256` | Hash of the exact reviewed execution binding |
+| `task_root` | Existing absolute state root, matched to its opened device/inode |
+| `window_start`, `window_end` | Current UTC inside a positive window no longer than 600 seconds or the campaign wall budget |
+
+The file records trusted approval; creating it does not grant that approval.
+All local bindings, budget values and fresh unfinished-task decisions are checked
+before the live opener is constructed. Root traversal rejects symlinks. There is
+no environment switch, implicit authorization, metadata refresh, scheduler or
+unbounded backfill entry point.
+
+Successful collect/resume prints `outcome`, exact-key `results`, a journal `status`
+summary, `receipt_prefix` and `synthetic_transport`. Results contain cache-hit and
+native-envelope data or a task HOLD reason. The receipt prefix is
+`campaigns/<campaign-id>` under the supplied state root. Durable locations are:
+
+- `registry/<campaign-id>.json`: immutable registration.
+- `campaigns/<campaign-id>/manifest.json`, `plan/`, `writer.lock`: bound plan and lock.
+- `campaigns/<campaign-id>/events/`: paged immutable receipts.
+- `anchors/<campaign-id>/`: independent event/reservation anchors.
+- `campaigns/<campaign-id>/objects/<sha256>.bin`: screened pages and sealed native envelopes.
+
+On an execution exception, printed `dispatch_count=consult_durable_receipts`
+avoids claiming zero requests after work may have started. Existing receipts and
+seals remain authoritative even when no successful command summary was printed.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Successful dry plan, inspection/verification or all selected execution tasks sealed/reused; never itself a publication approval |
+| 2 | HOLD or partial task result, expired/missing eligibility, budget/permission refusal, or argument-parser failure |
+| 3 | STOP for source/state incompatibility, unsupported product mode, unreviewed global schema or fatal input/persistence failure |
+
+Saved offline-manifest inspection reports
+`saved_offline_manifest_integrity_not_current_access_or_archive_verification`.
+Journal inspection reports `hash_checked_archive_state_not_current_access_permission`
+and `source_compatible`; neither route refreshes access or grants execution.
+Inspection remains read-only. Damaged state requires review, not repair or retry.
+
+This is the bounded callable surface for a later thin maintainer launcher. No
+00G repository or R launcher is changed by this integration. Product generation,
+daily science, publishing, schedules, storage deployment and long-campaign
+segmentation remain separate gates. The first live collection still requires
+fresh reviewed eligibility for every intended task and explicit Dave approval.

@@ -29,7 +29,7 @@ def utc_now():
 
 class Journal:
     def __init__(self, task_root, binding, tasks, *, create=False, recovery=False,
-                 now=utc_now, monotonic=time.monotonic):
+                 now=utc_now, monotonic=time.monotonic, inventory=None, inspect_only=False):
         self.fs = Root(task_root)
         self.lock = None
         self.binding, self.tasks = decode(encode(binding)), decode(encode(tasks))
@@ -39,21 +39,32 @@ class Journal:
         self.prefix = "campaigns/" + binding["campaign_id"]
         self.damage = None
         self.events = []
+        self.inventory, self.inspect_only = inventory, inspect_only
         try:
-            if binding["mode"] != "offline_only":
+            require(not (inspect_only and create), "Inspection cannot initialize state")
+            if inspect_only:
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter"),
+                        "Unsupported historical journal format")
+            elif binding["mode"] == "campaign_reviewed_adapter":
+                from .campaign_execution import validate_binding
+                validate_binding(binding, tasks, inventory=inventory)
+            elif binding["mode"] != "offline_only":
                 from .d3_plan import validate_binding
                 validate_binding(binding, tasks)
-            require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
+            if not inspect_only:
+                require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
+            if not inspect_only and binding["mode"] != "campaign_reviewed_adapter":
+                require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
                         for k, t in tasks.items()), "Task/campaign binding mismatch")
-            require(plan(binding, [(t["identity"]["stream_id"], t["start"], t["end"])
+                require(plan(binding, [(t["identity"]["stream_id"], t["start"], t["end"])
                                    for t in tasks.values()]) == tasks, "Unvalidated interval plan")
             pages = index_pages([{"key": k, "task": t} for k, t in tasks.items()])
             descriptors = [{"path": f"plan/{i:04d}.json", "sha256": digest(p), "bytes": len(encode(p))}
                            for i, p in enumerate(pages)]
             header = dict(binding=binding, plan=descriptors, task_count=len(tasks))
+            require(len(encode(header)) <= PAGE_BYTES, "Campaign header exceeds bounded journal capacity")
             self.header_sha = digest(header)
             registry = "registry/" + binding["campaign_id"] + ".json"
             registration = dict(header_sha256=self.header_sha, path=self.prefix, version=binding["version"])
@@ -75,7 +86,7 @@ class Journal:
                 require(self.fs.read(self.prefix + "/" + descriptor["path"], PAGE_BYTES) == encode(page),
                         "Plan index changed")
             self.lock = self.fs.lock_fd(self.prefix + "/writer.lock")
-            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(self.lock, (fcntl.LOCK_SH if inspect_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
             self._load(recovery)
             self.open_sequence = len(self.events)
             self.base_elapsed = self.snapshot()["counters"]["elapsed_ms"]
@@ -138,6 +149,7 @@ class Journal:
                 raise Hold(self.damage) from exc
 
     def _append(self, kind, data):
+        require(not self.inspect_only, "Historical inspection is read-only")
         require(not self.damage, "Recovery prefix is read-only; preserve damaged evidence")
         require(digest(self.binding) == self.binding_sha and digest(self.tasks) == self.tasks_sha,
                 "In-memory campaign/plan changed")
@@ -162,6 +174,7 @@ class Journal:
         return record
 
     def put_object(self, body):
+        require(not self.inspect_only, "Historical inspection is read-only")
         require(not self.damage, "Damaged journal cannot accept objects")
         descriptor = dict(path="objects/" + sha(body) + ".bin", sha256=sha(body), bytes=len(body))
         path = self.prefix + "/" + descriptor["path"]
@@ -269,6 +282,10 @@ class Journal:
     def start_run(self, key, *, recheck=False):
         require(key in self.tasks, "Unplanned interval")
         state = self.snapshot()["intervals"][key]
+        if self.binding["mode"] == "campaign_reviewed_adapter":
+            require(not recheck and not state["complete"], "Campaign seals are immutable; use fresh authorized state")
+            require(not any(a["interval_key"] == key for a in self.snapshot()["attempts"].values()),
+                    "Unsealed spent attempt requires operator review; retries are zero")
         require(not state["complete"] or recheck, "Completed interval must be reused")
         elapsed = self.check_budget({"intervals": int(state["runs"] == 0)})
         run = state["runs"] + 1
@@ -290,6 +307,16 @@ class Journal:
         require(len(recent) < 2 or not all(a.get("service_failure") for a in recent),
                 "Persistent service-failure circuit open")
         prior = [a for a in attempts.values() if a["logical_key"] == logical_key]
+        if self.binding["mode"] == "campaign_reviewed_adapter":
+            require(interval_key is not None and not prior, "Campaign permits observations only and zero retries")
+            require(not any(a.get("status") == 429 or a.get("service_failure") or
+                        a.get("details", {}).get("error_code") in ("transport", "deadline")
+                        for a in attempts.values()), "Campaign paused after service/transport failure")
+            require(len([a for a in attempts.values() if a["interval_key"] == interval_key]) < 3,
+                    "Campaign page ceiling")
+            # Reserve sufficient ledger capacity for started, received, failure/hold
+            # or seal; never dispatch with an already exhausted event ledger.
+            require(len(self.events) + 6 <= MAX_PLAN, "Journal capacity before dispatch")
         require(len(prior) < 2, "Two-attempt page ceiling")
         elapsed = self.check_budget({"attempts": 1, "logical_requests": int(not prior)})
         ordinal = len(prior) + 1
@@ -311,7 +338,8 @@ class Journal:
         if sanitized_body is not None or details is not None:
             from .d3_plan import validate_receipt_details
             validate_receipt_details(details)
-            require(self.binding["mode"] == "d3_explicit_adapter", "D3 receipt extension only")
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter"),
+                    "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and
                     isinstance(sanitized_body, bytes)), "Sanitized metadata only")

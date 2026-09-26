@@ -1,10 +1,11 @@
-"""Explicit synchronous D3 boundary. Import/construction/planning never sends HTTP.
+"""Explicit synchronous provider boundary; import/planning never sends HTTP.
 
-Only run_authorized_probe opens a real anonymous connection, when explicitly
-called with a separately approved plan/root/window. Offline tests inject a
-finite response callable into Adapter.run; there is no command-line dispatch.
+The D3 and reviewed campaign adapters share dispatch, receipts and transport.
+Live callers separately verify approval; offline callers inject finite response
+callables and waits into the same run methods.
 """
 from contextlib import contextmanager
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 import io
 import math
@@ -15,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from ..transport import DendraFetcher, FetchError, parse_utc, format_utc
 from .d3_plan import (RequestSpec, SELECTED, START, END, validate_binding,
@@ -254,12 +256,17 @@ def observation_shape(body, sid):
 
 
 class Adapter:
+    attempts_per_page = 2
+
     def __init__(self, journal):
         validate_binding(journal.binding, journal.tasks)
         require(not journal.damage, "Recovery journal cannot dispatch")
+        self._initialize(journal, journal.binding["d3"]["authority"])
+
+    def _initialize(self, journal, authority):
         self.journal = journal
         self.binding_hash = digest(journal.binding)
-        self.authority = journal.binding["d3"]["authority"]
+        self.authority = authority
         self.executor = self.wait = None
         self.active = False
         self.halted = False
@@ -320,13 +327,25 @@ class Adapter:
             self.stations[spec.selected_stream], self.vocabulary, self.authority,
             checked_at=self.journal.now(), now=self.journal.now())
 
+    def _validate_dispatch(self, request, spec, interval_key):
+        validate_request(request, spec)
+
+    def _page_permission(self, spec, interval_key):
+        self._permission(spec.selected_stream)
+
+    def _execute(self, request, *, timeout, interval_key):
+        return self.executor(request, timeout=timeout)
+
+    def _classify_error(self, error, details):
+        return details
+
     def exchange(self, request, spec, *, interval_key=None, run=0):
         require(self.active and self.executor is not None, "Explicit runner required")
         require((spec.kind == "observations") == (interval_key is not None), "Receipt task kind mismatch")
         if interval_key is not None:
             require(interval_key in self.journal.tasks and self.journal.tasks[interval_key]["identity"]["stream_id"]
                     == spec.selected_stream, "Receipt selected-stream mismatch")
-        validate_request(request, spec)
+        self._validate_dispatch(request, spec, interval_key)
         remaining = self.remaining()
         counts = self.journal.snapshot()["counters"]
         budgets = self.journal.binding["budgets"]
@@ -334,7 +353,7 @@ class Adapter:
                 counts["source_rows"] < budgets["source_rows"], "No response capacity remains")
         read_limit = min(BODY_LIMIT, budgets["response_bytes"] - counts["response_bytes"])
         if interval_key is not None:
-            self._permission(spec.selected_stream)
+            self._page_permission(spec, interval_key)
         task = interval_key or ("unit-vocabulary" if spec.kind == "unit-vocabulary"
                                 else "metadata-" + spec.selected_stream)
         cursor = spec.cursor if interval_key else spec.kind
@@ -348,7 +367,7 @@ class Adapter:
             remaining = self.remaining()
             with total_deadline(min(25, remaining)):
                 try:
-                    response = self.executor(request, timeout=min(25, remaining))
+                    response = self._execute(request, timeout=min(25, remaining), interval_key=interval_key)
                 except urllib.error.HTTPError as exc:
                     response = exc
                 with response:
@@ -374,7 +393,7 @@ class Adapter:
                     details.update(outcome="failure", error_code="redirect" if 300 <= status <= 399 else "http")
                     if status in RETRYABLE:
                         ordinal = self.journal.snapshot()["attempts"][key]["ordinal"]
-                        if ordinal < 2:
+                        if ordinal < self.attempts_per_page:
                             details["retryable"] = True
                             try:
                                 details["retry_after_seconds"] = retry_delay(headers.get("Retry-After"),
@@ -419,11 +438,13 @@ class Adapter:
             if details["error_code"] is None:
                 transport = isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, OSError))
                 ordinal = self.journal.snapshot()["attempts"][key]["ordinal"]
-                can_retry = transport and ordinal < 2 and row_count is not None
+                can_retry = transport and ordinal < self.attempts_per_page and row_count is not None
                 details.update(outcome="retry" if can_retry else "failure" if transport else "hold",
                     retryable=can_retry, error_code="transport" if transport else
                     "deadline" if isinstance(exc, Deadline) else "body_limit" if len(body) > BODY_LIMIT
                     else "parse_or_privacy", privacy="hold", identity="hold")
+        if caught is not None:
+            details = self._classify_error(caught, details)
         details.update(retrieved_at=format_utc(self.journal.now()),
                        duration_ms=max(0, int((self.journal.monotonic() - mono) * 1000)))
         # Reserve/start have already been durable even if this receipt cannot be
@@ -539,9 +560,264 @@ class Adapter:
             self.permissions = {}
 
 
+@dataclass(frozen=True)
+class CampaignRequestSpec:
+    """One exact campaign interval and its bounded advancing page cursor."""
+    selected_stream: str
+    start: str
+    end: str
+    cursor: str
+    kind = "observations"
+
+    def url(self):
+        require(all(type(value) is str for value in (self.start, self.end, self.cursor)),
+                "Campaign page requires exact UTC strings")
+        require(all(format_utc(value) == value for value in (self.start, self.end, self.cursor)) and
+                parse_utc(self.start) <= parse_utc(self.cursor) < parse_utc(self.end),
+                "Campaign page cursor outside exact interval")
+        return "https://api.dendra.science/v2/datapoints?" + urlencode({
+            "datastream_id": self.selected_stream, "time[$gte]": self.cursor,
+            "time[$lt]": self.end, "$sort[time]": 1, "$limit": 2016})
+
+
+class CampaignAdapter(Adapter):
+    """Reviewed native tasks using the accepted single journal/HTTP stack.
+
+    A successful receipt without a seal never authorizes another run. Durable
+    reservation/started ambiguity and provider throttling stop campaign traffic;
+    a fully accounted malformed task can leave unrelated tasks available.
+    """
+    attempts_per_page = 1
+
+    def _classify_error(self, error, details):
+        if str(error) in {"Unexpected observation envelope fields",
+                          "Restricted or unselected observation metadata",
+                          "Nested observation metadata", "Observation scalar bound"}:
+            # Existing receipt schema: failure + parse/privacy identifies the
+            # conservative global schema/identity stop; task malformed is HOLD.
+            details.update(outcome="failure", error_code="parse_or_privacy", retryable=False)
+        return details
+
+    def __init__(self, journal):
+        require(journal.binding.get("mode") == "campaign_reviewed_adapter" and
+                not journal.damage and not journal.inspect_only and journal.lock is not None,
+                "Writable reviewed campaign journal required")
+        from .campaign import policy
+        limits = journal.binding["request_policy"]
+        require(limits == policy(logical_requests=limits["logical_requests"],
+                attempts=limits["http_attempts"], total_bytes=limits["total_bytes"],
+                wall_seconds=limits["wall_seconds"]), "Exact campaign request policy required")
+        self._initialize(journal, None)
+        self.last_dispatch_mono = None
+
+    def plan(self):
+        return {key: task["native_task"]["request"] for key, task in self.journal.tasks.items()}
+
+    def _traffic_guard(self):
+        """Receipt state, rather than process memory, carries campaign pauses."""
+        from .campaign_execution import Stop
+        require(not self.journal.inspect_only and self.journal.lock is not None and
+                self.journal.fs.fd is not None and not self.journal.damage and not self.halted,
+                "Campaign writer unavailable or requires recovery")
+        if (digest(self.journal.binding) != self.binding_hash or
+                digest(self.journal.tasks) != self.journal.tasks_sha):
+            raise Stop("Campaign adapter binding changed")
+        state = self.journal.snapshot()
+        require(state["counters"]["unknown_row_responses"] == 0,
+                "Campaign paused: unknown response accounting")
+        for attempt in state["attempts"].values():
+            details = attempt.get("details", {})
+            if details.get("outcome") == "failure" and details.get("error_code") == "parse_or_privacy":
+                from .campaign_execution import Stop
+                raise Stop("Campaign stopped: observation schema/identity changed")
+            status = attempt.get("status")
+            require(attempt["state"] not in {"reserved", "started"},
+                    "Campaign paused: ambiguous spent provider attempt")
+            require(status not in (None, 408, 429) and not (type(status) is int and status >= 500) and
+                    details.get("error_code") not in {"transport", "deadline", "body_limit", "budget"},
+                    "Campaign paused: provider failure or response budget")
+            # A previous process cannot silently discard a successful page and
+            # continue elsewhere after crashing before the task's seal.
+            if attempt["state"] == "received" and attempt.get("interval_key") != self.current_interval:
+                interval = state["intervals"][attempt["interval_key"]]
+                require(interval["complete"] is not None or interval["state"] == "held",
+                        "Campaign paused: unsealed receipt requires review")
+        self.remaining()
+
+    def _spacing(self):
+        starts = [event for event in self.journal.events if event["kind"] == "started"]
+        if not starts:
+            return
+        elapsed = (parse_utc(self.journal.now()) - parse_utc(starts[-1]["at"])).total_seconds()
+        if self.last_dispatch_mono is not None:
+            elapsed = min(elapsed, self.journal.monotonic() - self.last_dispatch_mono)
+        delay = max(0.0, 1.0 - elapsed)
+        if delay:
+            self.pause(delay)
+        require((parse_utc(self.journal.now()) - parse_utc(starts[-1]["at"])).total_seconds() >= 1 and
+                (self.last_dispatch_mono is None or
+                 self.journal.monotonic() - self.last_dispatch_mono >= 1),
+                "Campaign dispatch spacing not satisfied")
+
+    def _validate_dispatch(self, request, spec, interval_key):
+        require(type(spec) is CampaignRequestSpec and interval_key in self.journal.tasks,
+                "Exact campaign observation specification required")
+        task = self.journal.tasks[interval_key]
+        require(spec.selected_stream == task["identity"]["stream_id"] and
+                (spec.start, spec.end) == (task["start"], task["end"]),
+                "Campaign request interval/stream mismatch")
+        initial = CampaignRequestSpec(spec.selected_stream, task["start"], task["end"], task["start"])
+        require(task["native_task"]["request"] == {"method": "GET", "url": initial.url()},
+                "Campaign initial request binding changed")
+        validate_request(request, spec)
+        attempts = [a for a in self.journal.snapshot()["attempts"].values()
+                    if a.get("interval_key") == interval_key]
+        require(len(attempts) < 3 and all(a["cursor"] != spec.cursor for a in attempts),
+                "Campaign page ceiling or replay refused")
+        expected_cursor = task["start"]
+        if attempts:
+            previous = attempts[-1]
+            require(previous["state"] == "received" and previous.get("status") == 200 and
+                    len(previous.get("objects", [])) == 1, "Campaign previous page is not admissible")
+            raw = decode(self.journal.read_object(previous["objects"][0]))
+            require(raw["data"] and len(raw["data"]) == raw["limit"],
+                    "Campaign continuation requires a full previous page")
+            expected_cursor = format_utc(raw["data"][-1]["t"])
+            require(parse_utc(expected_cursor) > parse_utc(previous["cursor"]),
+                    "Campaign continuation must advance")
+        require(spec.cursor == expected_cursor, "Campaign page cursor differs from received source boundary")
+        self._traffic_guard()
+        self._spacing()
+
+    def _page_permission(self, spec, interval_key):
+        from .campaign_execution import authorize_task
+        authorize_task(self.journal, interval_key, now=self.journal.now())
+        sid = spec.selected_stream
+        require(not any(a.get("status") in (401, 403, 404, 410) and
+                        self.journal.tasks[a["interval_key"]]["identity"]["stream_id"] == sid
+                        for a in self.journal.snapshot()["attempts"].values()),
+                "Campaign stream provider-access HOLD")
+
+    def _execute(self, request, *, timeout, interval_key):
+        # Recheck local authority after the durable reservation, immediately
+        # before the only injected/live dispatch boundary.
+        from .campaign_execution import authorize_task
+        authorize_task(self.journal, interval_key, now=self.journal.now())
+        self.last_dispatch_mono = self.journal.monotonic()
+        return self.executor(request, timeout=timeout)
+
+    def observations(self, key, *, recheck=False):
+        require(key in self.journal.tasks and not recheck, "Exact task key; campaign recheck forbidden")
+        saved = self.journal.completed(key)
+        if saved is not None:
+            return dict(cache_hit=True, envelope=saved)
+        require(self.active, "Explicit serial campaign runner required")
+        state = self.journal.snapshot()
+        require(not any(a.get("interval_key") == key for a in state["attempts"].values()),
+                "Spent unsealed task requires operator review; no automatic replay")
+        self._traffic_guard()
+        task = self.journal.tasks[key]
+        sid = task["identity"]["stream_id"]
+        first = CampaignRequestSpec(sid, task["start"], task["end"], task["start"])
+        self._page_permission(first, key)
+        # A crash before reservation spent no provider attempt. Reuse its run;
+        # an existing reservation can never reach this branch.
+        run = state["intervals"][key]["runs"] or self.journal.start_run(key)
+        successful = []
+        self.current_interval = key
+        def open_page(request, timeout):
+            pairs = parse_qsl(urlsplit(request.full_url).query, keep_blank_values=True, strict_parsing=True)
+            cursor = dict(pairs).get("time[$gte]")
+            spec = CampaignRequestSpec(sid, task["start"], task["end"], cursor)
+            body, _, receipt = self.exchange(request, spec, interval_key=key, run=run)
+            successful.append(receipt)
+            return MemoryResponse(body)
+        fetcher = DendraFetcher(opener=open_page, timeout=25, max_attempts=1, max_pages=3,
+            page_size=2016, max_retry_delay=0, now_fn=lambda: parse_utc(self.journal.now()),
+            sleep_fn=self.pause)
+        try:
+            envelope = fetcher.fetch_interval(sid, task["start"], task["end"])
+            try:
+                self._persist(self.journal.seal, key, run, envelope, successful)
+            except Hold as exc:
+                from .campaign_execution import Stop
+                raise Stop("Campaign archive seal validation/persistence failed") from exc
+            return dict(cache_hit=False, envelope=envelope)
+        except Exception as exc:
+            if not self.journal.damage and not self.halted:
+                self._persist(self.journal.hold, key, "transport_or_parse")
+            from .campaign_execution import Stop
+            if isinstance(exc, (ValueError, TypeError, KeyError, RecursionError)) and not isinstance(exc, (Hold, Stop)):
+                raise Hold("Campaign observation schema HOLD") from exc
+            raise
+        finally:
+            self.current_interval = None
+
+    def run(self, *, executor, wait, window_end=None, task_keys=None):
+        """Single execution path for reviewed live calls and injected offline IO."""
+        require(callable(executor) and callable(wait) and not self.active and
+                threading.current_thread() is threading.main_thread(),
+                "Explicit serial main-thread campaign runner required")
+        keys = list(self.journal.tasks) if task_keys is None else list(task_keys)
+        require(len(set(keys)) == len(keys) and all(k in self.journal.tasks for k in keys),
+                "Exact unique planned task keys required")
+        if window_end is not None:
+            require(0 < (parse_utc(window_end) - parse_utc(self.journal.now())).total_seconds() <=
+                    self.journal.binding["request_policy"]["wall_seconds"],
+                    "Explicit campaign runner window bound")
+        self.window_end = window_end
+        results = {}
+        for key in keys:
+            saved = self.journal.completed(key)
+            if saved is not None:
+                results[key] = dict(cache_hit=True, envelope=saved)
+        pending = [key for key in keys if key not in results]
+        if not pending:
+            return results
+        self._traffic_guard()
+        self.journal.session()
+        self.executor, self.wait, self.active = executor, wait, True
+        try:
+            for key in pending:
+                try:
+                    results[key] = self.observations(key)
+                except (Hold, FetchError) as exc:
+                    # campaign_execution.Stop is deliberately separate from
+                    # Hold and escapes this task-local catch.
+                    results[key] = dict(held=True, reason=str(exc))
+                    self._traffic_guard()
+            return results
+        finally:
+            self.executor = self.wait = None
+            self.active = False
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, "Redirect refused", headers, fp)
+
+
+def anonymous_executor(window_end):
+    """Shared anonymous live transport; caller must verify separate approval."""
+    from .journal import utc_now
+    end = parse_utc(window_end)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    def execute(request, timeout):
+        remaining = (end - parse_utc(utc_now())).total_seconds()
+        require(remaining > 0, "Approved resource window ended")
+        return opener.open(request, timeout=min(timeout, remaining))
+    return execute
+
+
+def anonymous_wait(window_end):
+    """Only future explicitly authorized live callers use real sleeps."""
+    from .journal import utc_now
+    end = parse_utc(window_end)
+    def wait(seconds):
+        require(0 <= seconds <= 15 and (end - parse_utc(utc_now())).total_seconds() > seconds,
+                "Wait exceeds authorized window")
+        time.sleep(seconds)
+    return wait
 
 
 def run_authorized_probe(journal, *, authorization):
@@ -568,12 +844,5 @@ def run_authorized_probe(journal, *, authorization):
             os.stat(root).st_dev == os.fstat(journal.fs.fd).st_dev, "Approved root differs")
     start, end, now = map(parse_utc, (authorization["window_start"], authorization["window_end"], journal.now()))
     require(start <= now < end and (end - start).total_seconds() <= 300, "Approved probe window")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    def execute(request, timeout):
-        remaining = (end - parse_utc(journal.now())).total_seconds()
-        require(remaining > 0, "Approved resource window ended")
-        return opener.open(request, timeout=min(timeout, remaining))
-    def wait(seconds):
-        require((end - parse_utc(journal.now())).total_seconds() > seconds, "Retry exceeds authorized window")
-        time.sleep(seconds)
-    return Adapter(journal).run(executor=execute, wait=wait, window_end=authorization["window_end"])
+    return Adapter(journal).run(executor=anonymous_executor(authorization["window_end"]),
+        wait=anonymous_wait(authorization["window_end"]), window_end=authorization["window_end"])

@@ -30,6 +30,9 @@ REVIEW_PROFILE = "dendra-soil-conditional-attributes-1"
 TEMPORAL_PROFILE = "dendra-soil-temporal-config-review-1"
 TEMPORAL_PACKET = "dendra-soil-temporal-metadata-review-1"
 TEMPORAL_EVIDENCE = "dendra-target-temporal-evidence-1"
+CAMPAIGN_TEMPORAL_PROFILE = "dendra-soil-campaign-temporal-config-review-1"
+CAMPAIGN_TEMPORAL_PACKET = "dendra-soil-campaign-temporal-metadata-review-1"
+CAMPAIGN_TEMPORAL_EVIDENCE = "dendra-campaign-temporal-evidence-1"
 STATION = "5d8f7f052da5c3a1bdf65382"
 STREAM = "5d9272a12da5c3cff0f655ed"
 IDENTITY = dict(station_id=STATION, stream_id=STREAM, depth_cm=None,
@@ -61,6 +64,8 @@ class RequestSpec:
 
 
 def make_plan(inventory, *, station_id, stream_id, metadata_profile):
+    require(metadata_profile in (REVIEW_PROFILE, TEMPORAL_PROFILE),
+            "Exact-target probe profiles only")
     packet_version = _packet_version(metadata_profile)
     require(type(inventory) is Inventory and station_id == STATION and stream_id == STREAM,
             "Exact bound Dimensionless inventory target required")
@@ -74,6 +79,8 @@ def make_plan(inventory, *, station_id, stream_id, metadata_profile):
 
 
 def _packet_version(profile):
+    if profile == CAMPAIGN_TEMPORAL_PROFILE:
+        return CAMPAIGN_TEMPORAL_PACKET
     require(profile in (REVIEW_PROFILE, TEMPORAL_PROFILE), "Explicit metadata-review profile required")
     return TEMPORAL_PACKET if profile == TEMPORAL_PROFILE else PACKET_VERSION
 
@@ -248,12 +255,13 @@ def _temporal_bound(value, key):
     return fact, exact if fact["validation"] == "VALID_R2" else None
 
 
-def _temporal_evidence(target, body, identity):
+def _temporal_evidence(target, body, identity, *, profile=TEMPORAL_PROFILE):
     """Exact public target only; bounded safe facts independent of later admission."""
     configs = target.get("datapoints_config")
     fact = _field_fact(target, "datapoints_config")
-    evidence = dict(schema_version=TEMPORAL_EVIDENCE, metadata_profile=TEMPORAL_PROFILE,
-        packet_version=TEMPORAL_PACKET, station_id=identity["station_id"], stream_id=identity["stream_id"],
+    evidence = dict(schema_version=CAMPAIGN_TEMPORAL_EVIDENCE if profile == CAMPAIGN_TEMPORAL_PROFILE else TEMPORAL_EVIDENCE,
+        metadata_profile=profile, packet_version=_packet_version(profile),
+        station_id=identity["station_id"], stream_id=identity["stream_id"],
         inventory_sha256=INVENTORY_SHA256, frozen_identity_sha256=digest(identity),
         collector_fingerprint=digest(source_binding()), original_response_bytes=len(body),
         original_response_sha256=sha(body), selected_record_sha256=digest(target),
@@ -341,7 +349,7 @@ def _temporal_evidence(target, body, identity):
     return evidence
 
 
-def _review_science(target, identity, *, temporal=False):
+def _review_science(target, identity, *, temporal=False, profile=None):
     terms, state = target.get("terms"), attributes_state(target)
     require(isinstance(terms, dict) and state not in ("NULL", "MALFORMED_NON_OBJECT"),
             "Scientific metadata shape")
@@ -379,7 +387,7 @@ def _review_science(target, identity, *, temporal=False):
     identity_check = _attribute_identity(claims.get("attributes"), identity)
     # Bind full original science, not just the allowlisted projection. Absence
     # has no manufactured attributes object and a distinct explicit state.
-    science = dict(profile=TEMPORAL_PROFILE if temporal else REVIEW_PROFILE, terms=terms, attributes_state=state,
+    science = dict(profile=profile or (TEMPORAL_PROFILE if temporal else REVIEW_PROFILE), terms=terms, attributes_state=state,
                    datapoints_config=configs)
     if state != "ABSENT":
         science["attributes"] = target["attributes"]
@@ -401,8 +409,9 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
     packet_version = _packet_version(metadata_profile)
     require(type(inventory) is Inventory, "Explicit metadata-review profile required")
     identity = inventory.identity(stream_id)
-    temporal = metadata_profile == TEMPORAL_PROFILE
-    require(not temporal or identity == IDENTITY, "Exact bound Dimensionless inventory target required")
+    temporal = metadata_profile in (TEMPORAL_PROFILE, CAMPAIGN_TEMPORAL_PROFILE)
+    require(metadata_profile != TEMPORAL_PROFILE or identity == IDENTITY,
+            "Exact bound Dimensionless inventory target required")
     _fresh(checked_at, now)
     require(station.get("exact_id") == identity["station_id"] and station.get("public_level") == 3 and
             station.get("is_hidden") is False, "Fresh selected public station required")
@@ -410,9 +419,11 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
     rows, limit = _datastream_page(_payload(body), identity["station_id"], stream_id)
     target = rows[stream_id]
     level, protected = _public(target)
-    evidence = _temporal_evidence(target, body, identity) if temporal else None
+    evidence = _temporal_evidence(target, body, identity, profile=metadata_profile) if temporal else None
     try:
-        review = _review_science(target, identity, temporal=temporal)
+        review = _review_science(target, identity, temporal=temporal, profile=metadata_profile)
+        if metadata_profile == CAMPAIGN_TEMPORAL_PROFILE:
+            require(not any(review["omissions"].values()), "Review projection_shape")
         if temporal:
             require(not evidence["hold_reasons"], evidence["hold_reasons"][0] if evidence["hold_reasons"] else "Review temporal_shape")
             # Stream-level descriptions still validate; no configuration is
