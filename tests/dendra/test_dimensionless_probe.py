@@ -882,3 +882,226 @@ class ConditionalReviewTests(unittest.TestCase):
                                   ("datapoints_config", [dict(interval=123000)])):
                 with self.assertRaisesRegex(Hold, "Scientific metadata mismatch"):
                     admit(dict(target, **{field: value}))
+
+
+class ConfigShapeDiagnosticTests(unittest.TestCase):
+    """Synthetic shape facts only; the real target's configuration is unknown."""
+    def hold(self, target, others=None, **page_options):
+        value = page((others or []) + [target], **page_options)
+        h = Harness([station(), value])
+        with self.assertRaises(MetadataAdmissionHold) as caught:
+            h.run()
+        receipt, body = h.saved[-1]
+        diagnostic = decode(body)
+        self.assertEqual(diagnostic, caught.exception.diagnostic)
+        self.assertEqual(diagnostic["version"], "dendra-metadata-diagnostic-1")
+        self.assertEqual(diagnostic["reason"]["code"], "science.cadence_shape")
+        self.assertEqual(diagnostic["reason"]["parser_site"]["module"], "dimensionless_probe")
+        self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "_review_science")
+        self.assertEqual(diagnostic["body_sha256"], sha(encode(value)))
+        self.assertEqual(diagnostic["body_bytes"], len(encode(value)))
+        self.assertEqual(receipt["outcome"], "HOLD")
+        self.assertEqual(receipt["sanitized_sha256"], sha(body))
+        self.assertEqual(receipt["sanitized_bytes"], len(body))
+        self.assertFalse(receipt["original_body_retained"])
+        self.assertEqual((len(h.sent), h.probe.counters["http_attempts"], h.probe.counters["retries"]), (2, 2, 0))
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        self.assertEqual(set(diagnostic["target_configuration_shape"]), {"datapoints_config"})
+        self.assertLessEqual(len(body), DIAGNOSTIC_BYTES)
+        return diagnostic, body
+
+    def test_missing_config_still_holds_and_is_not_null_or_defaulted(self):
+        target = stream(); del target["datapoints_config"]
+        diagnostic, body = self.hold(target)
+        self.assertEqual(diagnostic["target_configuration_shape"],
+                         dict(datapoints_config=dict(present=False, json_type="missing")))
+        self.assertNotIn("datapoints_config", target)
+        self.assertNotIn("target_scientific_shape", diagnostic)
+        self.assertNotIn(probe.STREAM.encode(), body)
+
+    def test_null_config_still_holds_with_explicit_null(self):
+        diagnostic, _ = self.hold(stream(datapoints_config=None))
+        self.assertEqual(diagnostic["target_configuration_shape"],
+                         dict(datapoints_config=dict(present=True, json_type="null")))
+
+    def test_object_instead_of_list_still_holds_without_keys_or_values(self):
+        value = dict(interval=60000, PRIVATE_CONFIG_KEY="PRIVATE_CONFIG_VALUE")
+        diagnostic, body = self.hold(stream(datapoints_config=value))
+        self.assertEqual(diagnostic["target_configuration_shape"],
+                         dict(datapoints_config=dict(present=True, json_type="object")))
+        self.assertNotIn(b"PRIVATE_CONFIG_KEY", body)
+        self.assertNotIn(b"PRIVATE_CONFIG_VALUE", body)
+        self.assertNotIn(b"60000", body)
+
+    def test_scalar_config_types_still_hold(self):
+        for value, kind in (("PRIVATE_CONFIG_STRING", "string"), (876543210, "integer"),
+                            (876543.210987, "number"), (True, "boolean"), (False, "boolean")):
+            with self.subTest(kind=kind, value=value):
+                diagnostic, body = self.hold(stream(datapoints_config=value))
+                self.assertEqual(diagnostic["target_configuration_shape"],
+                                 dict(datapoints_config=dict(present=True, json_type=kind)))
+                if type(value) is not bool:
+                    self.assertNotIn(str(value).encode(), body)
+
+    def test_empty_list_retains_zero_count_and_no_default_object(self):
+        diagnostic, _ = self.hold(stream(datapoints_config=[]))
+        self.assertEqual(diagnostic["target_configuration_shape"], dict(datapoints_config=dict(
+            present=True, json_type="array", item_count=0, item_types=[], item_types_truncated=False)))
+
+    def test_one_nonobject_entry_still_holds_and_retains_exact_type(self):
+        for value, kind in ((None, "null"), ([], "array"), ("WITHHELD", "string"),
+                            (876543210, "integer"), (876543.210987, "number"), (True, "boolean")):
+            with self.subTest(kind=kind):
+                diagnostic, _ = self.hold(stream(datapoints_config=[value]))
+                self.assertEqual(diagnostic["target_configuration_shape"], dict(datapoints_config=dict(
+                    present=True, json_type="array", item_count=1, item_types=[kind],
+                    item_types_truncated=False)))
+
+    def test_multi_config_never_falls_back_to_first_valid_object(self):
+        for configs in ([dict(interval=60000), dict(interval=60000)],
+                        [dict(interval=60000), None, "WITHHELD"]):
+            diagnostic, _ = self.hold(stream(datapoints_config=configs))
+            facts = diagnostic["target_configuration_shape"]["datapoints_config"]
+            self.assertEqual(facts["item_count"], len(configs))
+            self.assertEqual(facts["item_types"], ["object", "object"] if len(configs) == 2 else
+                             ["object", "null", "string"])
+            self.assertFalse(facts["item_types_truncated"])
+
+    def test_ordered_types_have_fixed_eight_item_bound_and_exact_total(self):
+        entries = [None, {}, [], "WITHHELD", 876543210, 876543.210987, True, {}]
+        types = ["null", "object", "array", "string", "integer", "number", "boolean", "object"]
+        self.assertEqual(probe.CONFIG_ITEM_TYPE_LIMIT, 8)
+        for tail in ([], [dict(PRIVATE_TAIL="WITHHELD")], [None] * 992):
+            configs = entries + tail
+            diagnostic, body = self.hold(stream(datapoints_config=configs))
+            self.assertEqual(diagnostic["target_configuration_shape"], dict(datapoints_config=dict(
+                present=True, json_type="array", item_count=len(configs), item_types=types,
+                item_types_truncated=bool(tail))))
+            self.assertNotIn(b"PRIVATE_TAIL", body)
+            self.assertNotIn(b"WITHHELD", body)
+
+    def test_target_beyond_generic_sample_uses_target_not_sibling_shape(self):
+        others = [stream(_id=f"{i:024x}", datapoints_config=[dict(interval=60000)],
+                         public_level=0, is_hidden=True) for i in range(3)]
+        target = stream(datapoints_config=[None, [], False])
+        diagnostic, body = self.hold(target, others)
+        self.assertEqual(diagnostic["target_configuration_shape"], dict(datapoints_config=dict(
+            present=True, json_type="array", item_count=3,
+            item_types=["null", "array", "boolean"], item_types_truncated=False)))
+        self.assertFalse(any("$.data[3]" in field["path"] for field in diagnostic["shape"]["fields"]))
+        self.assertNotIn(probe.STREAM.encode(), body)
+        for other in others:
+            self.assertNotIn(other["_id"].encode(), body)
+
+    def test_earlier_access_page_terms_and_attributes_holds_have_no_config_context(self):
+        missing_config = stream(); del missing_config["datapoints_config"]
+        wrong_medium = stream(datapoints_config=[])
+        wrong_medium["terms"]["ds"]["Medium"] = "Air"
+        wrong_aggregate = stream(datapoints_config=[])
+        wrong_aggregate["terms"]["ds"]["Aggregate"] = "Unsupported"
+        bad_dq = stream(datapoints_config=[])
+        bad_dq["terms"]["dq"] = dict(Measurement=None)
+        cases = [
+            [station(public_level=0), page([missing_config])],
+            [station(is_hidden=True), page([missing_config])],
+            [station(), page([dict(missing_config, public_level=0)])],
+            [station(), page([dict(missing_config, is_hidden=True)])],
+            [station(), page([dict(missing_config, is_deleted=True)])],
+            [station(), page([dict(missing_config, station_id=OTHER)])],
+            [station(), page([missing_config], total=2)],
+            [station(), page([missing_config], limit=1)],
+            [station(), page([missing_config], skip=1)],
+            [station(), page([dict(missing_config, _id=OTHER)])],
+            [station(), page([missing_config, missing_config])],
+            [station(), page([dict(missing_config, terms=None)])],
+            [station(), page([dict(missing_config, attributes=None)])],
+            [station(), page([dict(missing_config, attributes=[])])],
+            [station(), page([wrong_medium])],
+            [station(), page([wrong_aggregate])],
+            [station(), page([bad_dq])],
+        ]
+        for i, bodies in enumerate(cases):
+            with self.subTest(case=i):
+                h = Harness(bodies)
+                with self.assertRaises(MetadataAdmissionHold):
+                    h.run()
+                diagnostic = decode(h.saved[-1][1])
+                self.assertNotIn("target_configuration_shape", diagnostic)
+                self.assertNotEqual(diagnostic["reason"]["code"], "science.cadence_shape")
+
+    def test_later_interval_date_and_projection_holds_have_no_config_context(self):
+        for target in (stream(datapoints_config=[{}]), stream(datapoints_config=[dict(interval=0)]),
+                       stream(datapoints_config=[dict(interval=True)]),
+                       stream(datapoints_config=[dict(interval=60000, starts_at="INVALID_TIME")]),
+                       stream(attributes=dict(output_unit=[]))):
+            with self.subTest(target=target):
+                h = Harness([station(), page([target])])
+                with self.assertRaises(MetadataAdmissionHold):
+                    h.run()
+                diagnostic = decode(h.saved[-1][1])
+                self.assertNotIn("target_configuration_shape", diagnostic)
+                self.assertNotEqual(diagnostic["reason"]["code"], "science.cadence_shape")
+
+    def test_diagnostic_contains_no_configuration_values_or_nested_names(self):
+        configs = [dict(PRIVATE_CONFIGURATION_KEY="PRIVATE_CONFIG_VALUE", interval=876543210,
+                        starts_at="2098-07-06T05:04:03Z", calibration=dict(PRIVATE_NESTED="WITHHELD")),
+                   ["PRIVATE_ARRAY_VALUE"], "PRIVATE_SCALAR_VALUE", 876543.210987]
+        diagnostic, body = self.hold(stream(datapoints_config=configs,
+            geo=dict(coordinates=[123.987654321, 34.987654321, 987.654321])))
+        for marker in (b"PRIVATE_CONFIGURATION_KEY", b"PRIVATE_CONFIG_VALUE", b"876543210",
+                       b"2098-07-06T05:04:03Z", b"PRIVATE_NESTED", b"WITHHELD", b"PRIVATE_ARRAY_VALUE",
+                       b"PRIVATE_SCALAR_VALUE", b"876543.210987", b"123.987654321",
+                       b"34.987654321", b"987.654321", probe.STREAM.encode(), probe.STATION.encode()):
+            self.assertNotIn(marker, body)
+        context = diagnostic["target_configuration_shape"]["datapoints_config"]
+        self.assertEqual(set(context), {"present", "json_type", "item_count", "item_types", "item_types_truncated"})
+
+    def test_target_configuration_context_survives_generic_byte_trimming(self):
+        keys = sorted(SHAPE_KEYS)[:16]
+        extra = {a: {b: {c: None for c in keys} for b in keys}
+                 for a in keys if a not in page()}
+        target = stream(datapoints_config=[{}] * 20)
+        self.assertGreater(len(encode(metadata_shape(page([target], **extra), "datastream-list"))), DIAGNOSTIC_BYTES)
+        diagnostic, body = self.hold(target, **extra)
+        self.assertEqual(DIAGNOSTIC_BYTES, 12288)
+        self.assertLessEqual(len(body), 12288)
+        self.assertTrue(diagnostic["shape"]["truncated"])
+        self.assertLess(len(diagnostic["shape"]["fields"]), SHAPE_FIELDS)
+        self.assertEqual(diagnostic["target_configuration_shape"], dict(datapoints_config=dict(
+            present=True, json_type="array", item_count=20, item_types=["object"]*8,
+            item_types_truncated=True)))
+
+    def test_successful_conditional_packets_and_optional_z_unchanged(self):
+        for attrs in ("missing", {}, dict(output_unit="native")):
+            for coords in ([-116.5, 34.5], [-116.5, 34.5, -123.25]):
+                target = stream()
+                if attrs == "missing":
+                    del target["attributes"]
+                else:
+                    target["attributes"] = attrs
+                h = Harness([station(geo=dict(type="Point", coordinates=coords)), page([target])])
+                packet = h.run()
+                for _, saved in h.saved:
+                    self.assertNotIn("target_configuration_shape", decode(saved))
+                self.assertEqual(packet["schema_version"], probe.PACKET_VERSION)
+                self.assertEqual(packet["scale_assertions"], [])
+                self.assertEqual(packet["historical_applicability"], dict(kind="unknown_history"))
+                self.assertFalse(packet["raw_eligible"])
+                self.assertNotIn("geometry", packet)
+                self.assertNotIn("geo_z_native", packet)
+                admitted = decode(h.saved[0][1])
+                expected = historical._parse_station(encode(station(geo=dict(type="Point", coordinates=coords))),
+                                                      probe.STATION, checked_at=NOW, now=NOW)
+                self.assertEqual(encode(admitted), encode(expected))
+
+    def test_configuration_context_is_not_attached_for_other_roster_stream(self):
+        sid = "63531a67a9b61453fa1ca4ed"
+        identity = INVENTORY.identity(sid)
+        target = stream(_id=sid, station_id=identity["station_id"], datapoints_config=[])
+        target["terms"]["dt"]["Unit"] = identity["native_unit"]
+        admitted = historical._parse_station(encode(station(_id=identity["station_id"])),
+                                              identity["station_id"], checked_at=NOW, now=NOW)
+        with self.assertRaisesRegex(Hold, "Missing or ambiguous configured cadence") as caught:
+            probe.review_packet(encode(page([target])), admitted, INVENTORY, stream_id=sid,
+                                metadata_profile=probe.REVIEW_PROFILE, checked_at=NOW, now=NOW)
+        self.assertFalse(hasattr(caught.exception, "target_configuration_shape"))

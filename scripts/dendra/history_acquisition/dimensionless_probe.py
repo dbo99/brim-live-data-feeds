@@ -258,6 +258,10 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
                 name: dict(present=name in target,
                            json_type=types[type(target[name])] if name in target else "missing")
                 for name in ("terms", "attributes")}
+        elif str(exc) == "Missing or ambiguous configured cadence" and identity == IDENTITY:
+            # Exact lookup/access and preceding science checks already passed.
+            # Enrich this HOLD only; the configuration admission rule is unchanged.
+            exc.target_configuration_shape = _target_configuration_shape(target)
         raise
     _stream_description(target, now)
     binding = dict(profile=metadata_profile, packet_version=PACKET_VERSION,
@@ -292,6 +296,23 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
         unexpected_ids=sorted(set(rows)-{stream_id}), returned_ids_sha256=digest(sorted(rows)))
     require(len(encode(packet)) <= 65536, "Target scale packet byte bound")
     return packet
+
+
+CONFIG_ITEM_TYPE_LIMIT = 8
+
+
+def _target_configuration_shape(target):
+    """Closed type facts only: no values, keys, nested traversal or identifiers."""
+    types = {dict: "object", list: "array", str: "string", int: "integer",
+             float: "number", bool: "boolean", type(None): "null"}
+    present = "datapoints_config" in target
+    value = target.get("datapoints_config")
+    facts = dict(present=present, json_type=types[type(value)] if present else "missing")
+    if isinstance(value, list):
+        facts.update(item_count=len(value),
+                     item_types=[types[type(item)] for item in value[:CONFIG_ITEM_TYPE_LIMIT]],
+                     item_types_truncated=len(value) > CONFIG_ITEM_TYPE_LIMIT)
+    return dict(datapoints_config=facts)
 
 
 class Probe:
@@ -386,6 +407,8 @@ class Probe:
                         if str(exc) in TARGET_REASONS:
                             code, category = TARGET_REASONS[str(exc)]
                             diagnostic["reason"].update(code=code, category=category)
+                            if code == "science.cadence_shape" and hasattr(exc, "target_configuration_shape"):
+                                diagnostic["target_configuration_shape"] = exc.target_configuration_shape
                             tb = exc.__traceback__
                             while tb is not None:
                                 if tb.tb_frame.f_globals.get("__name__") == __name__:
