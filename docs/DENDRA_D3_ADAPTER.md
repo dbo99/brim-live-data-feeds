@@ -102,6 +102,25 @@ streams are never acquired; only bounded ID diagnostics remain in private local
 state. Credentials, unrestricted error bodies and arbitrary provider fields are
 not persisted as metadata representations.
 
+Station `Point` positions admit exactly two or three finite numeric elements;
+booleans are not numeric coordinates. Longitude and latitude retain their
+existing bounds. The optional third element has no additional magnitude bound
+and is preserved without conversion in the sanitized station receipt as
+`geo_z_native`, with `geo_z_semantics="unverified"`, `geo_z_unit=null` and
+`geo_z_datum=null`. It is an optional native vertical coordinate, not a verified
+elevation, unit or datum claim. The existing `geometry` field remains the
+two-element longitude/latitude projection. Two-coordinate station receipts keep
+their previous shape and omit all `geo_z_*` fields.
+
+Protected or unspecified geometry protection suppresses all coordinates,
+including every `geo_z_*` field. Private, hidden, deleted or otherwise inadmissible
+stations still fail admission. Rejected metadata retains only the existing
+bounded diagnostic; it never retains coordinate values or an unrestricted body.
+The optional Z lives only in provider-refreshable station receipt metadata. It
+does not enter stream identity, stream metadata views, the frozen inventory,
+accepted seed coordinates, daily science or public product/UI fields. Determining
+its meaning, units, datum or future display requires a separate review.
+
 ## Bounds, retry and receipts
 
 The probe envelope is 25 seconds per request, 8 MiB per body, 16 MiB cumulative

@@ -4,6 +4,7 @@ Vocabulary term contents and scientific claims derive from the accepted saved
 catalog. The synthetic outer vocabulary nesting is not a new provider capture.
 """
 import copy
+import json
 import os
 from pathlib import Path
 import sys
@@ -205,6 +206,98 @@ class MetadataTests(unittest.TestCase):
         self.station["geo"]["coordinates"] = [181, 35]
         with self.assertRaises(Hold):
             self.parse_station()
+
+    def test_station_2d_projection_bytes_unchanged(self):
+        expected = dict(exact_id=SELECTED[KNOWN], public_level=3, is_hidden=False,
+                        geo_protected=False, geometry=[-116.5, 34.5], checked_at=NOW,
+                        display_name="Synthetic public station", revision="synthetic-r1",
+                        updated_at="2026-09-25T20:00:00Z", activity="active", ended_at=None)
+        self.assertEqual(encode(self.parse_station()), encode(expected))
+
+    def test_station_optional_z_preserves_native_number_without_conversion(self):
+        # Synthetic values only; no Camp Cady coordinate values were retained.
+        for z in (0, -17, 2**60 + 1, 10**400, 0.125, -0.0, -1e300, 1e300):
+            with self.subTest(z_type=type(z).__name__):
+                self.station["geo"]["coordinates"] = [-116.5, 34.5, z]
+                parsed = self.parse_station()
+                self.assertEqual(parsed["geometry"], [-116.5, 34.5])
+                self.assertIs(type(parsed["geo_z_native"]), type(z))
+                self.assertEqual(encode(parsed["geo_z_native"]), encode(z))
+                self.assertEqual(parsed["geo_z_semantics"], "unverified")
+                self.assertIsNone(parsed["geo_z_unit"])
+                self.assertIsNone(parsed["geo_z_datum"])
+
+    def test_station_optional_z_invalid_positions_hold(self):
+        cases = ([], [1], [1, 2, 3, 4], None, "position", {"0": 1, "1": 2},
+                 [1, 2, "3"], [1, 2, None], [1, 2, True], [True, 2, 3],
+                 [1, False, 3], [1, "2", 3], [181, 2, 3], [-181, 2, 3],
+                 [1, 91, 3], [1, -91, 3])
+        for coordinates in cases:
+            with self.subTest(coordinates=coordinates):
+                self.station["geo"]["coordinates"] = coordinates
+                with self.assertRaisesRegex(Hold, "Public coordinate bounds"):
+                    self.parse_station()
+
+    def test_station_optional_z_nonfinite_coordinates_hold(self):
+        for ordinal in range(3):
+            for token in ("NaN", "Infinity", "-Infinity", "1e999"):
+                with self.subTest(ordinal=ordinal, token=token):
+                    self.station["geo"]["coordinates"] = [-116.5, 34.5, 0.125]
+                    self.station["geo"]["coordinates"][ordinal] = "NONFINITE"
+                    body = json.dumps(self.station).replace('"NONFINITE"', token).encode()
+                    with self.assertRaises(Hold):
+                        parse_station(body, SELECTED[KNOWN], checked_at=NOW, now=NOW)
+
+    def test_station_optional_z_geometry_types_aliases_and_bounds(self):
+        for coordinates in ([-180, -90, 0], [180, 90, 0]):
+            self.station["geo"]["coordinates"] = coordinates
+            self.assertEqual(self.parse_station()["geometry"], coordinates[:2])
+        self.station["geometry"] = self.station.pop("geo")
+        self.assertEqual(self.parse_station()["geo_z_native"], 0)
+        for geometry in ([], "Point", {"type": "LineString", "coordinates": [1, 2, 3]},
+                         {"coordinates": [1, 2, 3]}):
+            with self.subTest(geometry=geometry), self.assertRaisesRegex(Hold, "Public Point geometry required"):
+                self.parse_station({**self.station, "geometry": geometry})
+        self.station["geo"] = {"type": "Point", "coordinates": [180, 90, 1]}
+        with self.assertRaisesRegex(Hold, "Conflicting geometry"):
+            self.parse_station()
+
+    def test_station_optional_z_privacy_suppresses_every_coordinate(self):
+        self.station["geo"]["coordinates"] = [-116.123456789, 34.123456789, 987654.321]
+        for protection in (True, None, "missing"):
+            value = copy.deepcopy(self.station)
+            if protection == "missing":
+                value.pop("is_geo_protected")
+            else:
+                value["is_geo_protected"] = protection
+            with self.subTest(protection=protection):
+                parsed = self.parse_station(value)
+                self.assertIsNone(parsed["geometry"])
+                self.assertFalse(any(k.startswith("geo_z_") for k in parsed))
+                for number in self.station["geo"]["coordinates"]:
+                    self.assertNotIn(str(number).encode(), encode(parsed))
+        for changes in (dict(public_level=1), dict(is_hidden=True), dict(is_deleted=True)):
+            with self.subTest(changes=changes), self.assertRaises(Hold):
+                self.parse_station({**self.station, **changes})
+
+    def test_station_optional_z_does_not_change_stream_identity_or_description(self):
+        for sid in SELECTED:
+            self.sid = sid
+            self.identity = INVENTORY.identity(sid)
+            self.station = station_record(SELECTED[sid])
+            self.stream = stream_record(sid)
+            before = self.parse()
+            self.station["geo"]["coordinates"].append(987654.321)
+            self.assertEqual(encode(self.parse()), encode(before))
+            station_projection = self.parse_station()
+            self.assertEqual(station_projection["exact_id"], SELECTED[sid])
+            self.assertEqual(station_projection["display_name"], self.station["name"])
+            self.assertEqual(INVENTORY.identity(sid), self.identity)
+            self.stream["is_geo_protected"] = True
+            protected = self.parse()
+            self.assertIsNone(protected["geometry"])
+            self.assertNotIn("geo_z_native", protected)
+            self.assertNotIn(b"987654.321", encode(protected))
 
     def test_station_stale_future_or_malformed_check_holds(self):
         for checked in ("2026-09-24T20:59:59Z", "2026-09-25T21:00:01Z", "not-a-timestamp"):

@@ -208,8 +208,8 @@ def _geometry(value, protected):
         return None
     require(isinstance(geometry, dict) and geometry.get("type") == "Point", "Public Point geometry required")
     coordinates = geometry.get("coordinates")
-    require(isinstance(coordinates, list) and len(coordinates) == 2 and
-            all(type(n) in (int, float) and math.isfinite(n) for n in coordinates) and
+    require(isinstance(coordinates, list) and len(coordinates) in (2, 3) and
+            all(type(n) is int or (type(n) is float and math.isfinite(n)) for n in coordinates) and
             -180 <= coordinates[0] <= 180 and -90 <= coordinates[1] <= 90,
             "Public coordinate bounds")
     if "geo" in value and "geometry" in value:
@@ -223,9 +223,15 @@ def parse_station(body, station_id, *, checked_at, now):
     value = _payload(body)
     require(value.get("_id") == station_id, "Station identity mismatch or missing")
     level, protected = _public(value)
-    return dict(exact_id=station_id, public_level=level, is_hidden=False,
-                geo_protected=protected, geometry=_geometry(value, protected),
-                checked_at=checked_at, **_descriptive(value, now))
+    coordinates = _geometry(value, protected)
+    result = dict(exact_id=station_id, public_level=level, is_hidden=False,
+                  geo_protected=protected, geometry=coordinates[:2] if coordinates is not None else None,
+                  checked_at=checked_at, **_descriptive(value, now))
+    if coordinates is not None and len(coordinates) == 3:
+        # Station receipt metadata only; no conversion or claim of elevation.
+        result.update(geo_z_native=coordinates[2], geo_z_semantics="unverified",
+                      geo_z_unit=None, geo_z_datum=None)
+    return result
 
 
 def _scientific(value):

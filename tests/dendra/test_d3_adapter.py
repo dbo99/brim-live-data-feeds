@@ -560,6 +560,86 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(receipt["response_sha256"], sha(bodies[1]))
         self.assertIsNone(journal.snapshot()["metadata"][CAMP]["geometry"])
 
+    def test_optional_z_station_receipt_preserves_native_value_and_reopens(self):
+        value = station(CAMP)
+        value.pop("public_level")
+        value["access_levels_resolved"] = {"public_level": 3}
+        value["geo"]["coordinates"].append(9007199254740993)
+        body = encode(value)
+        journal, clock, root = self.new_journal()
+        executor = FiniteExecutor(journal, clock, [body])
+        adapter = Adapter(journal)
+        journal.session()
+        adapter.active, adapter.executor, adapter.wait = True, executor, executor.wait
+        try:
+            projection = adapter.metadata(RequestSpec("station", CAMP))
+        finally:
+            adapter.active, adapter.executor, adapter.wait = False, None, None
+        receipt = next(iter(journal.snapshot()["attempts"].values()))
+        saved = journal.read_object(receipt["objects"][0])
+        self.assertEqual(decode(saved), projection)
+        self.assertEqual(projection["geometry"], [-116.2, 34.1])
+        self.assertIs(type(projection["geo_z_native"]), int)
+        self.assertEqual(projection["geo_z_native"], 9007199254740993)
+        self.assertEqual(projection["geo_z_semantics"], "unverified")
+        self.assertIsNone(projection["geo_z_unit"])
+        self.assertIsNone(projection["geo_z_datum"])
+        self.assertEqual(receipt["response_sha256"], sha(body))
+        self.assertEqual(receipt["response_bytes"], len(body))
+        self.assertEqual(receipt["representation"], "sanitized")
+        self.assertNotEqual(saved, body)
+        self.assertEqual(len(executor.calls), 1)
+        self.assertEqual(executor.waits, [])
+        binding, tasks = journal.binding, journal.tasks
+        journal.close()
+        with Journal(root, binding, tasks, now=clock.now, monotonic=clock.monotonic) as reopened:
+            self.assertEqual(reopened.read_object(receipt["objects"][0]), saved)
+
+    def test_optional_z_protected_station_receipt_suppresses_all_coordinates(self):
+        for protection in (True, None):
+            value = station(CAMP)
+            value["is_geo_protected"] = protection
+            value["geo"]["coordinates"] = [-117.987654321, 34.987654321, 987654.321]
+            journal, clock, _ = self.new_journal()
+            executor = FiniteExecutor(journal, clock, [encode(value)])
+            adapter = Adapter(journal)
+            journal.session()
+            adapter.active, adapter.executor, adapter.wait = True, executor, executor.wait
+            try:
+                projection = adapter.metadata(RequestSpec("station", CAMP))
+            finally:
+                adapter.active, adapter.executor, adapter.wait = False, None, None
+            receipt = next(iter(journal.snapshot()["attempts"].values()))
+            saved = journal.read_object(receipt["objects"][0])
+            self.assertIsNone(projection["geometry"])
+            self.assertFalse(any(k.startswith("geo_z_") for k in projection))
+            for number in value["geo"]["coordinates"]:
+                self.assertNotIn(str(number).encode(), saved)
+            self.assertEqual(len(executor.calls), 1)
+
+    def test_optional_z_rejected_geometry_diagnostic_has_no_coordinate_values(self):
+        for tail in (["unverified-private-z"], [987654.321, 123456.789]):
+            value = station(CAMP)
+            value["geo"]["coordinates"] = [-117.987654321, 34.987654321] + tail
+            body = encode(value)
+            journal, _, root, receipt, diagnostic = self.diagnostic_failure(body, "geometry.coordinate_bounds")
+            self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "_geometry")
+            for number in value["geo"]["coordinates"]:
+                self.assertNotIn(str(number).encode(), encode(diagnostic))
+            self.assertFalse(any(p.read_bytes() == body for p in root.rglob("*") if p.is_file()))
+
+    def test_optional_z_privacy_failure_diagnostic_has_no_coordinate_values(self):
+        for changes, code in ((dict(is_hidden=True), "access.public_nonhidden_required"),
+                              (dict(public_level=1), "access.public_nonhidden_required"),
+                              (dict(is_geo_protected=True, updated_at=[]), "description.updated_timestamp")):
+            value = station(CAMP) | changes
+            value["geo"]["coordinates"] = [-117.987654321, 34.987654321, 987654.321]
+            body = encode(value)
+            _, _, root, _, diagnostic = self.diagnostic_failure(body, code)
+            for number in value["geo"]["coordinates"]:
+                self.assertNotIn(str(number).encode(), encode(diagnostic))
+            self.assertFalse(any(p.read_bytes() == body for p in root.rglob("*") if p.is_file()))
+
     def test_retry_after_seconds_http_date_and_budget(self):
         now = Clock().now()
         self.assertEqual(retry_delay(None, ordinal=1, now=now, remaining=300), 1)
