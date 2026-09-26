@@ -185,6 +185,20 @@ cardinality, not their unrestricted content. Invalid JSON has an `unparsed`
 shape. These diagnostics do not admit a response, update permission, or authorize
 another request.
 
+For the exact Dimensionless target, a `science.terms_attributes_shape` HOLD
+can additionally carry `target_scientific_shape`. It has exactly `terms` and
+`attributes`; each contains only `present` (boolean) and `json_type` (one of
+`missing`, `null`, `object`, `array`, `string`, `integer`, `number`, `boolean`).
+`present=false` is paired only with `missing`. Context is captured after complete
+page, exact target/station association and public/nonhidden admission, only at
+the existing scientific-shape failure. It includes no values, provider key names,
+coordinates, other stream fields or new identity values. It is independent of
+the generic first-two-row sample and survives generic-field trimming within the
+unchanged 12,288-byte ceiling. The optional context retains diagnostic version
+`dendra-metadata-diagnostic-1`, reason and parser-site meaning. Success and other
+HOLDs omit it; both scientific fields must still be JSON objects. Old diagnostics
+without this optional context remain valid and cannot establish these target facts.
+
 `UnknownSourceRowCount` is a typed form of the existing journal HOLD. Its
 condition, message and accounting are unchanged. After `received` has durably
 saved a failed metadata response and its diagnostic, the adapter catches only

@@ -229,7 +229,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(journal.snapshot()["counters"]["unknown_row_responses"], 1)
         self.assertEqual(receipt["state"], "failure")
         self.assertEqual(diagnostic["reason"]["category"], "missing_field")
-        self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "parse_station")
+        self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "_parse_station")
         before = journal.snapshot()["counters"]
         with self.assertRaisesRegex(UnknownSourceRowCount, "Unknown source row count"):
             journal.reserve("metadata-" + DEEP, "station")

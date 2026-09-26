@@ -107,7 +107,19 @@ def _target_packet(body, station, *, checked_at, now):
     rows, limit = _datastream_page(_payload(body), STATION, STREAM)
     target = rows[STREAM]
     _public(target)
-    scientific = _scientific(target)
+    try:
+        scientific = _scientific(target)
+    except Hold as exc:
+        if str(exc) == "Scientific metadata shape":
+            # Lookup/association/public admission already passed. Retain only
+            # fixed field presence/types, never the selected record or values.
+            types = {dict: "object", list: "array", str: "string", int: "integer",
+                     float: "number", bool: "boolean", type(None): "null"}
+            exc.target_scientific_shape = {
+                name: dict(present=name in target,
+                           json_type=types[type(target[name])] if name in target else "missing")
+                for name in ("terms", "attributes")}
+        raise
     _stream_description(target, now)
     require(scientific["source_terms"].get("dt", {}).get("Unit") == "Dimensionless",
             "Frozen target native unit changed")
@@ -211,7 +223,8 @@ class Probe:
                                   if kind == "station" else
                                   _target_packet(body, station, checked_at=checked, now=checked))
                     except (Hold, ValueError, TypeError, KeyError, RecursionError, AttributeError) as exc:
-                        failure = MetadataAdmissionHold(spec, body, payload, exc)
+                        failure = MetadataAdmissionHold(spec, body, payload, exc,
+                            target_scientific_shape=getattr(exc, "target_scientific_shape", None))
                         diagnostic = failure.diagnostic
                         if str(exc) in TARGET_REASONS:
                             code, category = TARGET_REASONS[str(exc)]

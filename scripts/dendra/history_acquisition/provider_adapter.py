@@ -126,7 +126,7 @@ def metadata_shape(value, kind):
 
 class MetadataAdmissionHold(Hold):
     """Safe specific reason also saved in the existing sanitized-object receipt."""
-    def __init__(self, spec, body, payload, cause):
+    def __init__(self, spec, body, payload, cause, *, target_scientific_shape=None):
         message = str(cause)
         code, category = METADATA_REASONS.get(message, ("parser.condition", "parser_condition"))
         if message == "Station identity mismatch or missing" and isinstance(payload, dict):
@@ -157,9 +157,25 @@ class MetadataAdmissionHold(Hold):
         reason = dict(code=code, category=category, exception_class=exception_class, parser_site=site)
         self.diagnostic = dict(version="dendra-metadata-diagnostic-1", kind=spec.kind, reason=reason,
                                shape=metadata_shape(payload, spec.kind), body_bytes=len(body), body_sha256=sha(body))
+        if target_scientific_shape is not None:
+            require(code == "science.terms_attributes_shape" and spec.kind == "datastream-list" and
+                    type(target_scientific_shape) is dict and
+                    set(target_scientific_shape) == {"terms", "attributes"}, "Target diagnostic context")
+            context = {}
+            for name in ("terms", "attributes"):
+                fact = target_scientific_shape[name]
+                require(type(fact) is dict and set(fact) == {"present", "json_type"} and
+                        type(fact["present"]) is bool and type(fact["json_type"]) is str and
+                        fact["json_type"] in {"missing", "null", "object", "array", "string",
+                                              "integer", "number", "boolean"} and
+                        fact["present"] == (fact["json_type"] != "missing"), "Target diagnostic field type")
+                context[name] = dict(fact)
+            require(any(fact["json_type"] != "object" for fact in context.values()),
+                    "Target diagnostic requires scientific shape HOLD")
+            self.diagnostic["target_scientific_shape"] = context
         # Many permitted key names at every sampled level can reach the byte
         # bound before the field-count bound. Trim the deterministic tail while
-        # preserving the originating reason and the original response binding.
+        # preserving the reason, response binding and optional target facts.
         while len(encode(self.diagnostic)) > DIAGNOSTIC_BYTES and self.diagnostic["shape"]["fields"]:
             self.diagnostic["shape"]["fields"].pop()
             self.diagnostic["shape"]["truncated"] = True

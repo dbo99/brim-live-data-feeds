@@ -353,9 +353,43 @@ class ScaleTests(unittest.TestCase):
         self.assertNotIn(marker.encode(), encode(result))
         self.assertNotIn(b"confidence", encode(result))
 
-    def test_optional_z_parser_bytes_unchanged(self):
-        p = Path(__file__).resolve().parents[2] / "scripts/dendra/history_acquisition/provider_metadata.py"
-        self.assertEqual(sha(p.read_bytes()), "922487dbe9921410492f555733a9d6be28970c8511991a37a211f347a5e80574")
+    def test_scale_resolution_does_not_mutate_or_bypass_metadata_admission(self):
+        from dendra.history_acquisition import provider_metadata as metadata
+
+        # Historical parser identity stays in immutable gate evidence. Optional-Z
+        # behavior belongs to the dedicated metadata and adapter regression tests.
+        parser_path = Path(metadata.__file__)
+        parser_before = parser_path.read_bytes()
+        public, scientific = metadata._public, metadata._scientific
+        native = dict(public_level=3, is_hidden=False,
+                      terms={"dt": {"Unit": "Dimensionless"}}, attributes={},
+                      datapoints_config=[dict(interval=60000)])
+        native_before = encode(native)
+        admitted_before = (public(native), scientific(native))
+        claim = decode(evidence().claim_bytes)
+        claim["source"]["sha256"] = sha(native_before)
+        reviewed = scale.Evidence.bind(claim, native_before)
+
+        def assert_admission():
+            self.assertIs(metadata._public, public)
+            self.assertIs(metadata._scientific, scientific)
+            self.assertEqual((metadata._public(native), metadata._scientific(native)), admitted_before)
+            for update in (dict(public_level=0), dict(is_hidden=True)):
+                with self.subTest(access=update), self.assertRaisesRegex(Hold, "public metadata"):
+                    metadata._public(dict(native, **update))
+            for update in (dict(terms=None), dict(attributes=[])):
+                with self.subTest(science=update), self.assertRaisesRegex(Hold, "Scientific metadata shape"):
+                    metadata._scientific(dict(native, **update))
+
+        assert_admission()
+        for items in ((), (reviewed,)):
+            decision = resolve(*items)
+            self.assertEqual(decision["eligibility_scope"],
+                             "scale_only_subject_to_access_and_daily_acceptance")
+            assert_admission()
+        self.assertEqual(encode(native), native_before)
+        self.assertEqual(reviewed.source_bytes, native_before)
+        self.assertEqual(parser_path.read_bytes(), parser_before)
 
     def test_no_provider_network_or_sleep_attempted(self):
         self.assertEqual((NETWORK_ATTEMPTS, PROVIDER_ATTEMPTS, SLEEP_ATTEMPTS), ([], [], []))

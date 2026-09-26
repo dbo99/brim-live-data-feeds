@@ -42,7 +42,9 @@ from dendra.history_acquisition.model import Inventory, INVENTORY_SHA256
 from dendra.history_acquisition.safety import Hold, encode, decode, digest, sha
 from dendra.history_acquisition.d3_plan import validate_request, RequestSpec as D3RequestSpec
 from dendra.history_acquisition.provider_metadata import parse_station
-from dendra.history_acquisition.provider_adapter import MetadataAdmissionHold, NoRedirect
+from dendra.history_acquisition.provider_adapter import (
+    MetadataAdmissionHold, NoRedirect, metadata_shape, SHAPE_KEYS, SHAPE_FIELDS, DIAGNOSTIC_BYTES,
+)
 
 NOW = "2026-09-26T14:00:00Z"
 OTHER = "0" * 24
@@ -259,6 +261,136 @@ class ProbeTests(unittest.TestCase):
                 self.assert_holds(Harness([station(), page([stream(datapoints_config=config)])]), 2)
         self.assert_holds(Harness([station(), page([stream(ended_at="2020-01-01T00:00:00Z",
             datapoints_config=[dict(interval=1000, ends_before="2021-01-01T00:00:00Z")])])]), 2)
+
+    def test_target_scientific_shape_type_matrix_preserves_admission(self):
+        variants = [("missing", None), ("null", None), ("object", {}),
+                    ("array", ["WITHHELD_ARRAY_VALUE"]), ("string", "WITHHELD_STRING_VALUE"),
+                    ("integer", 987654321), ("number", 98765.4321), ("boolean", True)]
+        for terms_type, terms in variants:
+            for attributes_type, attributes in variants:
+                with self.subTest(terms=terms_type, attributes=attributes_type):
+                    target = stream()
+                    expected = {}
+                    for name, kind, value in (("terms", terms_type, terms),
+                                              ("attributes", attributes_type, attributes)):
+                        expected[name] = dict(present=kind != "missing", json_type=kind)
+                        if kind == "missing":
+                            del target[name]
+                        elif kind != "object":
+                            target[name] = value
+                    value = page([target]); h = Harness([station(), value])
+                    if terms_type == attributes_type == "object":
+                        scientific = probe._scientific(target)
+                        result = h.run()
+                        self.assertEqual(result["scientific_sha256"], digest(scientific))
+                        self.assertEqual(result["scientific_claims"]["terms"], target["terms"])
+                        self.assertEqual(result["scientific_claims"]["attributes"], target["attributes"])
+                        self.assertTrue(all(r["outcome"] == "ADMITTED" for r, _ in h.saved))
+                        self.assertTrue(all("target_scientific_shape" not in decode(b) for _, b in h.saved))
+                        continue
+                    # This parser is unchanged; the boundary must retain its HOLD.
+                    with self.assertRaisesRegex(Hold, "^Scientific metadata shape$"):
+                        probe._scientific(target)
+                    with self.assertRaises(MetadataAdmissionHold) as caught:
+                        h.run()
+                    receipt, saved = h.saved[-1]; diagnostic = decode(saved)
+                    self.assertEqual(diagnostic, caught.exception.diagnostic)
+                    self.assertEqual(diagnostic["version"], "dendra-metadata-diagnostic-1")
+                    self.assertEqual(diagnostic["reason"]["code"], "science.terms_attributes_shape")
+                    self.assertEqual(diagnostic["reason"]["parser_site"],
+                                     dict(module="provider_metadata", function="_scientific", line=244))
+                    self.assertEqual(diagnostic["target_scientific_shape"], expected)
+                    self.assertEqual(diagnostic["body_sha256"], sha(encode(value)))
+                    self.assertEqual(diagnostic["body_bytes"], len(encode(value)))
+                    self.assertEqual(receipt["outcome"], "HOLD")
+                    self.assertEqual(receipt["sanitized_sha256"], sha(saved))
+                    self.assertFalse(receipt["original_body_retained"])
+                    self.assertEqual((len(h.sent), h.probe.counters["http_attempts"],
+                                      h.probe.counters["retries"]), (2, 2, 0))
+                    self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+                    self.assertLessEqual(len(saved), DIAGNOSTIC_BYTES)
+                    for secret in (b"WITHHELD_ARRAY_VALUE", b"WITHHELD_STRING_VALUE",
+                                   b"987654321", b"98765.4321"):
+                        self.assertNotIn(secret, saved)
+
+    def test_target_shape_beyond_sample_has_no_values_or_other_stream_facts(self):
+        others = [stream(_id=f"{i:024x}", attributes={"OTHER_PRIVATE_KEY": "OTHER_PRIVATE_VALUE"})
+                  for i in range(2)]
+        target = stream(terms=None, attributes=[{"TARGET_PRIVATE_KEY": "TARGET_PRIVATE_VALUE"}],
+                        geo={"coordinates": [123.987654321, 34.987654321]})
+        h = Harness([station(), page(others + [target])]); self.assert_holds(h, 2)
+        saved = h.saved[-1][1]; diagnostic = decode(saved)
+        self.assertEqual(diagnostic["target_scientific_shape"], dict(
+            terms=dict(present=True, json_type="null"), attributes=dict(present=True, json_type="array")))
+        self.assertFalse(any("$.data[2]" in f["path"] for f in diagnostic["shape"]["fields"]))
+        for secret in (b"OTHER_PRIVATE_KEY", b"OTHER_PRIVATE_VALUE", b"TARGET_PRIVATE_KEY",
+                       b"TARGET_PRIVATE_VALUE", b"123.987654321", b"34.987654321", probe.STREAM.encode()):
+            self.assertNotIn(secret, saved)
+
+    def test_target_shape_is_absent_before_public_admission_and_for_other_holds(self):
+        cases = [page([stream(terms=None, attributes=[], public_level=0)]),
+                 page([stream(terms=None, attributes=[], is_hidden=True)]),
+                 page([stream(terms=None, attributes=[], station_id=OTHER)]),
+                 page([stream(terms=None, attributes=[])], skip=1),
+                 page([stream(terms=None, attributes=[])], total=2),
+                 page([stream(terms=None, attributes=[])], limit=1),
+                 page([stream(_id=OTHER, terms=None, attributes=[])]),
+                 page([stream(), stream(terms=None)]),
+                 page([stream(datapoints_config=[])]),
+                 page([stream(terms={"dt": {"Unit": "Percent"}})])]
+        for i, value in enumerate(cases):
+            with self.subTest(case=i):
+                h = Harness([station(), value]); self.assert_holds(h, 2)
+                diagnostic = decode(h.saved[-1][1])
+                self.assertNotIn("target_scientific_shape", diagnostic)
+                self.assertNotEqual(diagnostic["reason"]["code"], "science.terms_attributes_shape")
+                if i < 2:
+                    try:
+                        probe._public(value["data"][0])
+                    except Hold as old:
+                        self.assertEqual(str(old), "Private, hidden or unknown public metadata")
+                        baseline = MetadataAdmissionHold(probe.RequestSpec("datastream-list"),
+                                                         encode(value), value, old)
+                    else:
+                        self.fail("Existing public admission must still HOLD")
+                    # Preserve the existing whole-list diagnostic mapping too.
+                    self.assertEqual(diagnostic["reason"], baseline.diagnostic["reason"])
+
+    def test_target_shape_survives_generic_size_trimming(self):
+        keys = sorted(SHAPE_KEYS)[:16]
+        value = page([stream(terms=None)])
+        value.update({a: {b: {c: None for c in keys} for b in keys}
+                      for a in keys if a not in value})
+        self.assertGreater(len(encode(metadata_shape(value, "datastream-list"))), DIAGNOSTIC_BYTES)
+        h = Harness([station(), value]); self.assert_holds(h, 2)
+        saved = h.saved[-1][1]; diagnostic = decode(saved)
+        self.assertEqual(DIAGNOSTIC_BYTES, 12288)
+        self.assertLessEqual(len(saved), DIAGNOSTIC_BYTES)
+        self.assertLess(len(diagnostic["shape"]["fields"]), SHAPE_FIELDS)
+        self.assertTrue(diagnostic["shape"]["truncated"])
+        self.assertEqual(diagnostic["reason"]["code"], "science.terms_attributes_shape")
+        self.assertEqual(diagnostic["target_scientific_shape"], dict(
+            terms=dict(present=True, json_type="null"), attributes=dict(present=True, json_type="object")))
+
+    def test_target_shape_constructor_rejects_extra_values_and_open_types(self):
+        context = dict(terms=dict(present=False, json_type="missing"),
+                       attributes=dict(present=True, json_type="object"))
+        bad = [dict(context, provider_key={}), dict(terms=context["terms"]),
+               dict(context, terms=dict(present=False, json_type="missing", value="PRIVATE")),
+               dict(context, terms=dict(present=True, json_type="unparsed")),
+               dict(context, terms=dict(present=1, json_type="missing")),
+               dict(context, terms=dict(present=True, json_type="missing")),
+               dict(context, terms=dict(present=False, json_type="null")),
+               dict(context, terms=dict(present=True, json_type="object"))]
+        spec = probe.RequestSpec("datastream-list")
+        for value in bad:
+            with self.subTest(context=value), self.assertRaises(Hold):
+                MetadataAdmissionHold(spec, b"{}", {}, Hold("Scientific metadata shape"),
+                                      target_scientific_shape=value)
+        for spec, reason in ((probe.RequestSpec("station"), "Scientific metadata shape"),
+                             (probe.RequestSpec("datastream-list"), "Missing or ambiguous configured cadence")):
+            with self.assertRaises(Hold):
+                MetadataAdmissionHold(spec, b"{}", {}, Hold(reason), target_scientific_shape=context)
 
     def test_other_streams_are_ids_only_even_with_private_scale_claims(self):
         other = stream(_id=OTHER, public_level=0, is_hidden=True,
