@@ -6,7 +6,10 @@ receipt callbacks. Plan construction is not permission to contact the provider.
 No scale decision is made here, and no acquisition journal is opened or resumed.
 """
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from fractions import Fraction
 import math
+import re
 import threading
 import time
 import urllib.error
@@ -17,13 +20,16 @@ from .d3_plan import BASE, validate_request
 from .model import Inventory, INVENTORY_SHA256, source_binding
 from .provider_adapter import total_deadline, MetadataAdmissionHold, UNPARSED, DIAGNOSTIC_BYTES
 from .provider_metadata import (_parse_station, _payload, _fresh, _public,
-                                _datastream_page, _stream_description, _timestamp)
+                                _datastream_page, _stream_description, _descriptive, _timestamp)
 from ..transport import parse_utc
 from .safety import Hold, require, encode, decode, digest, sha
 
 VERSION = "dendra-dimensionless-probe-1"
 PACKET_VERSION = "dendra-soil-metadata-review-1"
 REVIEW_PROFILE = "dendra-soil-conditional-attributes-1"
+TEMPORAL_PROFILE = "dendra-soil-temporal-config-review-1"
+TEMPORAL_PACKET = "dendra-soil-temporal-metadata-review-1"
+TEMPORAL_EVIDENCE = "dendra-target-temporal-evidence-1"
 STATION = "5d8f7f052da5c3a1bdf65382"
 STREAM = "5d9272a12da5c3cff0f655ed"
 IDENTITY = dict(station_id=STATION, stream_id=STREAM, depth_cm=None,
@@ -55,16 +61,21 @@ class RequestSpec:
 
 
 def make_plan(inventory, *, station_id, stream_id, metadata_profile):
-    require(metadata_profile == REVIEW_PROFILE, "Explicit metadata-review profile required")
+    packet_version = _packet_version(metadata_profile)
     require(type(inventory) is Inventory and station_id == STATION and stream_id == STREAM,
             "Exact bound Dimensionless inventory target required")
     require(inventory.identity(STREAM) == IDENTITY, "Frozen Dimensionless identity changed")
     return dict(version=VERSION, metadata_profile=metadata_profile,
-                metadata_profile_sha256=digest(dict(profile=metadata_profile, packet_version=PACKET_VERSION)),
+                metadata_profile_sha256=digest(dict(profile=metadata_profile, packet_version=packet_version)),
                 inventory_sha256=INVENTORY_SHA256,
                 frozen_identity=inventory.identity(STREAM), collector_sources=source_binding(),
                 envelope=dict(ENVELOPE),
                 requests=[RequestSpec(kind).descriptor() for kind in ("station", "datastream-list")])
+
+
+def _packet_version(profile):
+    require(profile in (REVIEW_PROFILE, TEMPORAL_PROFILE), "Explicit metadata-review profile required")
+    return TEMPORAL_PACKET if profile == TEMPORAL_PROFILE else PACKET_VERSION
 
 
 # Only these scientific paths can escape into the review packet. Unknown keys,
@@ -182,7 +193,155 @@ def _attribute_identity(attributes, identity):
             for field in ("depth_cm", "orientation")}
 
 
-def _review_science(target, identity):
+# R2 schema/source mapping and deliberate gaps are documented in DENDRA_D3_ADAPTER.
+# Values may escape ONLY for valid temporal strings and positive numeric interval.
+# Backend dispatch/action content is never retained or executed.
+TEMPORAL_CONFIG_LIMIT = 8
+TEMPORAL_EVIDENCE_BYTES = 24576
+TEMPORAL_FIELDS = ("begins_at", "ends_before", "interval", "connection", "params", "path", "actions")
+JSON_TYPES = {dict: "object", list: "array", str: "string", int: "integer",
+              float: "number", bool: "boolean", type(None): "null"}
+ISO_BOUND = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,18}))?(Z|[+-][0-9]{2}:[0-9]{2})")
+R2_BOUND = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{1,3}Z")
+for _name in ("shape", "bound", "date", "unknown_bound", "interval", "backend_shape",
+              "unreviewed_fields", "actions", "overlap", "duplicate", "window"):
+    TARGET_REASONS["Review temporal_" + _name] = ("review.temporal_" + _name, "scientific_mismatch")
+
+
+def _non_authorizing():
+    return dict(raw_eligible=False, observation_acquisition_authorized=False,
+                daily_science_accepted=False, browser_publication_eligible=False,
+                scale_assertions=[], historical_applicability=dict(kind="unknown_history"))
+
+
+def _field_fact(value, key):
+    present = key in value
+    return dict(present=present, json_type=JSON_TYPES[type(value[key])] if present else "missing",
+                sha256=digest(value[key]) if present else None)
+
+
+def _temporal_bound(value, key):
+    fact = _field_fact(value, key)
+    if key not in value:
+        # R2 permits omission. Only the end has the guide's explicit ongoing
+        # meaning; never manufacture a start date from a backend sentinel.
+        fact["validation"] = "ABSENT_OPEN_END" if key == "ends_before" else "ABSENT_UNKNOWN"
+        return fact, None
+    raw = value[key]
+    fact["validation"] = "NULL_UNSUPPORTED" if raw is None else "INVALID"
+    match = ISO_BOUND.fullmatch(raw) if isinstance(raw, str) and len(raw) <= 64 else None
+    if match is None:
+        return fact, None
+    base, fraction, zone = match.groups()
+    try:
+        if zone != "Z" and (int(zone[1:3]) > 23 or int(zone[4:6]) > 59):
+            return fact, None
+        # Fraction is kept separately: datetime must not truncate source precision.
+        stamp = datetime.fromisoformat(base + ("+00:00" if zone == "Z" else zone))
+        delta = stamp.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        exact = Fraction(delta.days * 86400 + delta.seconds) + Fraction(int(fraction or "0"), 10**len(fraction or ""))
+    except (ValueError, OverflowError):
+        return fact, None
+    fact["value"] = raw  # Date-only grammar; never an arbitrary provider string.
+    fact["validation"] = "VALID_R2" if R2_BOUND.fullmatch(raw) else "UNSUPPORTED_R2_FORMAT"
+    # Preserve offset/precision evidence on HOLD; do not extend R2's schema.
+    return fact, exact if fact["validation"] == "VALID_R2" else None
+
+
+def _temporal_evidence(target, body, identity):
+    """Exact public target only; bounded safe facts independent of later admission."""
+    configs = target.get("datapoints_config")
+    fact = _field_fact(target, "datapoints_config")
+    evidence = dict(schema_version=TEMPORAL_EVIDENCE, metadata_profile=TEMPORAL_PROFILE,
+        packet_version=TEMPORAL_PACKET, station_id=identity["station_id"], stream_id=identity["stream_id"],
+        inventory_sha256=INVENTORY_SHA256, frozen_identity_sha256=digest(identity),
+        collector_fingerprint=digest(source_binding()), original_response_bytes=len(body),
+        original_response_sha256=sha(body), selected_record_sha256=digest(target),
+        configuration=fact, configurations=[], temporal_order=[], relations=[], hold_reasons=[],
+        relation_scope="pairwise_configuration_windows_not_observation_coverage",
+        evidence_complete=True, metadata_admitted=False, cadence_role="provider_metadata_only",
+        interval_authority="legacy_local_ms_claim_not_defined_by_captured_r2_schema",
+        backend_semantics="not_evaluated", **_non_authorizing())
+    reasons = evidence["hold_reasons"]
+    def hold(reason):
+        if reason not in reasons:
+            reasons.append(reason)
+    if not isinstance(configs, list) or not configs:
+        hold("Review temporal_shape")
+        return evidence
+    fact["item_count"] = len(configs)
+    evidence["omitted_configurations"] = max(0, len(configs) - TEMPORAL_CONFIG_LIMIT)
+    if len(configs) > TEMPORAL_CONFIG_LIMIT:
+        evidence["evidence_complete"] = False
+        hold("Review temporal_bound")
+    windows, hashes = [], {}
+    for ordinal, config in enumerate(configs[:TEMPORAL_CONFIG_LIMIT]):
+        item = dict(ordinal=ordinal, json_type=JSON_TYPES[type(config)], object_sha256=digest(config))
+        evidence["configurations"].append(item)
+        if not isinstance(config, dict):
+            hold("Review temporal_shape")
+            continue
+        item["fields"] = {key: _field_fact(config, key) for key in TEMPORAL_FIELDS}
+        unknown = {k: v for k, v in config.items() if k not in TEMPORAL_FIELDS}
+        item.update(unknown_field_count=len(unknown), unknown_fields_sha256=digest(unknown),
+                    omitted_backend_field_count=sum(k in config for k in ("connection", "params", "path", "actions")))
+        if unknown:
+            hold("Review temporal_unreviewed_fields")
+        if item["object_sha256"] in hashes:
+            item["duplicate_of_ordinal"] = hashes[item["object_sha256"]]
+            hold("Review temporal_duplicate")
+        else:
+            hashes[item["object_sha256"]] = ordinal
+        for key, expected in (("connection", str), ("params", dict), ("path", str), ("actions", dict)):
+            field = item["fields"][key]
+            field["validation"] = ("ABSENT" if key not in config else
+                                   "WITHHELD_UNREVIEWED" if type(config[key]) is expected else "INVALID_TYPE")
+            if field["validation"] == "INVALID_TYPE":
+                hold("Review temporal_backend_shape")
+        if "actions" in config:
+            hold("Review temporal_actions")  # No transform/exclusion interpretation.
+        bounds = []
+        for key in ("begins_at", "ends_before"):
+            field, instant = _temporal_bound(config, key)
+            item["fields"][key] = field
+            bounds.append(instant)
+            if field["validation"] == "ABSENT_UNKNOWN":
+                hold("Review temporal_unknown_bound")
+            elif field["validation"] not in ("VALID_R2", "ABSENT_OPEN_END"):
+                hold("Review temporal_date")
+        interval = item["fields"]["interval"]
+        if "interval" not in config:
+            interval["validation"] = "ABSENT_UNSPECIFIED"
+        elif type(config["interval"]) in (int, float) and 0 < config["interval"] <= 2**53 - 1:
+            interval.update(validation="VALID_LOCAL_CADENCE_CLAIM", value=config["interval"], unit="millisecond")
+        else:
+            interval["validation"] = "NULL_UNSUPPORTED" if config["interval"] is None else "INVALID"
+            hold("Review temporal_interval")
+        start, end = bounds
+        valid = (item["fields"]["begins_at"]["validation"] == "VALID_R2" and
+                 item["fields"]["ends_before"]["validation"] in ("VALID_R2", "ABSENT_OPEN_END"))
+        if valid and end is not None and start >= end:
+            hold("Review temporal_window")
+            valid = False
+        item["window_validation"] = "VALID_HALF_OPEN" if valid else "UNKNOWN_OR_INVALID"
+        if valid:
+            windows.append((start, ordinal, end))
+    windows.sort(key=lambda window: (window[0], window[1]))
+    evidence["temporal_order"] = [ordinal for _, ordinal, _ in windows]
+    evidence["temporal_order_complete"] = len(windows) == len(configs)
+    # Every pair is checked, so a nested interval cannot hide a later overlap.
+    # Source order is always retained separately; ordering selects no winner.
+    for pos, (start, ordinal, end) in enumerate(windows):
+        for next_start, next_ordinal, _ in windows[pos+1:]:
+            relation = "OVERLAP" if end is None or next_start < end else "ADJACENT" if next_start == end else "GAP"
+            evidence["relations"].append(dict(left_ordinal=ordinal, right_ordinal=next_ordinal, relation=relation))
+            if relation == "OVERLAP":
+                hold("Review temporal_overlap")
+    require(len(encode(evidence)) <= TEMPORAL_EVIDENCE_BYTES, "Review temporal_bound")
+    return evidence
+
+
+def _review_science(target, identity, *, temporal=False):
     terms, state = target.get("terms"), attributes_state(target)
     require(isinstance(terms, dict) and state not in ("NULL", "MALFORMED_NON_OBJECT"),
             "Scientific metadata shape")
@@ -201,12 +360,15 @@ def _review_science(target, identity):
                 require(isinstance(item, str) and 0 < len(item) <= 256 and
                         all(ord(c) >= 32 for c in item), "Review term_claim")
     configs = target.get("datapoints_config")
-    require(isinstance(configs, list) and len(configs) == 1 and isinstance(configs[0], dict),
-            "Missing or ambiguous configured cadence")
-    interval = configs[0].get("interval")
-    require(_numeric(interval) and interval > 0, "Configured cadence value")
+    if not temporal:
+        require(isinstance(configs, list) and len(configs) == 1 and isinstance(configs[0], dict),
+                "Missing or ambiguous configured cadence")
+        interval = configs[0].get("interval")
+        require(_numeric(interval) and interval > 0, "Configured cadence value")
     claims, omissions = {}, {}
-    fields = [("terms", terms, TERMS), ("datapoints_config", configs[0], CONFIG)]
+    fields = [("terms", terms, TERMS)]
+    if not temporal:
+        fields.append(("datapoints_config", configs[0], CONFIG))
     if state != "ABSENT":
         fields.append(("attributes", target["attributes"], ATTRIBUTES))
     for name, value, schema in fields:
@@ -217,7 +379,7 @@ def _review_science(target, identity):
     identity_check = _attribute_identity(claims.get("attributes"), identity)
     # Bind full original science, not just the allowlisted projection. Absence
     # has no manufactured attributes object and a distinct explicit state.
-    science = dict(profile=REVIEW_PROFILE, terms=terms, attributes_state=state,
+    science = dict(profile=TEMPORAL_PROFILE if temporal else REVIEW_PROFILE, terms=terms, attributes_state=state,
                    datapoints_config=configs)
     if state != "ABSENT":
         science["attributes"] = target["attributes"]
@@ -236,9 +398,11 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
     caller supplies freshly admitted station metadata; original bodies are not
     returned. Network selection remains separately pinned by RequestSpec.
     """
-    require(metadata_profile == REVIEW_PROFILE and type(inventory) is Inventory,
-            "Explicit metadata-review profile required")
+    packet_version = _packet_version(metadata_profile)
+    require(type(inventory) is Inventory, "Explicit metadata-review profile required")
     identity = inventory.identity(stream_id)
+    temporal = metadata_profile == TEMPORAL_PROFILE
+    require(not temporal or identity == IDENTITY, "Exact bound Dimensionless inventory target required")
     _fresh(checked_at, now)
     require(station.get("exact_id") == identity["station_id"] and station.get("public_level") == 3 and
             station.get("is_hidden") is False, "Fresh selected public station required")
@@ -246,9 +410,19 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
     rows, limit = _datastream_page(_payload(body), identity["station_id"], stream_id)
     target = rows[stream_id]
     level, protected = _public(target)
+    evidence = _temporal_evidence(target, body, identity) if temporal else None
     try:
-        review = _review_science(target, identity)
+        review = _review_science(target, identity, temporal=temporal)
+        if temporal:
+            require(not evidence["hold_reasons"], evidence["hold_reasons"][0] if evidence["hold_reasons"] else "Review temporal_shape")
+            # Stream-level descriptions still validate; no configuration is
+            # chosen to stand for current activity or a universal end/cadence.
+            _descriptive(target, now)
+        else:
+            _stream_description(target, now)
     except Hold as exc:
+        if evidence is not None:
+            exc.temporal_configuration_evidence = evidence
         if str(exc) == "Scientific metadata shape":
             # Lookup/association/public admission already passed. Retain only
             # fixed field presence/types, never the selected record or values.
@@ -263,13 +437,14 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
             # Enrich this HOLD only; the configuration admission rule is unchanged.
             exc.target_configuration_shape = _target_configuration_shape(target)
         raise
-    _stream_description(target, now)
-    binding = dict(profile=metadata_profile, packet_version=PACKET_VERSION,
+    binding = dict(profile=metadata_profile, packet_version=packet_version,
                    inventory_sha256=INVENTORY_SHA256, frozen_identity_sha256=digest(identity),
                    scientific_sha256=digest(review["science"]),
                    configuration_sha256=digest(target["datapoints_config"]),
                    collector_fingerprint=digest(source_binding()))
-    packet = dict(schema_version=PACKET_VERSION, metadata_profile=metadata_profile,
+    if temporal:
+        binding["configuration_evidence_sha256"] = digest(evidence)
+    packet = dict(schema_version=packet_version, metadata_profile=metadata_profile,
         metadata_binding=binding, metadata_binding_sha256=digest(binding),
         station_id=identity["station_id"], stream_id=stream_id,
         frozen_identity=identity, frozen_identity_sha256=digest(identity),
@@ -278,7 +453,6 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
         checked_at=checked_at, original_response_bytes=len(body), original_response_sha256=sha(body),
         selected_record_sha256=digest(target), scientific_sha256=binding["scientific_sha256"],
         configuration_sha256=binding["configuration_sha256"], configuration_state="PRESENT_SINGLE",
-        configured_cadence_seconds=target["datapoints_config"][0]["interval"] / 1000,
         cadence_role="provider_metadata_only", scientific_claims=review["claims"],
         scientific_field_sha256={name: digest(target[name]) for name in
                                  ("terms", "attributes", "datapoints_config") if name in target},
@@ -294,6 +468,10 @@ def review_packet(body, station, inventory, *, stream_id, metadata_profile, chec
         historical_applicability=dict(kind="unknown_history"), scale_assertions=[],
         pagination=dict(effective_limit=limit, row_count=len(rows)),
         unexpected_ids=sorted(set(rows)-{stream_id}), returned_ids_sha256=digest(sorted(rows)))
+    if temporal:
+        packet.update(configuration_state="PRESENT_TEMPORAL_ARRAY", configuration_evidence=evidence)
+    else:
+        packet["configured_cadence_seconds"] = target["datapoints_config"][0]["interval"] / 1000
     require(len(encode(packet)) <= 65536, "Target scale packet byte bound")
     return packet
 
@@ -325,7 +503,7 @@ class Probe:
     """
     def __init__(self, inventory, plan):
         require(plan == make_plan(inventory, station_id=STATION, stream_id=STREAM,
-                                  metadata_profile=REVIEW_PROFILE),
+                                  metadata_profile=plan.get("metadata_profile")),
                 "Probe plan/source binding changed")
         self._inventory = inventory
         self._plan = encode(plan)
@@ -420,7 +598,17 @@ class Probe:
                                 diagnostic["shape"]["fields"].pop()
                                 diagnostic["shape"]["truncated"] = True
                             require(len(encode(diagnostic)) <= DIAGNOSTIC_BYTES, "Metadata diagnostic size bound")
-                        outcome, reason = "HOLD", diagnostic["reason"]["code"]
+                        evidence = getattr(exc, "temporal_configuration_evidence", None)
+                        if evidence is not None:
+                            # Keep the existing diagnostic/byte ceiling intact.
+                            # This separately versioned partial record is not an
+                            # admitted packet, even when its timeline is valid.
+                            failure.temporal_configuration_evidence = evidence
+                            diagnostic = dict(schema_version=TEMPORAL_EVIDENCE, outcome="HOLD",
+                                metadata_admitted=False, diagnostic=failure.diagnostic,
+                                configuration_evidence=evidence, **_non_authorizing())
+                            require(len(encode(diagnostic)) <= 65536, "Review temporal_bound")
+                        outcome, reason = "HOLD", failure.diagnostic["reason"]["code"]
                         raise failure from None
                     elapsed = monotonic() - start
                     total = monotonic() - began

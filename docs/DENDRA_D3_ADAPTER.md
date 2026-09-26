@@ -290,6 +290,111 @@ and persistence callbacks are a trusted boundary; arbitrary callbacks are not a
 certified live transport or durable ledger. No live driver or campaign is created
 by the offline readiness gate.
 
+### Explicit temporal-configuration review profile (offline candidate)
+
+`dendra-soil-temporal-config-review-1` is an explicit alternative to
+`dendra-soil-conditional-attributes-1`; it does not replace historical D3 or
+the singleton profile. Its packet is `dendra-soil-temporal-metadata-review-1`.
+The unchanged two-request plan selects only the exact target above and binds
+profile, packet version, frozen inventory/identity and collector source hashes.
+Old journals remain immutable. New source requires fresh separately authorized
+state; no live request or automatic continuation is enabled by this profile.
+
+Authority was inspected on 2026-09-26. The [Release 2 documentation](https://docs.dendra.science/technical/apis/release-2-api/)
+links [API v2 OpenAPI](https://api-v2-docs.dendra.science/openapi/openapi.json)
+(document version `0.1.0`). `Types.definitions.datapointsConfig` permits a
+nonempty array; its instance defines optional `begins_at`/`ends_before` strings
+and backend dispatch fields. It does not define or require `interval`.
+The [Release 2 repository map](https://docs.dendra.science/technical/github-repositories/)
+identifies `dendra-web-api` and `dendra-json-schema`. Inspected schema blob
+`1012b30375cea7c5625b7580cc429c926385058b` is identical in both repositories;
+the schema package reports `2.0.3`. API source `src/server/lib/datapoints.js`,
+blob `1f37c29d2f77a1a8c3563a58aa2a6ee755092328`, documents half-open intervals
+and handles unspecified built bounds with backend sentinels. Those sentinels,
+merging, exclusion and overlap precedence are **not** implemented here.
+Inspected source is not proof of the deployed implementation or target values.
+
+The [configuration guide](https://docs.dendra.science/guides/how-to-manage/configure-datastreams/)
+corroborates shared-end/start adjacency and an omitted end for ongoing data,
+but includes Release 3 UI behavior. The [background](https://docs.dendra.science/technical/background/)
+is architectural context; the [older generated schema](https://dendrascience.github.io/dendra-json-schema/)
+is historical corroboration. Neither overrides the captured Release 2 mapping.
+
+The bounded review policy is:
+
+- Retain original zero-based ordinals and whole object/ordered-array/selected
+  record/response hashes. Review at most eight configurations; overflow HOLDs
+  with explicit omitted count and full-array hash. No duplicate is discarded.
+- Compare half-open `[begins_at, ends_before)` periods using exact rational
+  timestamps, retaining the original strings. Release 2's inspected schema
+  admits UTC `Z` timestamps with a fractional part of up to three digits.
+  This profile requires one to three digits and calendar-valid timestamps.
+  Other syntactically valid offset/precision strings are retained unchanged as
+  `UNSUPPORTED_R2_FORMAT` evidence and HOLD, not rounded or silently normalized.
+  The schema's zero-digit fractional-pattern edge is not treated as a valid date.
+- Missing start is `ABSENT_UNKNOWN` and HOLD. Missing end is `ABSENT_OPEN_END`,
+  the documented ongoing convention, without any invented timestamp. Explicit
+  null is distinct and HOLDs: the inspected schema does not permit null.
+  Inverted/empty windows HOLD. No alias maps `starts_at` to `begins_at`.
+- Temporal order is separate from original order. Check every pair for
+  adjacency, gap or overlap. Gaps remain gaps; overlaps and duplicate objects
+  HOLD without a winner, merge or backend stitching. Invalid/unknown windows
+  are explicitly excluded from temporal comparison, never admission.
+  Relations are explicitly pairwise configuration comparisons, not a union of
+  observed coverage: another configuration may occupy a pair's separating gap.
+- A supplied interval must be a positive numeric value at most `2^53-1`;
+  booleans, null and malformed values HOLD. Keep it per configuration with the
+  existing local millisecond interpretation, explicitly labeled a legacy local
+  provider claim **not defined by the captured Release 2 schema**. Missing
+  interval is `ABSENT_UNSPECIFIED`, with no fabricated cadence. No universal
+  configured cadence is emitted. This is metadata review, not full provider
+  schema validation or a new daily-science authority.
+
+The complete configuration evidence allowlist is `begins_at`, `ends_before`,
+`interval`, `connection`, `params`, `path`, and `actions`. Every slot has
+presence/type/hash/validation status. Only grammar-valid temporal strings and
+valid numeric interval values may be retained. Invalid values are represented
+by type/status/hash only. Backend fields retain presence/type/hash/status only;
+no connection/path/parameter/action value, expression or nested key escapes.
+Supplied `actions` HOLDs as unreviewed transform/exclusion semantics. Unknown
+fields have a count and aggregate hash, without names/values, and HOLD. Thus
+equal safe projections cannot silently make unknown content irrelevant.
+Backend routing omissions do not prove complete scientific interpretation;
+`backend_semantics=not_evaluated` remains explicit even on metadata admission.
+
+`dendra-target-temporal-evidence-1` is a separate non-admitting evidence record,
+limited to 24,576 bytes. It is created only after fresh station, complete page,
+exact target and public-access checks. A later scientific/descriptive HOLD
+retains this record. The injected runner persists a HOLD envelope containing
+the existing `dendra-metadata-diagnostic-1` diagnostic (still at most 12,288
+bytes) and this evidence; the envelope is at most 65,536 bytes and explicitly
+`metadata_admitted=false`. No unrestricted rejected body is retained. A later
+live driver must recognize this versioned envelope, not treat it as admission.
+An admitted temporal packet also embeds/hash-binds the evidence, which alone
+never asserts metadata admission. Early access/page/resource failures cannot
+produce temporal value evidence. Protected coordinates and optional-Z numbers
+are absent from the new packet; the accepted separate station sanitizer remains
+unchanged.
+
+Required Soil/VolumetricWaterContent/native-unit, conditional attributes,
+frozen depth/orientation and public/privacy checks remain intact. Stream-level
+description validation remains, but no single configuration is chosen as the
+stream's current activity/end. Existing allowed scientific attribute claims
+stay unreviewed claims. No configuration multiplier, boundary or cadence yields
+scale evidence, historical continuity, POR, observed sampling, transformation
+or permission. Every packet/evidence envelope keeps `raw_eligible=false`,
+`observation_acquisition_authorized=false`, `daily_science_accepted=false`,
+`browser_publication_eligible=false`, empty scale assertions and `unknown_history`.
+The 337 accepted conversions and 97 unresolved identities are unchanged.
+
+The latest real target remains HOLD. A synthetic temporal PASS cannot change
+that result. The focused `test_dimensionless_probe.py` suite covers both
+profiles, historical authority/guards, timelines, provenance, partial evidence,
+privacy and source binding with provider/socket/DNS/real-sleep attempts denied.
+No backend service, provider implementation or downloaded code is executed.
+
+### Existing singleton review behavior
+
 Station and first-page list guards share the existing implementations without
 broadening the old D3 public entry point. Exact station ID, public level 3,
 explicit nonhidden state, deletion/privacy rules, freshness, optional-Z behavior,
@@ -300,7 +405,7 @@ target, a full/ambiguous page or target privacy failure HOLD without pagination.
 All rows must belong to this station; other streams contribute only IDs, counts
 and response/ID-set hashes. Their scientific or private fields are not projected.
 
-Only the admitted exact target yields `dendra-target-scale-metadata-1`, a bounded
+The conditional-attributes profile yields `dendra-soil-metadata-review-1`, a bounded
 local review packet. Its original response, selected record, scientific claims
 and configuration receive separate hashes. The packet preserves allowlisted
 terms and scalar depth/orientation/scale/output-unit/calibration/configuration

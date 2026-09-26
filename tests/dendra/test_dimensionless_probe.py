@@ -1105,3 +1105,278 @@ class ConfigShapeDiagnosticTests(unittest.TestCase):
             probe.review_packet(encode(page([target])), admitted, INVENTORY, stream_id=sid,
                                 metadata_profile=probe.REVIEW_PROFILE, checked_at=NOW, now=NOW)
         self.assertFalse(hasattr(caught.exception, "target_configuration_shape"))
+
+
+class TemporalConfigurationTests(unittest.TestCase):
+    A = "2020-02-29T00:00:00.000Z"
+    B = "2021-01-01T00:00:00.000Z"
+    C = "2022-01-01T00:00:00.000Z"
+
+    def config(self, start=None, end=None, **extra):
+        return dict(begins_at=start or self.A, ends_before=end or self.B, interval=60000, **extra)
+
+    def packet(self, configs=None, **updates):
+        target = stream(datapoints_config=configs if configs is not None else [self.config()], **updates)
+        admitted = historical._parse_station(encode(station()), probe.STATION, checked_at=NOW, now=NOW)
+        return probe.review_packet(encode(page([target])), admitted, INVENTORY, stream_id=probe.STREAM,
+                                   metadata_profile=probe.TEMPORAL_PROFILE, checked_at=NOW, now=NOW)
+
+    def evidence(self, configs, reason=None, **updates):
+        with self.assertRaises(Hold) as caught:
+            self.packet(configs, **updates)
+        if reason:
+            self.assertIn(reason, str(caught.exception))
+        return caught.exception.temporal_configuration_evidence
+
+    def harness(self, target, station_row=None):
+        h = Harness([station_row or station(), page([target])])
+        plan = probe.make_plan(INVENTORY, station_id=probe.STATION, stream_id=probe.STREAM,
+                               metadata_profile=probe.TEMPORAL_PROFILE)
+        h.probe = probe.Probe(INVENTORY, plan)
+        return h
+
+    def test_adjacent_half_open_windows_and_differing_cadence(self):
+        configs = [self.config(), dict(self.config(self.B, self.C), interval=300000)]
+        packet = self.packet(configs)
+        evidence = packet["configuration_evidence"]
+        self.assertEqual(evidence["relations"], [dict(left_ordinal=0, right_ordinal=1, relation="ADJACENT")])
+        self.assertEqual([x["fields"]["interval"]["value"] for x in evidence["configurations"]], [60000, 300000])
+        self.assertNotIn("configured_cadence_seconds", packet)
+        self.assertEqual(packet["configuration_state"], "PRESENT_TEMPORAL_ARRAY")
+
+    def test_original_order_retained_separately_from_temporal_order(self):
+        configs = [self.config(self.B, self.C), self.config()]
+        evidence = self.packet(configs)["configuration_evidence"]
+        self.assertEqual(evidence["temporal_order"], [1, 0])
+        self.assertEqual([x["ordinal"] for x in evidence["configurations"]], [0, 1])
+        self.assertEqual([x["object_sha256"] for x in evidence["configurations"]], [digest(c) for c in configs])
+
+    def test_gaps_remain_gaps_without_filling_or_por_claim(self):
+        e = self.packet([self.config(), self.config(self.C, "2023-01-01T00:00:00.000Z")])["configuration_evidence"]
+        self.assertEqual(e["relations"][0]["relation"], "GAP")
+        self.assertEqual(len(e["configurations"]), 2)
+        self.assertEqual(e["historical_applicability"], dict(kind="unknown_history"))
+
+    def test_overlaps_never_choose_a_winner(self):
+        e = self.evidence([self.config(self.A, self.C), self.config()], "temporal_overlap")
+        self.assertEqual(len(e["configurations"]), 2)
+        self.assertEqual(e["relations"][0]["relation"], "OVERLAP")
+        self.assertFalse(e["metadata_admitted"])
+
+    def test_nested_overlap_checks_all_pairs(self):
+        e = self.evidence([self.config(self.A, self.C), self.config(),
+                           self.config(self.B, self.C)], "temporal_overlap")
+        self.assertEqual(len(e["relations"]), 3)
+        self.assertEqual([x["relation"] for x in e["relations"]], ["OVERLAP", "OVERLAP", "ADJACENT"])
+
+    def test_duplicate_objects_preserved_not_collapsed(self):
+        c = self.config()
+        e = self.evidence([c, copy.deepcopy(c)], "temporal_duplicate")
+        self.assertEqual(len(e["configurations"]), 2)
+        self.assertEqual(e["configurations"][1]["duplicate_of_ordinal"], 0)
+        self.assertIn("Review temporal_overlap", e["hold_reasons"])
+
+    def test_absent_end_is_open_and_not_a_fabricated_timestamp(self):
+        c = self.config(self.B, self.C); del c["ends_before"]
+        e = self.packet([self.config(), c])["configuration_evidence"]
+        end = e["configurations"][1]["fields"]["ends_before"]
+        self.assertEqual(end["validation"], "ABSENT_OPEN_END")
+        self.assertNotIn("value", end)
+        self.assertEqual(e["relations"][0]["relation"], "ADJACENT")
+        self.assertIn("Review temporal_overlap", self.evidence([c, self.config(self.C, "2023-01-01T00:00:00.000Z")])["hold_reasons"])
+
+    def test_missing_start_and_null_bounds_remain_distinct(self):
+        c = self.config(); del c["begins_at"]
+        e = self.evidence([c], "temporal_unknown_bound")
+        self.assertEqual(e["configurations"][0]["fields"]["begins_at"]["validation"], "ABSENT_UNKNOWN")
+        for key in ("begins_at", "ends_before"):
+            with self.subTest(key=key):
+                e = self.evidence([dict(self.config(), **{key: None})], "temporal_date")
+                self.assertEqual(e["configurations"][0]["fields"][key]["validation"], "NULL_UNSUPPORTED")
+
+    def test_invalid_dates_and_inverted_or_empty_windows_hold(self):
+        for raw in ("2021-02-29T00:00:00.000Z", "2020-01-01T25:00:00.000Z", "2020-01-01T00:00:00+24:00",
+                    "credential_MARKER", "2020-01-01", [], True, 123):
+            with self.subTest(raw=raw):
+                e = self.evidence([dict(self.config(), begins_at=raw)], "temporal_date")
+                self.assertNotIn("value", e["configurations"][0]["fields"]["begins_at"])
+        for end in (self.A, "2019-01-01T00:00:00.000Z"):
+            self.evidence([self.config(self.A, end)], "temporal_window")
+
+    def test_source_precision_and_timezone_preserved_on_unsupported_format_hold(self):
+        for raw in ("2020-02-29T00:00:00.123456789012345678Z", "2020-02-28T16:00:00.123-08:00",
+                    "2020-02-29T00:00:00Z", "2020-02-29T00:00:00.000-00:00"):
+            with self.subTest(raw=raw):
+                e = self.evidence([dict(self.config(), begins_at=raw)], "temporal_date")
+                f = e["configurations"][0]["fields"]["begins_at"]
+                self.assertEqual(f["value"], raw)
+                self.assertEqual(f["validation"], "UNSUPPORTED_R2_FORMAT")
+                self.assertFalse(e["temporal_order_complete"])
+
+    def test_exact_millisecond_shared_boundary_not_rounded(self):
+        end = "2021-01-01T00:00:00.001Z"
+        e = self.packet([self.config(self.A, end), self.config(end, self.C)])["configuration_evidence"]
+        self.assertEqual(e["relations"][0]["relation"], "ADJACENT")
+        e = self.evidence([self.config(self.A, end), self.config(self.B, self.C)], "temporal_overlap")
+        self.assertEqual(e["relations"][0]["relation"], "OVERLAP")
+
+    def test_missing_interval_not_invented_null_and_invalid_hold(self):
+        c = self.config(); del c["interval"]
+        e = self.packet([c])["configuration_evidence"]
+        f = e["configurations"][0]["fields"]["interval"]
+        self.assertEqual(f["validation"], "ABSENT_UNSPECIFIED")
+        self.assertNotIn("value", f)
+        for val in (None, True, 0, -1, "60000", [], {}, 2**54):
+            with self.subTest(val=val):
+                e = self.evidence([dict(self.config(), interval=val)], "temporal_interval")
+                self.assertNotIn("value", e["configurations"][0]["fields"]["interval"])
+
+    def test_starts_at_never_aliases_begins_at(self):
+        c = self.config(); c["starts_at"] = c.pop("begins_at")
+        e = self.evidence([c], "temporal_unreviewed_fields")
+        self.assertEqual(e["configurations"][0]["unknown_field_count"], 1)
+        self.assertIn("Review temporal_unknown_bound", e["hold_reasons"])
+
+    def test_backend_values_and_unknown_key_names_never_retained(self):
+        c = self.config(connection="SECRET_CONNECTION", path="PRIVATE_PATH", params={"password": "SECRET_PARAM"})
+        e = self.packet([c])["configuration_evidence"]
+        self.assertEqual(e["configurations"][0]["omitted_backend_field_count"], 3)
+        for marker in (b"SECRET_", b"PRIVATE_PATH", b"password"):
+            self.assertNotIn(marker, encode(e))
+        c["PRIVATE_KEY"] = {"SECRET_NESTED": 99}
+        e = self.evidence([c], "temporal_unreviewed_fields")
+        self.assertEqual(e["configurations"][0]["unknown_field_count"], 1)
+        self.assertNotIn(b"PRIVATE_KEY", encode(e))
+        self.assertNotIn(b"SECRET_NESTED", encode(e))
+
+    def test_actions_held_without_execution_or_transform_claim(self):
+        c = self.config(actions=dict(evaluate="SECRET_EXPRESSION"))
+        e = self.evidence([c], "temporal_actions")
+        self.assertNotIn(b"SECRET_EXPRESSION", encode(e))
+        self.assertEqual(e["scale_assertions"], [])
+        for key, value in (("connection", {}), ("path", None), ("params", "SECRET")):
+            self.evidence([dict(self.config(), **{key: value})], "temporal_backend_shape")
+
+    def test_safe_evidence_survives_later_science_and_description_holds(self):
+        cases = [dict(attributes=None), dict(attributes=dict(calibration=dict(multiplier="SECRET"))),
+                 dict(is_active="SECRET"), dict(terms=dict(dt=dict(Unit="Percent")))]
+        for updates in cases:
+            with self.subTest(updates=updates):
+                e = self.evidence([self.config()], **updates)
+                self.assertEqual(e["configurations"][0]["fields"]["interval"]["value"], 60000)
+                self.assertFalse(e["metadata_admitted"])
+                self.assertNotIn(b"SECRET", encode(e))
+
+    def test_probe_persists_partial_record_separate_from_bounded_diagnostic(self):
+        h = self.harness(stream(datapoints_config=[self.config()], attributes=None))
+        with self.assertRaises(MetadataAdmissionHold) as caught:
+            h.run()
+        receipt, raw = h.saved[-1]; value = decode(raw)
+        self.assertEqual(receipt["outcome"], "HOLD")
+        self.assertEqual(value["schema_version"], probe.TEMPORAL_EVIDENCE)
+        self.assertEqual(value["configuration_evidence"], caught.exception.temporal_configuration_evidence)
+        self.assertEqual(value["diagnostic"], caught.exception.diagnostic)
+        self.assertLessEqual(len(encode(value["diagnostic"])), DIAGNOSTIC_BYTES)
+        self.assertLessEqual(len(raw), 65536)
+        self.assertFalse(value["metadata_admitted"])
+        self.assertEqual(receipt["sanitized_sha256"], sha(raw))
+        with self.assertRaises(Hold):
+            h.run()
+
+    def test_private_target_or_station_never_yields_temporal_values(self):
+        for hidden_station, hidden_stream in ((True, False), (False, True)):
+            h = self.harness(stream(datapoints_config=[self.config()], is_hidden=hidden_stream),
+                             station(is_hidden=hidden_station))
+            with self.assertRaises(MetadataAdmissionHold):
+                h.run()
+            self.assertNotIn(b"configuration_evidence", h.saved[-1][1])
+            self.assertNotIn(self.A.encode(), h.saved[-1][1])
+
+    def test_optional_z_and_coordinates_not_in_new_packet(self):
+        h = self.harness(stream(datapoints_config=[self.config()]),
+                         station(geo=dict(type="Point", coordinates=[-116.5, 34.5, 123.456789])))
+        packet = h.run()
+        self.assertNotIn(b"123.456789", encode(packet))
+        self.assertNotIn(b"coordinates", encode(packet))
+        self.assertNotIn(b"geo_z_native", encode(packet))
+        self.assertEqual(decode(h.saved[0][1]), historical._parse_station(
+            encode(station(geo=dict(type="Point", coordinates=[-116.5, 34.5, 123.456789]))),
+            probe.STATION, checked_at=NOW, now=NOW))
+
+    def test_profile_source_packet_and_object_bindings_deterministic(self):
+        a = self.packet(); b = self.packet()
+        self.assertEqual(encode(a), encode(b))
+        self.assertEqual(a["schema_version"], probe.TEMPORAL_PACKET)
+        self.assertEqual(a["metadata_binding"]["configuration_evidence_sha256"], digest(a["configuration_evidence"]))
+        e = a["configuration_evidence"]
+        self.assertEqual(e["configuration"]["sha256"], digest([self.config()]))
+        self.assertEqual(e["selected_record_sha256"], digest(stream(datapoints_config=[self.config()])))
+        self.assertEqual(e["original_response_sha256"], sha(encode(page([stream(datapoints_config=[self.config()])]))))
+        plan = probe.make_plan(INVENTORY, station_id=probe.STATION, stream_id=probe.STREAM,
+                               metadata_profile=probe.TEMPORAL_PROFILE)
+        self.assertNotEqual(plan["metadata_profile_sha256"], PLAN["metadata_profile_sha256"])
+        plan["metadata_profile"] = probe.REVIEW_PROFILE
+        with self.assertRaises(Hold):
+            probe.Probe(INVENTORY, plan)
+
+    def test_no_scale_or_permissions_or_frozen_identity_changes(self):
+        packet = self.packet(attributes=dict(scale=dict(value=100, unit="Percent"),
+                                            depth=dict(value=20, unit="Centimeter")))
+        for p in (packet, packet["configuration_evidence"]):
+            for key in ("raw_eligible", "observation_acquisition_authorized", "daily_science_accepted", "browser_publication_eligible"):
+                self.assertIs(p[key], False)
+            self.assertEqual(p["scale_assertions"], [])
+            self.assertEqual(p["historical_applicability"], dict(kind="unknown_history"))
+        self.assertEqual(packet["frozen_identity"], probe.IDENTITY)
+        self.assertEqual(packet["unit_status"], "native_only_scale_unresolved")
+
+    def test_shape_and_count_limits_record_omissions_without_partial_admission(self):
+        for configs in (None, {}, [], [None], [42]):
+            # packet helper defaults None, so use the injected runner for null.
+            h = self.harness(stream(datapoints_config=configs))
+            with self.assertRaises(MetadataAdmissionHold):
+                h.run()
+            self.assertEqual(decode(h.saved[-1][1])["outcome"], "HOLD")
+        configs = [self.config() for _ in range(probe.TEMPORAL_CONFIG_LIMIT + 1)]
+        e = self.evidence(configs, "temporal_bound")
+        self.assertFalse(e["evidence_complete"])
+        self.assertEqual(e["omitted_configurations"], 1)
+        self.assertEqual(e["configuration"]["sha256"], digest(configs))
+        self.assertEqual(len(e["configurations"]), probe.TEMPORAL_CONFIG_LIMIT)
+        self.assertLessEqual(len(encode(e)), probe.TEMPORAL_EVIDENCE_BYTES)
+
+    def test_unknown_content_changes_full_hash_and_keeps_hold(self):
+        one = self.config(unknown=dict(value=1)); two = self.config(unknown=dict(value=2))
+        a = self.evidence([one]); b = self.evidence([two])
+        self.assertNotEqual(a["configuration"]["sha256"], b["configuration"]["sha256"])
+        self.assertNotEqual(a["configurations"][0]["unknown_fields_sha256"], b["configurations"][0]["unknown_fields_sha256"])
+        self.assertEqual(a["hold_reasons"], ["Review temporal_unreviewed_fields"])
+
+    def test_old_singleton_profile_and_historical_guard_unchanged(self):
+        h = Harness([station(), page([stream(datapoints_config=[self.config(), self.config(self.B, self.C)])])])
+        with self.assertRaises(MetadataAdmissionHold) as caught:
+            h.run()
+        self.assertEqual(caught.exception.diagnostic["reason"]["code"], "science.cadence_shape")
+        self.assertNotIn("configuration_evidence", decode(h.saved[-1][1]))
+        self.assertEqual(Harness().run()["configured_cadence_seconds"], 60)
+        with self.assertRaisesRegex(Hold, "Missing or ambiguous configured cadence"):
+            historical._scientific(stream(datapoints_config=[self.config(), self.config(self.B, self.C)]))
+
+    def test_r2_ascii_date_grammar_rejects_unicode_fractional_digits(self):
+        e = self.evidence([dict(self.config(), begins_at="2020-02-29T00:00:00.٠١٢Z")], "temporal_date")
+        self.assertNotIn("value", e["configurations"][0]["fields"]["begins_at"])
+
+    def test_maximum_projection_remains_bounded_and_durable_on_hold(self):
+        c = dict(begins_at="2020-02-29T00:00:00.123456789012345678+23:59",
+                 ends_before="2022-02-28T00:00:00.123456789012345678-23:59",
+                 interval=2**53-1, connection="SECRET", path="SECRET", params=dict(secret="SECRET"),
+                 actions=dict(evaluate="SECRET"), unknown="SECRET")
+        h = self.harness(stream(datapoints_config=[c for _ in range(probe.TEMPORAL_CONFIG_LIMIT)]))
+        with self.assertRaises(MetadataAdmissionHold):
+            h.run()
+        raw = h.saved[-1][1]; e = decode(raw)["configuration_evidence"]
+        self.assertLessEqual(len(raw), 65536)
+        self.assertLessEqual(len(encode(e)), probe.TEMPORAL_EVIDENCE_BYTES)
+        self.assertEqual(len(e["configurations"]), probe.TEMPORAL_CONFIG_LIMIT)
+        self.assertNotIn(b"SECRET", raw)
+        self.assertFalse(decode(raw)["metadata_admitted"])
