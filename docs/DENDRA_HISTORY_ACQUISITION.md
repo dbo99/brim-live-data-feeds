@@ -18,6 +18,8 @@ The additive package is scripts/dendra/history_acquisition/:
   reservations, response descriptors, chained receipts and interval seals.
 - offline.py: finite byte/status replay using the existing Dendra transport's
   pagination and normalization with an explicitly injected in-memory opener.
+- scale_resolution.py: separate offline, evidence-bound derived scale decisions;
+  no source acquisition, value conversion or receipt mutation.
 
 scripts/dendra/core.R remains the sole daily numerical authority and is not
 executed or modified by this package. Existing routine-update budgets,
@@ -58,12 +60,119 @@ terms/cadence. Diagnostics retain claim hashes, cadence claims, witness timestam
 and receipt hashes, pagination counts and unexpected-ID counts/hash. They do not
 change identity or extend the roster. Activity/end/update clocks remain separate.
 
-Known Percent ×1 and VWC ×100 are identity-route metadata only. This layer
+Known Percent ×1 and VWC ×100 in D1+D2's unit_route are identity-route metadata only. This route
 performs no conversion or daily calculation and exposes no percent product
 eligibility. All 97 unresolved streams retain null multiplier/offset and
 unresolved_native_diagnostic; they can retain synthetic native input without
 creating percent-VWC data/capabilities. Existing production eligibility guards
 are not weakened.
+
+## Separate derived scale policy
+
+The additive offline module uses `dendra-scale-policy-1`,
+`dendra-scale-evidence-1`, `dendra-scale-decision-1` and `dendra-scale-state-1`.
+It leaves `unit_route`, frozen identity, provider admission and daily science
+unchanged. Its complete state always contains the accepted 122 stations and 434
+streams. All remain scale-policy eligible for native acquisition/archive storage,
+subject to separately authorized acquisition and current provider access/privacy.
+
+The 177 Percent identities retain `accepted_resolved_percent` and factor 1;
+the 160 VolumetricWaterContent identities retain `accepted_resolved_fraction` and
+factor 100. New primary assertions about those already accepted baseline routes
+require a separate review and are refused by this gate. The 97 Dimensionless
+native identities remain `native_only_scale_unresolved`, even when a separate
+derived decision later becomes `evidence_resolved_percent` (factor 1) or
+`evidence_resolved_fraction` (factor 100). An `unresolved` decision has null
+conversion/normalized unit and false normalized/absolute-percent eligibility.
+
+The derived eligibility booleans express **scale sufficiency only**. They do not
+override access/privacy, accepted daily validation, whole-candidate holds,
+publication or browser capability gates. No active product or campaign reads this
+new state automatically; no numeric observations are converted here.
+
+### Reviewed evidence boundary
+
+`Evidence.bind(claim, source_bytes)` accepts a small normalized, explicitly
+reviewed assertion and verifies its saved source SHA-256. Each assertion binds
+the exact station/stream, source reference/hash/version, role/kind, explicit scale
+category and temporal applicability. Source references are safe relative names
+with optional fragments. Raw source bytes are not serialized into derived state.
+Hashes prove byte identity, **not** authority, historical continuity or truth.
+The caller must review those facts before designating a primary assertion.
+There is no generic live metadata parser or automatic promotion of saved numeric
+data to authoritative evidence in this API.
+
+Primary kinds are authoritative datastream metadata, unit/dictionary metadata,
+sensor/output configuration, explicit provider scale statements, or equivalent
+version/hash-bound authority. Every primary assertion must directly establish
+scale for that exact stream/sensor and period. An isolated generic dictionary
+term, without the reviewed exact-stream binding, does not meet that requirement.
+Supporting kinds are range/distribution, sister-stream and sensor-family
+comparisons. Supporting assertions cannot resolve scale singly or in combination,
+cannot masquerade as primary kinds, and cannot override primary ambiguity or
+conflict. The module accepts no numeric confidence or range heuristic.
+
+### Temporal decisions
+
+Evidence applicability is explicit: `whole_history`, bounded UTC `interval`
+with inclusive start/exclusive end, or `unknown_history`. A current source check
+does not imply a historical interval; use `unknown_history` unless authority
+establishes continuity. Unknown-history primary evidence conservatively leaves
+the requested scope unresolved, including when other primary evidence exists.
+No issue time or saved receipt time is repurposed as an effective date.
+
+`resolve(inventory, stream_id, evidence, scope=...)` defaults to whole history;
+it can also evaluate an explicit interval. It partitions that scope at primary
+evidence boundaries, retaining interval-specific conversions, conflicts and
+unsupported gaps. A null outer segment boundary denotes an unbounded unknown
+past/future, not observed POR coverage. Whole-history eligibility needs explicit
+whole-history evidence; finite interval evidence cannot fill those outer gaps.
+Conflicting overlapping primary claims or an ambiguous applicable claim leave
+that segment unresolved. Different, nonoverlapping historical scales retain
+separate segments; the aggregate decision stays unresolved rather than selecting
+one conversion. Disjoint conflicts do not poison a separately bounded query.
+
+Top-level conversion is populated only when every requested segment is resolved
+with the same conversion. Otherwise it is null and consumers must respect each
+segment's explicit status. Categorical evidence status is `accepted_baseline`,
+`primary_evidence_resolved`, `primary_evidence_conflict`,
+`insufficient_primary_evidence` or `temporal_scope_unresolved`.
+
+### Deterministic state and preservation
+
+Every decision contains frozen inventory/identity hashes and unchanged native
+fields separately from derived status, factor, normalized unit, scale eligibility,
+evidence references, temporal segments and unresolved reason. Its
+`decision_sha256` covers the canonical payload without that hash field. Evidence
+order and exact duplicates do not change the result; source bytes, source
+version/reference, applicability or policy changes create a different decision
+identity. No clock or subjective confidence enters the decision.
+
+`build_state` produces all 434 records in stable stream-ID order and a
+`state_sha256`. `restore_state` requires the same accepted inventory and explicitly
+supplied original source blobs by SHA-256; it reconstructs the decisions and
+rejects altered, missing-source, incompatible-version or noncanonical state.
+This is a separate sidecar suitable for immutable, content-addressed saves in a
+task-owned directory. It neither overwrites a prior state nor appends anything to
+an acquisition receipt. The API performs no filesystem or network writes.
+
+Bounds are 64 assertions per stream, 1,024 per complete state, 8 KiB per normalized
+assertion, 8 MiB per supplied source body, 256 KiB per decision and 2 MiB per
+complete scale state. These are internal scale-state bounds, not revisions to
+existing campaign, provider, archive or product limits.
+
+Adding a Python module changes the existing collector-source fingerprint because
+`source_binding` includes all package modules. Prior acquisition journals remain
+bound to their original source checkpoint and are not reopened, migrated,
+rehashed or repaired by scale reconciliation. Within one source checkpoint,
+changing derived scale evidence/state does not change native campaign/plan/receipt
+identity. Future integration must keep this separation; no automatic backfill
+or native receipt rewrite is supplied here.
+
+Focused offline verification is isolated to `tests/dendra/test_scale_resolution.py`
+with the existing `DENDRA_INVENTORY` and task-owned `DENDRA_TEST_ROOT` inputs.
+Tests deny provider entries, socket/DNS operations and real sleep before repository
+imports. Any later live metadata/scale probe needs separate exact approval.
 
 ## Campaign and plan
 
