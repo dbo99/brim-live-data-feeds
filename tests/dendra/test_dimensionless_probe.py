@@ -38,7 +38,8 @@ for guard in GUARDS:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from dendra.history_acquisition import dimensionless_probe as probe
 from dendra.history_acquisition import scale_resolution as scale
-from dendra.history_acquisition.model import Inventory, INVENTORY_SHA256
+from dendra.history_acquisition import provider_metadata as historical
+from dendra.history_acquisition.model import Inventory, INVENTORY_SHA256, metadata_view
 from dendra.history_acquisition.safety import Hold, encode, decode, digest, sha
 from dendra.history_acquisition.d3_plan import validate_request, RequestSpec as D3RequestSpec
 from dendra.history_acquisition.provider_metadata import parse_station
@@ -53,7 +54,8 @@ OTHER = "0" * 24
 def setUpModule():
     global INVENTORY, PLAN
     INVENTORY = Inventory.load(os.environ["DENDRA_INVENTORY"], INVENTORY_SHA256)
-    PLAN = probe.make_plan(INVENTORY, station_id=probe.STATION, stream_id=probe.STREAM)
+    PLAN = probe.make_plan(INVENTORY, station_id=probe.STATION, stream_id=probe.STREAM,
+                           metadata_profile=probe.REVIEW_PROFILE)
 
 
 def tearDownModule():
@@ -74,7 +76,8 @@ def station(**updates):
 def stream(**updates):
     row = dict(_id=probe.STREAM, station_id=probe.STATION, public_level=3,
                is_hidden=False, is_geo_protected=False,
-               terms=dict(dt=dict(Unit="Dimensionless", Variable="SoilMoisture")),
+               terms=dict(dt=dict(Unit="Dimensionless"),
+                          ds=dict(Medium="Soil", Variable="VolumetricWaterContent")),
                attributes={}, datapoints_config=[dict(interval=60000)])
     row.update(updates)
     return row
@@ -153,7 +156,8 @@ class ProbeTests(unittest.TestCase):
     def test_arbitrary_station_stream_or_endpoint_rejected(self):
         for station_id, stream_id in ((OTHER, probe.STREAM), (probe.STATION, OTHER), (OTHER, OTHER)):
             with self.subTest(station=station_id, stream=stream_id), self.assertRaises(Hold):
-                probe.make_plan(INVENTORY, station_id=station_id, stream_id=stream_id)
+                probe.make_plan(INVENTORY, station_id=station_id, stream_id=stream_id,
+                                metadata_profile=probe.REVIEW_PROFILE)
         for spec in (probe.RequestSpec("observations"), probe.RequestSpec("unit-vocabulary"),
                      probe.RequestSpec("station", station_id=OTHER),
                      probe.RequestSpec("datastream-list", selected_stream=OTHER)):
@@ -167,7 +171,8 @@ class ProbeTests(unittest.TestCase):
             parse_station(encode(station()), probe.STATION, checked_at=NOW, now=NOW)
 
     def test_plan_mutation_and_stale_source_binding_rejected(self):
-        for field in ("envelope", "frozen_identity", "collector_sources", "requests"):
+        for field in ("envelope", "frozen_identity", "collector_sources", "requests",
+                      "metadata_profile", "metadata_profile_sha256"):
             value = copy.deepcopy(PLAN)
             value[field] = {}
             with self.subTest(field=field), self.assertRaises(Hold):
@@ -262,7 +267,7 @@ class ProbeTests(unittest.TestCase):
         self.assert_holds(Harness([station(), page([stream(ended_at="2020-01-01T00:00:00Z",
             datapoints_config=[dict(interval=1000, ends_before="2021-01-01T00:00:00Z")])])]), 2)
 
-    def test_target_scientific_shape_type_matrix_preserves_admission(self):
+    def test_target_scientific_shape_type_matrix_with_explicit_conditional_profile(self):
         variants = [("missing", None), ("null", None), ("object", {}),
                     ("array", ["WITHHELD_ARRAY_VALUE"]), ("string", "WITHHELD_STRING_VALUE"),
                     ("integer", 987654321), ("number", 98765.4321), ("boolean", True)]
@@ -279,26 +284,30 @@ class ProbeTests(unittest.TestCase):
                         elif kind != "object":
                             target[name] = value
                     value = page([target]); h = Harness([station(), value])
-                    if terms_type == attributes_type == "object":
-                        scientific = probe._scientific(target)
+                    if terms_type == "object" and attributes_type in ("object", "missing"):
                         result = h.run()
+                        scientific = dict(profile=probe.REVIEW_PROFILE, terms=target["terms"],
+                                          attributes_state="ABSENT" if attributes_type == "missing" else "PRESENT_EMPTY",
+                                          datapoints_config=target["datapoints_config"])
+                        if attributes_type == "object":
+                            scientific["attributes"] = target["attributes"]
                         self.assertEqual(result["scientific_sha256"], digest(scientific))
                         self.assertEqual(result["scientific_claims"]["terms"], target["terms"])
-                        self.assertEqual(result["scientific_claims"]["attributes"], target["attributes"])
+                        self.assertEqual("attributes" in result["scientific_claims"], attributes_type == "object")
                         self.assertTrue(all(r["outcome"] == "ADMITTED" for r, _ in h.saved))
                         self.assertTrue(all("target_scientific_shape" not in decode(b) for _, b in h.saved))
                         continue
                     # This parser is unchanged; the boundary must retain its HOLD.
                     with self.assertRaisesRegex(Hold, "^Scientific metadata shape$"):
-                        probe._scientific(target)
+                        historical._scientific(target)
                     with self.assertRaises(MetadataAdmissionHold) as caught:
                         h.run()
                     receipt, saved = h.saved[-1]; diagnostic = decode(saved)
                     self.assertEqual(diagnostic, caught.exception.diagnostic)
                     self.assertEqual(diagnostic["version"], "dendra-metadata-diagnostic-1")
                     self.assertEqual(diagnostic["reason"]["code"], "science.terms_attributes_shape")
-                    self.assertEqual(diagnostic["reason"]["parser_site"],
-                                     dict(module="provider_metadata", function="_scientific", line=244))
+                    self.assertEqual(diagnostic["reason"]["parser_site"]["module"], "dimensionless_probe")
+                    self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "_review_science")
                     self.assertEqual(diagnostic["target_scientific_shape"], expected)
                     self.assertEqual(diagnostic["body_sha256"], sha(encode(value)))
                     self.assertEqual(diagnostic["body_bytes"], len(encode(value)))
@@ -583,3 +592,293 @@ class ProbeTests(unittest.TestCase):
 
     def test_no_network_provider_or_real_sleep(self):
         self.assertEqual((NETWORK_ATTEMPTS, PROVIDER_ATTEMPTS, SLEEP_ATTEMPTS), ([], [], []))
+
+
+class ConditionalReviewTests(unittest.TestCase):
+    """Invented valid claims, never assertions about the real target's contents."""
+    def packet(self, target=None, sid=probe.STREAM, **options):
+        identity = INVENTORY.identity(sid)
+        target = stream() if target is None else target
+        admitted = historical._parse_station(encode(station(_id=identity["station_id"])),
+                                              identity["station_id"], checked_at=NOW, now=NOW)
+        kwargs = dict(stream_id=sid, metadata_profile=probe.REVIEW_PROFILE, checked_at=NOW, now=NOW)
+        kwargs.update(options)
+        return probe.review_packet(encode(page([target])), admitted, INVENTORY, **kwargs)
+
+    def known(self):
+        sid = "63531a67a9b61453fa1ca4ed"
+        identity = INVENTORY.identity(sid)
+        target = stream(_id=sid, station_id=identity["station_id"],
+                        attributes=dict(depth=dict(value=200, unit_tag="dt_Unit_Millimeter"),
+                                        orientation="horizontal"))
+        target["terms"]["dt"]["Unit"] = identity["native_unit"]
+        return sid, target
+
+    def test_profile_required_and_bound_in_plan_and_packet(self):
+        with self.assertRaises(TypeError):
+            probe.make_plan(INVENTORY, station_id=probe.STATION, stream_id=probe.STREAM)
+        for name in (None, "", "dendra-d3-adapter-1"):
+            with self.subTest(profile=name), self.assertRaises(Hold):
+                self.packet(metadata_profile=name)
+        packet = self.packet()
+        self.assertEqual(packet["metadata_profile"], PLAN["metadata_profile"])
+        self.assertEqual(packet["metadata_binding"]["profile"], probe.REVIEW_PROFILE)
+        self.assertEqual(packet["metadata_binding_sha256"], digest(packet["metadata_binding"]))
+        self.assertEqual(packet["metadata_binding"]["collector_fingerprint"], digest(probe.source_binding()))
+        self.assertEqual(PLAN["metadata_profile_sha256"], digest(dict(
+            profile=probe.REVIEW_PROFILE, packet_version=probe.PACKET_VERSION)))
+        old = copy.deepcopy(PLAN)
+        del old["metadata_profile"]
+        with self.assertRaises(Hold):
+            probe.Probe(INVENTORY, old)
+
+    def test_absent_can_continue_but_does_not_invent_science(self):
+        target = stream(); del target["attributes"]
+        packet = self.packet(target)
+        self.assertEqual(packet["attributes_state"], "ABSENT")
+        self.assertNotIn("attributes", packet["scientific_claims"])
+        for path in ("Medium", "Variable"):
+            bad = copy.deepcopy(target); del bad["terms"]["ds"][path]
+            with self.subTest(path=path), self.assertRaisesRegex(Hold, "Review core_terms"):
+                self.packet(bad)
+        target["datapoints_config"] = []
+        with self.assertRaisesRegex(Hold, "Missing or ambiguous configured cadence"):
+            self.packet(target)
+
+    def test_required_terms_exact_values_and_no_unit_only_admission(self):
+        for section, key, valid in (("ds", "Medium", "Soil"),
+                                     ("ds", "Variable", "VolumetricWaterContent"),
+                                     ("dt", "Unit", "Dimensionless")):
+            self.assertEqual(self.packet()["scientific_claims"]["terms"][section][key], valid)
+            for value in (None, "wrong", "", valid.lower(), [], {}, True, 1):
+                target = stream(); target["terms"][section][key] = value
+                with self.subTest(path=key, value=value), self.assertRaises(Hold):
+                    self.packet(target)
+            target = stream(); del target["terms"][section][key]
+            with self.assertRaises(Hold):
+                self.packet(target)
+        with self.assertRaises(Hold):
+            self.packet(stream(terms=dict(dt=dict(Unit="Dimensionless"))))
+
+    def test_aggregate_optional_exact_supported_values(self):
+        packet = self.packet()
+        self.assertEqual(packet["aggregate_state"], "ABSENT_UNSPECIFIED")
+        self.assertFalse(packet["terms_presence"]["ds"]["fields"]["Aggregate"])
+        self.assertNotIn("Aggregate", packet["scientific_claims"]["terms"]["ds"])
+        for aggregate in ("Average", "Instantaneous"):
+            target = stream(); target["terms"]["ds"]["Aggregate"] = aggregate
+            result = self.packet(target)
+            self.assertEqual(result["aggregate_state"], "PRESENT")
+            self.assertEqual(result["scientific_claims"]["terms"]["ds"]["Aggregate"], aggregate)
+        for bad in (None, "Sum", "average", {}, [], True):
+            target = stream(); target["terms"]["ds"]["Aggregate"] = bad
+            with self.subTest(value=bad), self.assertRaisesRegex(Hold, "Review aggregate"):
+                self.packet(target)
+
+    def test_dq_retained_bounded_without_universal_measurement_token(self):
+        for value in ("SoilMoisture", "VolumetricWaterContent", "SyntheticOtherMeasurement"):
+            target = stream(); target["terms"]["dq"] = dict(Measurement=value, Purpose="ReadytoUse")
+            packet = self.packet(target)
+            self.assertEqual(packet["scientific_claims"]["terms"]["dq"], target["terms"]["dq"])
+        for value in (None, 1, True, {}, [], "", "x"*257, "bad\nvalue"):
+            target = stream(); target["terms"]["dq"] = dict(Measurement=value)
+            with self.assertRaises(Hold):
+                self.packet(target)
+        self.assertFalse(self.packet()["terms_presence"]["dq"]["present"])
+
+    def test_five_states_and_all_original_record_hashes_distinct(self):
+        values = [("ABSENT", {}), ("NULL", dict(attributes=None)),
+                  ("PRESENT_EMPTY", dict(attributes={})),
+                  ("PRESENT_POPULATED", dict(attributes=dict(output_unit="native")))]
+        values += [("MALFORMED_NON_OBJECT", dict(attributes=x)) for x in ([], "bad", 2, 2.5, True, False)]
+        hashes, packets = [], []
+        for state, override in values:
+            target = stream(); del target["attributes"]; target.update(override)
+            self.assertEqual(probe.attributes_state(target), state)
+            hashes.append(digest(target))
+            if state in ("NULL", "MALFORMED_NON_OBJECT"):
+                with self.assertRaisesRegex(Hold, "Scientific metadata shape"):
+                    self.packet(target)
+            else:
+                packet = self.packet(target); packets.append(packet)
+                self.assertEqual(packet["attributes_state"], state)
+        self.assertEqual(len(hashes), len(set(hashes)))
+        for field in ("scientific_sha256", "metadata_binding_sha256", "selected_record_sha256"):
+            self.assertEqual(len({p[field] for p in packets}), 3)
+        self.assertEqual(len({digest(p) for p in packets}), 3)
+        # This is synthetic output in a fresh task-owned test root, not a live capture.
+        root = Path(os.environ["DENDRA_TEST_ROOT"])
+        for packet in packets:
+            (root / (packet["attributes_state"] + "-synthetic-review.json")).write_bytes(encode(packet))
+
+    def test_known_depth_orientation_require_fresh_exact_evidence(self):
+        sid, target = self.known()
+        packet = self.packet(target, sid)
+        self.assertEqual(packet["identity_check"], dict(depth_cm="matched_fresh_evidence",
+                                                      orientation="matched_fresh_evidence"))
+        for attrs in ({}, dict(depth=dict(value=200, unit_tag="dt_Unit_Millimeter")),
+                      dict(orientation="horizontal"),
+                      dict(depth=dict(value=600, unit_tag="dt_Unit_Millimeter"), orientation="horizontal"),
+                      dict(depth=dict(value=200, unit_tag="dt_Unit_Millimeter"), orientation="Vertical")):
+            with self.subTest(attributes=attrs), self.assertRaises(Hold):
+                self.packet(dict(target, attributes=attrs), sid)
+        del target["attributes"]
+        with self.assertRaises(Hold):
+            self.packet(target, sid)
+
+    def test_depth_units_aliases_and_conflicts_are_not_inferred(self):
+        sid, target = self.known()
+        for attrs in (dict(depth=dict(value=20, units="Centimeter"), Orientation="horizontal"),
+                      dict(Depth=200, LengthUnits="Millimeter", orientation="horizontal")):
+            self.packet(dict(target, attributes=attrs), sid)
+        bads = [dict(value=20), dict(value=True, unit="Centimeter"),
+                dict(value=20, unit="Meter"), dict(value=20, unit="Centimeter", units="Millimeter"),
+                dict(value=20, unit=None), "20cm"]
+        for depth in bads:
+            with self.subTest(depth=depth), self.assertRaises(Hold):
+                self.packet(dict(target, attributes=dict(depth=depth, orientation="horizontal")), sid)
+        for extra in (dict(Depth=30, LengthUnits="Centimeter"), dict(Orientation="Vertical")):
+            bad = copy.deepcopy(target); bad["attributes"].update(extra)
+            with self.assertRaises(Hold):
+                self.packet(bad, sid)
+
+    def test_unknown_identity_stays_unknown_even_with_fresh_claims(self):
+        packet = self.packet(stream(attributes=dict(depth=dict(value=20, unit="Centimeter"),
+                                                   Orientation="Vertical")))
+        self.assertEqual(packet["frozen_identity"], probe.IDENTITY)
+        self.assertIsNone(packet["frozen_identity"]["depth_cm"])
+        self.assertIsNone(packet["frozen_identity"]["orientation"])
+        self.assertEqual(packet["identity_check"], dict(depth_cm="frozen_unknown", orientation="frozen_unknown"))
+        self.assertEqual(packet["scientific_claims"]["attributes"]["depth"]["value"], 20)
+
+    def test_projection_omits_unknown_values_but_binds_them_and_presence(self):
+        target = stream(attributes=dict(unknown=dict(secret="OMIT_MARKER")))
+        target["terms"]["ds"]["unknown"] = "OMIT_MARKER"
+        target["terms"]["unknown"] = {"private": "OMIT_MARKER"}
+        packet = self.packet(target)
+        self.assertNotIn(b"OMIT_MARKER", encode(packet))
+        self.assertEqual(packet["attributes_state"], "PRESENT_POPULATED")
+        self.assertEqual(packet["scientific_claims"]["attributes"], {})
+        self.assertEqual(packet["omitted_scientific_fields"]["terms"], 2)
+        self.assertEqual(packet["omitted_scientific_fields"]["attributes"], 1)
+        self.assertEqual(packet["scientific_field_sha256"]["attributes"], digest(target["attributes"]))
+        target["attributes"]["unknown"]["secret"] = "CHANGED_OMITTED"
+        changed = self.packet(target)
+        self.assertEqual(changed["scientific_claims"], packet["scientific_claims"])
+        self.assertNotEqual(changed["scientific_sha256"], packet["scientific_sha256"])
+
+    def test_claim_shape_value_and_size_guards(self):
+        for attrs in (dict(scale=[]), dict(scale=dict(value=True)), dict(output_scale="unsupported"),
+                      dict(calibration=None), dict(calibration=dict(multiplier="100")),
+                      dict(orientation=None), dict(output_units=123),
+                      dict(output_unit="x"*257), dict(output_unit="bad\nvalue")):
+            with self.subTest(attributes=attrs), self.assertRaises(Hold):
+                self.packet(stream(attributes=attrs))
+
+    def test_configured_dates_and_cadence_remain_metadata_only(self):
+        config = dict(interval=60000, starts_at="2020-01-01T00:00:00Z",
+                      ends_before="2021-01-01T00:00:00Z", valid_from="2020-01-01T00:00:00Z",
+                      valid_to="2021-01-01T00:00:00Z")
+        packet = self.packet(stream(datapoints_config=[config]))
+        self.assertEqual(packet["configuration_state"], "PRESENT_SINGLE")
+        self.assertEqual(packet["configured_cadence_seconds"], 60)
+        self.assertEqual(packet["cadence_role"], "provider_metadata_only")
+        self.assertEqual(packet["historical_applicability"], dict(kind="unknown_history"))
+        self.assertEqual(packet["scientific_claims"]["datapoints_config"], config)
+        self.assertNotIn("first_observation", packet)
+        self.assertNotIn("last_observation", packet)
+        for key in ("starts_at", "ends_before", "valid_from", "valid_to"):
+            for invalid in (True, 123, {}, "not-time"):
+                with self.subTest(key=key, value=invalid), self.assertRaises(Hold):
+                    self.packet(stream(datapoints_config=[dict(config, **{key: invalid})]))
+        for bounds in (dict(starts_at=NOW, ends_before="2020-01-01T00:00:00Z"),
+                       dict(valid_from=NOW, valid_to=NOW)):
+            with self.assertRaisesRegex(Hold, "Review date_bounds"):
+                self.packet(stream(datapoints_config=[dict(interval=1000, **bounds)]))
+
+    def test_calibration_bounds_preserved_without_scale_or_history_decision(self):
+        calibration = dict(multiplier=100, offset=0, output_unit="Percent",
+                           valid_from="2020-01-01T00:00:00Z", valid_to="2021-01-01T00:00:00Z")
+        packet = self.packet(stream(attributes=dict(calibration=calibration)))
+        self.assertEqual(packet["scientific_claims"]["attributes"]["calibration"], calibration)
+        self.assertEqual(packet["scale_assertions"], [])
+        self.assertEqual(packet["historical_applicability"], dict(kind="unknown_history"))
+        calibration["valid_to"] = calibration["valid_from"]
+        with self.assertRaisesRegex(Hold, "Review date_bounds"):
+            self.packet(stream(attributes=dict(calibration=calibration)))
+
+    def test_all_admitted_states_never_grant_acquisition_or_scale(self):
+        rows = [stream(), stream(attributes=dict(scale=dict(value=100, unit="Percent")))]
+        absent = stream(); del absent["attributes"]; rows.append(absent)
+        for target in rows:
+            packet = self.packet(target)
+            self.assertEqual(packet["unit_status"], "native_only_scale_unresolved")
+            self.assertEqual(packet["scale_assertions"], [])
+            for key in ("raw_eligible", "observation_acquisition_authorized", "daily_science_accepted",
+                        "browser_publication_eligible"):
+                self.assertIs(packet[key], False)
+            body = encode(packet)
+            claim = dict(schema_version=scale.EVIDENCE_VERSION, station_id=probe.STATION,
+                stream_id=probe.STREAM, role="supporting", kind="sister_stream", scale="fraction",
+                applicability=dict(kind="whole_history"),
+                source=dict(ref="synthetic/review.json", sha256=sha(body), version=probe.PACKET_VERSION))
+            decision = scale.resolve(INVENTORY, probe.STREAM, [scale.Evidence.bind(claim, body)])
+            self.assertEqual(decision["resolution_status"], "unresolved")
+            self.assertIsNone(decision["conversion_factor"])
+
+    def test_deterministic_packet_and_exact_hash_bindings(self):
+        target = stream(); a = self.packet(target); b = self.packet(copy.deepcopy(target))
+        self.assertEqual(encode(a), encode(b))
+        self.assertEqual(a["frozen_identity_sha256"], digest(INVENTORY.identity(probe.STREAM)))
+        self.assertEqual(a["selected_record_sha256"], digest(target))
+        self.assertEqual(a["original_response_sha256"], sha(encode(page([target]))))
+        self.assertEqual(a["configuration_sha256"], digest(target["datapoints_config"]))
+        self.assertLessEqual(len(encode(a)), 65536)
+        self.assertFalse(any(key in a for key in ("geometry", "geo_z_native", "scientific_fields", "dictionary_sha256")))
+
+    def test_generic_packet_cannot_satisfy_historical_d3_authority(self):
+        sid, target = self.known()
+        packet = self.packet(target, sid)
+        catalog = Path(__file__).resolve().parents[2] / "data/input/dendra/pilot_catalog.json"
+        authority = historical.load_authority(INVENTORY, catalog)
+        with self.assertRaisesRegex(Hold, "Accepted metadata authority changed"):
+            historical.validate_authority(packet)
+        self.assertNotEqual(packet["scientific_sha256"], authority["metadata_bindings"][sid])
+        result = metadata_view(INVENTORY.identity(sid), packet, checked_at=NOW, now=NOW,
+                               scientific_sha256=authority["metadata_bindings"][sid],
+                               dictionary_sha256=authority["dictionary_sha256"])
+        self.assertFalse(result["raw_eligible"])
+        self.assertIn("scientific_binding_changed", result["hold_reasons"])
+        mutated = copy.deepcopy(authority)
+        mutated["metadata_bindings"][sid] = packet["scientific_sha256"]
+        with self.assertRaisesRegex(Hold, "Scientific binding changed"):
+            historical.validate_authority(mutated)
+
+    def test_historical_d3_exact_science_and_attributes_still_pinned(self):
+        catalog = Path(__file__).resolve().parents[2] / "data/input/dendra/pilot_catalog.json"
+        authority = historical.load_authority(INVENTORY, catalog)
+        self.assertEqual(digest(authority["scientific"]), historical.SCIENTIFIC_SHA256)
+        self.assertEqual(digest(authority["dictionary_terms"]), historical.DICTIONARY_SHA256)
+        for sid, science in authority["scientific"].items():
+            identity = INVENTORY.identity(sid)
+            target = stream(_id=sid, station_id=identity["station_id"],
+                            terms=copy.deepcopy(science["source_terms"]),
+                            attributes=copy.deepcopy(science["source_attributes"]),
+                            datapoints_config=[dict(interval=science["cadence_seconds"]*1000)])
+            station_metadata = historical.parse_station(encode(station(_id=identity["station_id"])),
+                                                         identity["station_id"], checked_at=NOW, now=NOW)
+            vocabulary = dict(terms=authority["dictionary_terms"], dictionary_sha256=authority["dictionary_sha256"])
+            def admit(row):
+                return historical.parse_datastreams(encode(page([row])), identity, station_metadata,
+                                                     vocabulary, authority, checked_at=NOW, now=NOW)
+            self.assertEqual(admit(target)["scientific_sha256"], authority["metadata_bindings"][sid])
+            absent = copy.deepcopy(target); del absent["attributes"]
+            with self.assertRaisesRegex(Hold, "Scientific metadata shape"):
+                admit(absent)
+            for attrs in (None, [], "bad", True):
+                with self.assertRaisesRegex(Hold, "Scientific metadata shape"):
+                    admit(dict(target, attributes=attrs))
+            for field, value in (("attributes", {}), ("terms", stream()["terms"]),
+                                  ("datapoints_config", [dict(interval=123000)])):
+                with self.assertRaisesRegex(Hold, "Scientific metadata mismatch"):
+                    admit(dict(target, **{field: value}))

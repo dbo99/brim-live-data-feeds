@@ -17,11 +17,13 @@ from .d3_plan import BASE, validate_request
 from .model import Inventory, INVENTORY_SHA256, source_binding
 from .provider_adapter import total_deadline, MetadataAdmissionHold, UNPARSED, DIAGNOSTIC_BYTES
 from .provider_metadata import (_parse_station, _payload, _fresh, _public,
-                                _scientific, _datastream_page, _stream_description)
+                                _datastream_page, _stream_description, _timestamp)
+from ..transport import parse_utc
 from .safety import Hold, require, encode, decode, digest, sha
 
 VERSION = "dendra-dimensionless-probe-1"
-PACKET_VERSION = "dendra-target-scale-metadata-1"
+PACKET_VERSION = "dendra-soil-metadata-review-1"
+REVIEW_PROFILE = "dendra-soil-conditional-attributes-1"
 STATION = "5d8f7f052da5c3a1bdf65382"
 STREAM = "5d9272a12da5c3cff0f655ed"
 IDENTITY = dict(station_id=STATION, stream_id=STREAM, depth_cm=None,
@@ -52,11 +54,14 @@ class RequestSpec:
                     selected_stream=self.selected_stream, url=self.url())
 
 
-def make_plan(inventory, *, station_id, stream_id):
+def make_plan(inventory, *, station_id, stream_id, metadata_profile):
+    require(metadata_profile == REVIEW_PROFILE, "Explicit metadata-review profile required")
     require(type(inventory) is Inventory and station_id == STATION and stream_id == STREAM,
             "Exact bound Dimensionless inventory target required")
     require(inventory.identity(STREAM) == IDENTITY, "Frozen Dimensionless identity changed")
-    return dict(version=VERSION, inventory_sha256=INVENTORY_SHA256,
+    return dict(version=VERSION, metadata_profile=metadata_profile,
+                metadata_profile_sha256=digest(dict(profile=metadata_profile, packet_version=PACKET_VERSION)),
+                inventory_sha256=INVENTORY_SHA256,
                 frozen_identity=inventory.identity(STREAM), collector_sources=source_binding(),
                 envelope=dict(ENVELOPE),
                 requests=[RequestSpec(kind).descriptor() for kind in ("station", "datastream-list")])
@@ -69,8 +74,11 @@ SCALAR = None
 MEASUREMENT = {key: SCALAR for key in ("value", "unit", "units", "description")}
 CALIBRATION = {key: SCALAR for key in ("scale", "multiplier", "offset", "unit", "units",
                                       "output_unit", "description", "valid_from", "valid_to")}
-TERMS = {"dt": {key: SCALAR for key in ("Unit", "Variable", "Medium", "Method", "Aggregation")}}
-ATTRIBUTES = {"depth": MEASUREMENT, "orientation": SCALAR, "Orientation": SCALAR,
+TERMS = {"dt": {"Unit": SCALAR},
+         "ds": {key: SCALAR for key in ("Medium", "Variable", "Aggregate")},
+         "dq": {key: SCALAR for key in ("Measurement", "Purpose")}}
+ATTRIBUTES = {"depth": dict(MEASUREMENT, unit_tag=SCALAR), "Depth": SCALAR,
+              "LengthUnits": SCALAR, "orientation": SCALAR, "Orientation": SCALAR,
               "scale": MEASUREMENT, "output_scale": MEASUREMENT, "output_unit": SCALAR,
               "output_units": SCALAR, "calibration": CALIBRATION}
 CONFIG = {key: SCALAR for key in ("interval", "scale", "multiplier", "offset", "unit", "units",
@@ -78,20 +86,27 @@ CONFIG = {key: SCALAR for key in ("interval", "scale", "multiplier", "offset", "
                                  "ends_before", "valid_from", "valid_to")}
 CONFIG["calibration"] = CALIBRATION
 TARGET_REASONS = {
+    "Scientific metadata shape": ("science.terms_attributes_shape", "unsupported_shape"),
+    "Missing or ambiguous configured cadence": ("science.cadence_shape", "completeness"),
+    "Configured cadence value": ("science.cadence_value", "scientific_mismatch"),
     "Frozen target native unit changed": ("target.native_unit_changed", "identity_mismatch"),
     "Unsupported scientific projection leaf": ("target.unsupported_scientific_leaf", "unsupported_shape"),
     "Target scale packet byte bound": ("target.packet_bound", "bounds"),
 }
+for _name in ("core_terms", "aggregate", "term_claim", "attribute_claim", "depth_evidence",
+              "orientation_evidence", "date_bounds", "projection_shape"):
+    TARGET_REASONS["Review " + _name] = ("review." + _name, "scientific_mismatch")
 
 
 def _projection(value, schema):
     """Bounded exact provider claims plus omission count, without interpretation."""
-    if schema is None or not isinstance(value, dict):
+    if schema is None:
         allowed = value is None or type(value) is bool or type(value) is int or (
             type(value) is float and math.isfinite(value)) or (
             type(value) is str and len(value) <= 256 and all(ord(c) >= 32 for c in value))
         require(allowed, "Unsupported scientific projection leaf")
         return value, 0
+    require(isinstance(value, dict), "Review projection_shape")
     output, omitted = {}, len(set(value) - set(schema))
     for key in sorted(set(value) & set(schema)):
         output[key], count = _projection(value[key], schema[key])
@@ -99,16 +114,140 @@ def _projection(value, schema):
     return output, omitted
 
 
-def _target_packet(body, station, *, checked_at, now):
+def attributes_state(value):
+    """Presence is provenance: missing and explicitly empty never collapse."""
+    if "attributes" not in value:
+        return "ABSENT"
+    attributes = value["attributes"]
+    if attributes is None:
+        return "NULL"
+    if not isinstance(attributes, dict):
+        return "MALFORMED_NON_OBJECT"
+    return "PRESENT_POPULATED" if attributes else "PRESENT_EMPTY"
+
+
+def _dates(value):
+    for key in ("starts_at", "ends_before", "valid_from", "valid_to"):
+        if key in value:
+            _timestamp(value[key], "Review date_bounds")
+    for start, end in (("starts_at", "ends_before"), ("valid_from", "valid_to")):
+        if value.get(start) is not None and value.get(end) is not None:
+            require(parse_utc(value[start]) < parse_utc(value[end]), "Review date_bounds")
+
+
+def _numeric(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _claim_values(value):
+    """Validate supported scalar families, without interpreting scale claims."""
+    _dates(value)
+    for key, item in value.items():
+        if isinstance(item, dict):
+            _claim_values(item)
+        elif key in ("value", "Depth", "multiplier", "offset", "scale"):
+            require(_numeric(item), "Review attribute_claim")
+        elif key not in ("interval", "starts_at", "ends_before", "valid_from", "valid_to"):
+            require(isinstance(item, str) and 0 < len(item) <= 256,
+                    "Review attribute_claim")
+
+
+def _attribute_identity(attributes, identity):
+    """Fresh evidence must establish known identity; unknown identity stays unknown."""
+    depths, orientations = [], []
+    factors = {"dt_Unit_Millimeter": 0.1, "Millimeter": 0.1,
+               "dt_Unit_Centimeter": 1, "Centimeter": 1}
+    if attributes is not None and "depth" in attributes:
+        depth = attributes["depth"]
+        require(isinstance(depth, dict) and _numeric(depth.get("value")), "Review depth_evidence")
+        units = [depth[k] for k in ("unit_tag", "unit", "units") if k in depth]
+        require(units and all(isinstance(u, str) and u in factors for u in units) and
+                len({factors[u] for u in units}) == 1, "Review depth_evidence")
+        depths.append(depth["value"] * factors[units[0]])
+    if attributes is not None and ("Depth" in attributes or "LengthUnits" in attributes):
+        unit = attributes.get("LengthUnits")
+        require(_numeric(attributes.get("Depth")) and isinstance(unit, str) and unit in factors,
+                "Review depth_evidence")
+        depths.append(attributes["Depth"] * factors[unit])
+    if attributes is not None:
+        orientations = [attributes[k] for k in ("orientation", "Orientation") if k in attributes]
+    require(all(_numeric(d) for d in depths) and len(set(depths)) <= 1, "Review depth_evidence")
+    require(all(isinstance(o, str) and 0 < len(o) <= 256 for o in orientations) and
+            len(set(orientations)) <= 1, "Review orientation_evidence")
+    for field, values, reason in (("depth_cm", depths, "depth_evidence"),
+                                  ("orientation", orientations, "orientation_evidence")):
+        if identity[field] is not None:
+            require(values and values[0] == identity[field], "Review " + reason)
+    return {field: "frozen_unknown" if identity[field] is None else "matched_fresh_evidence"
+            for field in ("depth_cm", "orientation")}
+
+
+def _review_science(target, identity):
+    terms, state = target.get("terms"), attributes_state(target)
+    require(isinstance(terms, dict) and state not in ("NULL", "MALFORMED_NON_OBJECT"),
+            "Scientific metadata shape")
+    dt, ds = terms.get("dt"), terms.get("ds")
+    require(isinstance(dt, dict) and dt.get("Unit") == identity["native_unit"],
+            "Frozen target native unit changed")
+    require(isinstance(ds, dict) and ds.get("Medium") == "Soil" and
+            ds.get("Variable") == "VolumetricWaterContent", "Review core_terms")
+    if "Aggregate" in ds:
+        require(ds["Aggregate"] in ("Average", "Instantaneous"), "Review aggregate")
+    if "dq" in terms:
+        require(isinstance(terms["dq"], dict), "Review term_claim")
+        for key in ("Measurement", "Purpose"):
+            if key in terms["dq"]:
+                item = terms["dq"][key]
+                require(isinstance(item, str) and 0 < len(item) <= 256 and
+                        all(ord(c) >= 32 for c in item), "Review term_claim")
+    configs = target.get("datapoints_config")
+    require(isinstance(configs, list) and len(configs) == 1 and isinstance(configs[0], dict),
+            "Missing or ambiguous configured cadence")
+    interval = configs[0].get("interval")
+    require(_numeric(interval) and interval > 0, "Configured cadence value")
+    claims, omissions = {}, {}
+    fields = [("terms", terms, TERMS), ("datapoints_config", configs[0], CONFIG)]
+    if state != "ABSENT":
+        fields.append(("attributes", target["attributes"], ATTRIBUTES))
+    for name, value, schema in fields:
+        claims[name], omissions[name] = _projection(value, schema)
+    for name in ("attributes", "datapoints_config"):
+        if name in claims:
+            _claim_values(claims[name])
+    identity_check = _attribute_identity(claims.get("attributes"), identity)
+    # Bind full original science, not just the allowlisted projection. Absence
+    # has no manufactured attributes object and a distinct explicit state.
+    science = dict(profile=REVIEW_PROFILE, terms=terms, attributes_state=state,
+                   datapoints_config=configs)
+    if state != "ABSENT":
+        science["attributes"] = target["attributes"]
+    presence = {section: dict(present=section in terms,
+                              fields={key: key in terms.get(section, {}) for key in schema})
+                for section, schema in TERMS.items()}
+    return dict(science=science, claims=claims, omissions=omissions, state=state,
+                presence=presence, identity_check=identity_check,
+                aggregate_state="PRESENT" if "Aggregate" in ds else "ABSENT_UNSPECIFIED")
+
+
+def review_packet(body, station, inventory, *, stream_id, metadata_profile, checked_at, now):
+    """Offline review for one frozen roster stream, never acquisition authority.
+
+    No provider I/O, journal, dictionary assertion or daily/scale decision. The
+    caller supplies freshly admitted station metadata; original bodies are not
+    returned. Network selection remains separately pinned by RequestSpec.
+    """
+    require(metadata_profile == REVIEW_PROFILE and type(inventory) is Inventory,
+            "Explicit metadata-review profile required")
+    identity = inventory.identity(stream_id)
     _fresh(checked_at, now)
-    require(station.get("exact_id") == STATION and station.get("public_level") == 3 and
+    require(station.get("exact_id") == identity["station_id"] and station.get("public_level") == 3 and
             station.get("is_hidden") is False, "Fresh selected public station required")
     _fresh(station.get("checked_at"), now)
-    rows, limit = _datastream_page(_payload(body), STATION, STREAM)
-    target = rows[STREAM]
-    _public(target)
+    rows, limit = _datastream_page(_payload(body), identity["station_id"], stream_id)
+    target = rows[stream_id]
+    level, protected = _public(target)
     try:
-        scientific = _scientific(target)
+        review = _review_science(target, identity)
     except Hold as exc:
         if str(exc) == "Scientific metadata shape":
             # Lookup/association/public admission already passed. Retain only
@@ -121,22 +260,36 @@ def _target_packet(body, station, *, checked_at, now):
                 for name in ("terms", "attributes")}
         raise
     _stream_description(target, now)
-    require(scientific["source_terms"].get("dt", {}).get("Unit") == "Dimensionless",
-            "Frozen target native unit changed")
-    claims, omissions = {}, {}
-    for name, value, schema in (("terms", target["terms"], TERMS),
-                                 ("attributes", target["attributes"], ATTRIBUTES),
-                                 ("datapoints_config", target["datapoints_config"][0], CONFIG)):
-        claims[name], omissions[name] = _projection(value, schema)
-    packet = dict(schema_version=PACKET_VERSION, station_id=STATION, stream_id=STREAM,
-        frozen_identity=dict(IDENTITY), inventory_sha256=INVENTORY_SHA256,
+    binding = dict(profile=metadata_profile, packet_version=PACKET_VERSION,
+                   inventory_sha256=INVENTORY_SHA256, frozen_identity_sha256=digest(identity),
+                   scientific_sha256=digest(review["science"]),
+                   configuration_sha256=digest(target["datapoints_config"]),
+                   collector_fingerprint=digest(source_binding()))
+    packet = dict(schema_version=PACKET_VERSION, metadata_profile=metadata_profile,
+        metadata_binding=binding, metadata_binding_sha256=digest(binding),
+        station_id=identity["station_id"], stream_id=stream_id,
+        frozen_identity=identity, frozen_identity_sha256=digest(identity),
+        native_unit=identity["native_unit"], unit_status=identity["unit_status"],
+        inventory_sha256=INVENTORY_SHA256,
         checked_at=checked_at, original_response_bytes=len(body), original_response_sha256=sha(body),
-        selected_record_sha256=digest(target), scientific_sha256=digest(scientific),
-        configuration_sha256=digest(target["datapoints_config"]), scientific_claims=claims,
-        omitted_scientific_fields=omissions, claim_review="unreviewed_provider_metadata",
+        selected_record_sha256=digest(target), scientific_sha256=binding["scientific_sha256"],
+        configuration_sha256=binding["configuration_sha256"], configuration_state="PRESENT_SINGLE",
+        configured_cadence_seconds=target["datapoints_config"][0]["interval"] / 1000,
+        cadence_role="provider_metadata_only", scientific_claims=review["claims"],
+        scientific_field_sha256={name: digest(target[name]) for name in
+                                 ("terms", "attributes", "datapoints_config") if name in target},
+        terms_presence=review["presence"], aggregate_state=review["aggregate_state"],
+        attributes_state=review["state"], identity_check=review["identity_check"],
+        omitted_scientific_fields=review["omissions"], claim_review="unreviewed_provider_metadata",
+        access_evidence=dict(station_public_level=3, station_is_hidden=False,
+            stream_public_level=level, stream_is_hidden=False, station_checked_at=station["checked_at"],
+            stream_checked_at=checked_at, station_metadata_sha256=digest(station),
+            geo_protected=protected or station.get("geo_protected") is not False),
+        raw_eligible=False, observation_acquisition_authorized=False,
+        daily_science_accepted=False, browser_publication_eligible=False,
         historical_applicability=dict(kind="unknown_history"), scale_assertions=[],
         pagination=dict(effective_limit=limit, row_count=len(rows)),
-        unexpected_ids=sorted(set(rows)-{STREAM}), returned_ids_sha256=digest(sorted(rows)))
+        unexpected_ids=sorted(set(rows)-{stream_id}), returned_ids_sha256=digest(sorted(rows)))
     require(len(encode(packet)) <= 65536, "Target scale packet byte bound")
     return packet
 
@@ -150,8 +303,10 @@ class Probe:
     and the existing anonymous NoRedirect opener. No defaults enable live access.
     """
     def __init__(self, inventory, plan):
-        require(plan == make_plan(inventory, station_id=STATION, stream_id=STREAM),
+        require(plan == make_plan(inventory, station_id=STATION, stream_id=STREAM,
+                                  metadata_profile=REVIEW_PROFILE),
                 "Probe plan/source binding changed")
+        self._inventory = inventory
         self._plan = encode(plan)
         self._used = False
         self._counts = dict(logical_requests=0, http_attempts=0, response_bytes=0, retries=0)
@@ -221,7 +376,9 @@ class Probe:
                         payload = _payload(body)
                         parsed = (_parse_station(body, STATION, checked_at=checked, now=checked)
                                   if kind == "station" else
-                                  _target_packet(body, station, checked_at=checked, now=checked))
+                                  review_packet(body, station, self._inventory, stream_id=STREAM,
+                                                metadata_profile=plan["metadata_profile"],
+                                                checked_at=checked, now=checked))
                     except (Hold, ValueError, TypeError, KeyError, RecursionError, AttributeError) as exc:
                         failure = MetadataAdmissionHold(spec, body, payload, exc,
                             target_scientific_shape=getattr(exc, "target_scientific_shape", None))
