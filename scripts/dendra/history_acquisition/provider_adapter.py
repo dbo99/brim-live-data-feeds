@@ -20,10 +20,152 @@ from ..transport import DendraFetcher, FetchError, parse_utc, format_utc
 from .d3_plan import (RequestSpec, SELECTED, START, END, validate_binding,
                       validate_request, seven_calls)
 from .provider_metadata import parse_vocabulary, parse_station, parse_datastreams
-from .safety import Hold, require, encode, decode, digest
+from .journal import UnknownSourceRowCount
+from .safety import Hold, require, encode, decode, digest, sha
 
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 BODY_LIMIT = 8 * 1024**2
+
+# These are diagnostic names only. Admission remains in provider_metadata.py.
+METADATA_REASONS = {
+    "Invalid JSON": ("json.invalid", "unsupported_shape"),
+    "Duplicate JSON key": ("json.duplicate_key", "unsupported_shape"),
+    "Nonfinite JSON number": ("json.nonfinite_number", "unsupported_shape"),
+    "Nonstandard JSON constant": ("json.nonstandard_constant", "unsupported_shape"),
+    "Metadata object required": ("metadata.object_required", "unsupported_shape"),
+    "Metadata body bound": ("metadata.body_bound", "bounds"),
+    "Metadata nesting bound": ("metadata.nesting_bound", "bounds"),
+    "Metadata traversal bound": ("metadata.traversal_bound", "bounds"),
+    "Metadata object field bound": ("metadata.field_bound", "bounds"),
+    "Metadata key bound": ("metadata.key_bound", "bounds"),
+    "Metadata array bound": ("metadata.array_bound", "bounds"),
+    "Metadata string bound": ("metadata.string_bound", "bounds"),
+    "Unit vocabulary identity": ("vocabulary.identity", "identity_mismatch"),
+    "Duplicate selected unit definition": ("vocabulary.duplicate_term", "scientific_mismatch"),
+    "Unit vocabulary mismatch": ("vocabulary.term_mismatch", "scientific_mismatch"),
+    "Missing selected unit definition": ("vocabulary.missing_term", "missing_field"),
+    "Metadata check timestamp": ("metadata.check_timestamp", "timestamp"),
+    "Metadata stale or future dated": ("metadata.freshness", "timestamp"),
+    "Access-level shape": ("access.level_shape", "unexpected_type"),
+    "Conflicting public levels": ("access.conflicting_levels", "privacy_access"),
+    "Private, hidden or unknown public metadata": ("access.public_nonhidden_required", "privacy_access"),
+    "Missing or deleted metadata": ("access.missing_or_deleted", "privacy_access"),
+    "Protection flag type": ("access.protection_type", "unexpected_type"),
+    "Activity flag type": ("description.activity_flag_type", "unexpected_type"),
+    "Activity state type": ("description.activity_state_type", "unexpected_type"),
+    "Ended timestamp": ("description.ended_timestamp", "timestamp"),
+    "Metadata revision type": ("description.revision_type", "unexpected_type"),
+    "Metadata revision": ("description.revision_format", "unsupported_shape"),
+    "Metadata display name": ("description.name_format", "unsupported_shape"),
+    "Updated timestamp": ("description.updated_timestamp", "timestamp"),
+    "Public Point geometry required": ("geometry.point_required", "unsupported_shape"),
+    "Public coordinate bounds": ("geometry.coordinate_bounds", "bounds"),
+    "Conflicting geometry": ("geometry.conflicting_claims", "unsupported_shape"),
+    "Station identity mismatch or missing": ("station.id_mismatch", "identity_mismatch"),
+    "Scientific metadata shape": ("science.terms_attributes_shape", "unsupported_shape"),
+    "Missing or ambiguous configured cadence": ("science.cadence_shape", "completeness"),
+    "Configured cadence value": ("science.cadence_value", "scientific_mismatch"),
+    "Selected stream association": ("stream.station_association", "identity_mismatch"),
+    "Fresh selected public station required": ("stream.station_admission", "privacy_access"),
+    "Verified selected dictionary required": ("stream.dictionary_admission", "scientific_mismatch"),
+    "Incomplete, full or unknown-limit datastream list": ("list.incomplete", "completeness"),
+    "Metadata list offset is not the complete first page": ("list.offset", "completeness"),
+    "Metadata total incomplete": ("list.total", "completeness"),
+    "Metadata list identity or association": ("list.identity_association", "identity_mismatch"),
+    "Selected stream unavailable; deletion is not proved": ("list.selected_stream_absent", "completeness"),
+    "Scientific metadata mismatch": ("science.identity_mismatch", "scientific_mismatch"),
+    "Frozen selected identity mismatch": ("science.frozen_identity_mismatch", "scientific_mismatch"),
+    "Configured end timestamp": ("science.end_timestamp", "timestamp"),
+    "Conflicting end timestamps": ("science.conflicting_end_timestamps", "scientific_mismatch"),
+    "Sanitized metadata bound": ("metadata.projection_bound", "bounds"),
+}
+SHAPE_KEYS = frozenset({"_id", "data", "limit", "skip", "total", "station_id", "terms",
+    "attributes", "datapoints_config", "interval", "public_level", "access_levels_resolved",
+    "is_hidden", "is_deleted", "deleted", "deleted_at", "state", "is_geo_protected",
+    "geo", "geometry", "type", "coordinates", "name", "revision", "_rev", "updated_at",
+    "ends_before", "ended_at", "is_active", "is_enabled", "depth", "orientation",
+    "Orientation", "value", "unit", "ds", "dt", "dq", "Unit", "label", "abbreviation"})
+SHAPE_FIELDS, SHAPE_KEYS_PER_OBJECT, SHAPE_DEPTH, SHAPE_LIST_ITEMS = 64, 16, 4, 2
+DIAGNOSTIC_BYTES = 12288
+UNPARSED = object()
+
+
+def metadata_shape(value, kind):
+    """Types/counts and fixed schema names only; no provider values or unknown keys."""
+    def type_name(item):
+        return {dict: "object", list: "array", str: "string", int: "integer", float: "number",
+                bool: "boolean", type(None): "null"}.get(type(item), "unparsed")
+    fields, pending, truncated = [], [("$", value, 0)], False
+    while pending and len(fields) < SHAPE_FIELDS:
+        path, item, depth = pending.pop(0)
+        entry = dict(path=path, type=type_name(item))
+        if isinstance(item, (dict, list)):
+            entry["count"] = len(item)
+        children = []
+        if isinstance(item, dict):
+            keys = sorted(k for k in SHAPE_KEYS if k in item)[:SHAPE_KEYS_PER_OBJECT]
+            entry["keys"] = keys
+            entry["omitted_keys"] = len(item) - len(keys)
+            truncated |= entry["omitted_keys"] > 0
+            children = [(path + "." + k, item[k], depth + 1) for k in keys]
+        elif isinstance(item, list):
+            children = [(path + f"[{i}]", item[i], depth + 1)
+                        for i in range(min(len(item), SHAPE_LIST_ITEMS))]
+            truncated |= len(item) > SHAPE_LIST_ITEMS
+        fields.append(entry)
+        if depth < SHAPE_DEPTH:
+            pending.extend(c for c in children if len(c[0]) <= 96)
+            truncated |= any(len(c[0]) > 96 for c in children)
+        else:
+            truncated |= bool(children)
+    required = {"station": ("_id", "is_hidden"), "unit-vocabulary": ("_id",),
+                "datastream-list": ("data", "limit")}[kind]
+    return dict(json_type=type_name(value), fields=fields, truncated=truncated or bool(pending),
+                required_key_presence={k: isinstance(value, dict) and k in value for k in required})
+
+
+class MetadataAdmissionHold(Hold):
+    """Safe specific reason also saved in the existing sanitized-object receipt."""
+    def __init__(self, spec, body, payload, cause):
+        message = str(cause)
+        code, category = METADATA_REASONS.get(message, ("parser.condition", "parser_condition"))
+        if message == "Station identity mismatch or missing" and isinstance(payload, dict):
+            if "_id" not in payload:
+                code, category = "station.id_missing", "missing_field"
+            elif type(payload["_id"]) is not str:
+                code, category = "station.id_type", "unexpected_type"
+        if message == "Private, hidden or unknown public metadata" and isinstance(payload, dict):
+            nested = payload.get("access_levels_resolved", {})
+            level = payload.get("public_level", nested.get("public_level"))
+            if "public_level" not in payload and "public_level" not in nested:
+                code, category = "access.level_missing", "missing_field"
+            elif type(level) is not int:
+                code, category = "access.level_type", "unexpected_type"
+            elif level == 3 and "is_hidden" not in payload:
+                code, category = "access.hidden_missing", "missing_field"
+            elif level == 3 and type(payload["is_hidden"]) is not bool:
+                code, category = "access.hidden_type", "unexpected_type"
+        site = None
+        tb = cause.__traceback__
+        while tb is not None:
+            frame = tb.tb_frame
+            if frame.f_globals.get("__name__") == parse_station.__module__:
+                site = dict(module="provider_metadata", function=frame.f_code.co_name, line=tb.tb_lineno)
+            tb = tb.tb_next
+        exception_class = type(cause).__name__ if type(cause) in (
+            Hold, ValueError, TypeError, KeyError, RecursionError) else "Exception"
+        reason = dict(code=code, category=category, exception_class=exception_class, parser_site=site)
+        self.diagnostic = dict(version="dendra-metadata-diagnostic-1", kind=spec.kind, reason=reason,
+                               shape=metadata_shape(payload, spec.kind), body_bytes=len(body), body_sha256=sha(body))
+        # Many permitted key names at every sampled level can reach the byte
+        # bound before the field-count bound. Trim the deterministic tail while
+        # preserving the originating reason and the original response binding.
+        while len(encode(self.diagnostic)) > DIAGNOSTIC_BYTES and self.diagnostic["shape"]["fields"]:
+            self.diagnostic["shape"]["fields"].pop()
+            self.diagnostic["shape"]["truncated"] = True
+        require(len(encode(self.diagnostic)) <= DIAGNOSTIC_BYTES, "Metadata diagnostic size bound")
+        location = "" if site is None else f" at {site['module']}.{site['function']}:{site['line']}"
+        super().__init__(f"Metadata admission HOLD: {code} ({exception_class}{location})")
 
 
 def retry_delay(value, *, ordinal, now, remaining):
@@ -227,20 +369,26 @@ class Adapter:
                             details["outcome"] = "retry"
                     raise urllib.error.HTTPError(spec.url(), status, "D3 HTTP status", {}, None)
                 row_count = None
-                payload = decode(body)
-                if isinstance(payload, dict) and isinstance(payload.get("data"), list):
-                    row_count = len(payload["data"])
-                elif spec.kind in ("station", "unit-vocabulary"):
-                    row_count = 0
-                if spec.kind == "observations":
-                    value = observation_shape(body, spec.selected_stream)
-                    details.update(effective_limit=value["limit"], page_complete=len(value["data"]) < value["limit"])
-                    retain = True
-                else:
-                    value = self._parse_metadata(spec, body)
-                    sanitized = encode(value)
-                    if spec.kind == "datastream-list":
-                        details.update(effective_limit=payload["limit"], page_complete=True)
+                payload = UNPARSED
+                try:
+                    payload = decode(body)
+                    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+                        row_count = len(payload["data"])
+                    elif spec.kind in ("station", "unit-vocabulary"):
+                        row_count = 0
+                    if spec.kind == "observations":
+                        value = observation_shape(body, spec.selected_stream)
+                        details.update(effective_limit=value["limit"], page_complete=len(value["data"]) < value["limit"])
+                        retain = True
+                    else:
+                        value = self._parse_metadata(spec, body)
+                        sanitized = encode(value)
+                        if spec.kind == "datastream-list":
+                            details.update(effective_limit=payload["limit"], page_complete=True)
+                except (Hold, ValueError, TypeError, KeyError, RecursionError) as exc:
+                    if spec.kind == "observations" or isinstance(exc, Deadline):
+                        raise
+                    raise MetadataAdmissionHold(spec, body, payload, exc) from None
                 details.update(privacy="public", identity="match")
                 # Validate capacity before writing raw/sanitized objects, while
                 # still charging rejected bytes/rows through the same receipt.
@@ -248,7 +396,8 @@ class Adapter:
                 require(self.journal.monotonic() - mono <= 25, "Per-request elapsed ceiling")
         except BaseException as exc:
             caught = exc
-            retain, sanitized = False, None
+            retain = False
+            sanitized = encode(exc.diagnostic) if isinstance(exc, MetadataAdmissionHold) else None
             if body and value is None and status == 200 and row_count == 0:
                 row_count = None
             if details["error_code"] is None:
@@ -263,8 +412,15 @@ class Adapter:
                        duration_ms=max(0, int((self.journal.monotonic() - mono) * 1000)))
         # Reserve/start have already been durable even if this receipt cannot be
         # written (crash/storage failure). Never issue an unreserved retry.
-        self._persist(self.journal.received, key, body, source_rows=row_count, status=status, retain=retain,
-                      sanitized_body=sanitized, details=details)
+        try:
+            self._persist(self.journal.received, key, body, source_rows=row_count, status=status, retain=retain,
+                          sanitized_body=sanitized, details=details)
+        except UnknownSourceRowCount:
+            if not isinstance(caught, MetadataAdmissionHold):
+                raise
+            # received() has already durably charged the response and saved its
+            # diagnostic. End in the originating HOLD; never bypass the guard
+            # for subsequent requests or suppress a storage/integrity failure.
         if caught is not None:
             self._persist(self.journal.failed, key, status)
             if isinstance(caught, urllib.error.HTTPError):

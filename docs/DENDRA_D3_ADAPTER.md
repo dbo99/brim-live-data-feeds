@@ -143,6 +143,47 @@ damaged-prefix recovery remain authoritative. No competing ledger, repair,
 refetch, cleanup or publication pointer was added. Existing evidence bound to
 older source hashes is preserved, not silently migrated to changed code.
 
+## Rejected metadata diagnostics
+
+The metadata admission functions remain unchanged. A rejected HTTP-200 metadata
+response now records a `dendra-metadata-diagnostic-1` object through the existing
+sanitized-object receipt. Its original body is still omitted; the received event
+still charges the original bytes and known/unknown row count. The object binds
+that body's hash/length and contains a stable reason code, category, bounded
+exception-class label, and the originating parser function/line where available.
+For example, `station.id_missing`, `station.id_type`, `station.id_mismatch`,
+`access.public_nonhidden_required`, `science.identity_mismatch` and `list.total`
+distinguish different conditions without asserting an unproved provider cause.
+Unmapped conditions retain a parser location/class, never arbitrary exception text.
+
+Shape diagnostics contain JSON types, container counts, required-key presence
+and fixed schema key names. Unknown key names and all field values are omitted,
+including IDs, names, coordinates, credentials and private/hidden values.
+Traversal is deterministic: at most 64 fields, depth 4, 16 allowlisted keys per
+object, two sampled entries per list, 96 characters per path and 12,288 bytes per
+diagnostic. Omitted keys and truncation are explicit. Lists and objects expose
+cardinality, not their unrestricted content. Invalid JSON has an `unparsed`
+shape. These diagnostics do not admit a response, update permission, or authorize
+another request.
+
+`UnknownSourceRowCount` is a typed form of the existing journal HOLD. Its
+condition, message and accounting are unchanged. After `received` has durably
+saved a failed metadata response and its diagnostic, the adapter catches only
+that guard to return the originating `MetadataAdmissionHold`. It still records
+failure and ends the wave in HOLD. Unknown rows continue to block reservations,
+sessions and subsequent collection. Observation handling and all other storage,
+integrity, time, byte, row and attempt failures retain their existing behavior.
+Reopening does not dispatch, refund consumed work or rewrite the diagnostic.
+`body_retained=true` with `representation=sanitized` on a held receipt refers
+only to this safe diagnostic object, never the rejected original response.
+
+The earlier live station HOLD cannot be diagnosed retrospectively: its body and
+specific reason were not retained. A one-request station diagnostic requires
+separate authorization for exact source bytes, station endpoint, fresh output
+root, resource window and one-request execution boundary. The existing live
+entry point still runs the seven-task plan; it is not a one-request command.
+No new live execution mode or provider authorization is introduced here.
+
 ## Focused offline verification and later gate
 
 Use explicit accepted inventory and existing task-owned test roots:

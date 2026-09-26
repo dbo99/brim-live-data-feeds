@@ -19,6 +19,10 @@ KINDS = {"session", "metadata", "run", "reserved", "started", "received",
          "failure", "held", "sealed", "daily_evidence"}
 
 
+class UnknownSourceRowCount(Hold):
+    """The unchanged unknown-row guard, distinguishable after a durable receipt."""
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -243,7 +247,8 @@ class Journal:
 
     def check_budget(self, increments=None):
         counts = self.snapshot()["counters"]
-        require(counts["unknown_row_responses"] == 0, "Unknown source row count requires review")
+        if counts["unknown_row_responses"] != 0:
+            raise UnknownSourceRowCount("Unknown source row count requires review")
         counts["elapsed_ms"] = self.elapsed()
         for key, limit in self.binding["budgets"].items():
             require(counts[key] + (increments or {}).get(key, 0) <= limit, "Budget exhausted: " + key)

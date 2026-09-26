@@ -43,12 +43,13 @@ from dendra.history_acquisition.d3_plan import (
     BASE, CAMP, DEEP, SELECTED, START, END, IDENTITIES, CEILINGS,
     RequestSpec, make_campaign, seven_calls, validate_binding, validate_request,
 )
-from dendra.history_acquisition.journal import Journal
+from dendra.history_acquisition.journal import Journal, UnknownSourceRowCount
 from dendra.history_acquisition.model import Inventory, INVENTORY_SHA256
 from dendra.history_acquisition.provider_adapter import (
     Adapter, BODY_LIMIT, RETRYABLE, NoRedirect, retry_delay, run_authorized_probe,
+    MetadataAdmissionHold, metadata_shape, DIAGNOSTIC_BYTES, SHAPE_FIELDS, SHAPE_KEYS,
 )
-from dendra.history_acquisition.provider_metadata import load_authority
+from dendra.history_acquisition.provider_metadata import load_authority, parse_station
 from dendra.history_acquisition.safety import Hold, decode, digest, encode, sha
 from dendra.transport import FetchError, parse_utc, format_utc
 
@@ -195,6 +196,215 @@ class AdapterTests(unittest.TestCase):
             Adapter(journal).run(executor=executor, wait=executor.wait)
         return journal, executor
 
+    def diagnostic_failure(self, body, code, *, prefix=None):
+        journal, clock, root = self.new_journal()
+        bodies = ([encode(vocabulary())] if prefix is None else prefix) + [body]
+        executor = FiniteExecutor(journal, clock, bodies)
+        with self.assertRaises(MetadataAdmissionHold) as caught:
+            Adapter(journal).run(executor=executor, wait=executor.wait)
+        self.assertIn(code, str(caught.exception))
+        snapshot = journal.snapshot()
+        receipt = list(snapshot["attempts"].values())[-1]
+        diagnostic = decode(journal.read_object(receipt["objects"][0]))
+        self.assertEqual(diagnostic, caught.exception.diagnostic)
+        self.assertEqual(diagnostic["reason"]["code"], code)
+        self.assertEqual(diagnostic["body_sha256"], receipt["response_sha256"])
+        self.assertEqual(diagnostic["body_bytes"], receipt["response_bytes"])
+        self.assertEqual(receipt["representation"], "sanitized")
+        self.assertEqual(receipt["details"]["outcome"], "hold")
+        self.assertFalse(receipt["details"]["retryable"])
+        self.assertEqual(executor.waits, [])
+        self.assertEqual(len(executor.calls), len(bodies))
+        self.assertEqual(snapshot["counters"]["attempts"], len(bodies))
+        self.assertEqual(snapshot["counters"]["response_bytes"], sum(map(len, bodies)))
+        self.assertTrue(all(s["state"] == "held" for s in snapshot["intervals"].values()))
+        self.assertTrue(all("/datapoints?" not in call[0] for call in executor.calls))
+        return journal, clock, root, receipt, diagnostic
+
+    def test_diagnostic_masked_station_reason_survives_unknown_row_guard(self):
+        value = station(CAMP)
+        del value["_id"]
+        journal, _, _, receipt, diagnostic = self.diagnostic_failure(encode(value), "station.id_missing")
+        self.assertIsNone(receipt["source_rows"])
+        self.assertEqual(journal.snapshot()["counters"]["unknown_row_responses"], 1)
+        self.assertEqual(receipt["state"], "failure")
+        self.assertEqual(diagnostic["reason"]["category"], "missing_field")
+        self.assertEqual(diagnostic["reason"]["parser_site"]["function"], "parse_station")
+        before = journal.snapshot()["counters"]
+        with self.assertRaisesRegex(UnknownSourceRowCount, "Unknown source row count"):
+            journal.reserve("metadata-" + DEEP, "station")
+        self.assertEqual(journal.snapshot()["counters"], before)
+
+    def test_diagnostic_missing_wrong_type_and_unsupported_shape_are_distinct(self):
+        missing = station(CAMP)
+        del missing["is_hidden"]
+        cases = [(list(), "metadata.object_required", "unsupported_shape"),
+                 ({}, "station.id_missing", "missing_field"),
+                 (station(CAMP) | {"_id": []}, "station.id_type", "unexpected_type"),
+                 (missing, "access.hidden_missing", "missing_field"),
+                 (station(CAMP) | {"public_level": "3"}, "access.level_type", "unexpected_type"),
+                 (station(CAMP) | {"access_levels_resolved": []}, "access.level_shape", "unexpected_type")]
+        for value, code, category in cases:
+            with self.subTest(code=code):
+                # The unchanged parser rejects the very same synthetic body.
+                with self.assertRaises(Hold):
+                    parse_station(encode(value), IDENTITIES[CAMP]["station_id"],
+                                  checked_at=Clock().now(), now=Clock().now())
+                *_, diagnostic = self.diagnostic_failure(encode(value), code)
+                self.assertEqual(diagnostic["reason"]["category"], category)
+        *_, diagnostic = self.diagnostic_failure(encode({}), "station.id_missing")
+        self.assertFalse(diagnostic["shape"]["required_key_presence"]["_id"])
+
+    def test_diagnostic_nested_shape_and_sensitive_values_are_not_retained(self):
+        secret = "DO-NOT-PERSIST-synthetic-sensitive-content"
+        value = station(CAMP)
+        del value["public_level"]
+        value.update(access_levels_resolved={"public_level": {"value": secret}},
+                     name=secret, is_hidden=True, is_geo_protected=True,
+                     geo={"type": "Point", "coordinates": [-117.987654321, 34.987654321]})
+        value[secret] = {"cookie": secret, "Authorization": secret}
+        journal, _, root, _, diagnostic = self.diagnostic_failure(encode(value), "access.level_type")
+        fields = {f["path"]: f for f in diagnostic["shape"]["fields"]}
+        self.assertEqual(fields["$.access_levels_resolved.public_level"]["type"], "object")
+        self.assertEqual(fields["$.access_levels_resolved.public_level.value"]["type"], "string")
+        persisted = b"".join(p.read_bytes() for p in root.rglob("*") if p.is_file())
+        for forbidden in (secret.encode(), b"117.987654321", b"34.987654321", b"Authorization", b"cookie"):
+            self.assertNotIn(forbidden, persisted)
+        self.assertFalse(journal.snapshot()["metadata"][CAMP]["raw_eligible"])
+
+    def test_diagnostic_shape_inventory_is_deterministic_and_bounded(self):
+        value = {"unknown-sensitive-key-" + str(i): "withheld" for i in range(700)}
+        value.update(station(CAMP))
+        nested = {"data": [{"data": [{"data": [{"data": [dict(value)]}]}]}]}
+        a = metadata_shape(nested, "station")
+        b = metadata_shape(copy.deepcopy(nested), "station")
+        self.assertEqual(a, b)
+        self.assertTrue(a["truncated"])
+        self.assertLessEqual(len(a["fields"]), SHAPE_FIELDS)
+        self.assertTrue(all(len(f["path"]) <= 96 and len(f.get("keys", [])) <= 16 for f in a["fields"]))
+        *_, diagnostic = self.diagnostic_failure(encode(value), "metadata.field_bound")
+        self.assertTrue(diagnostic["shape"]["truncated"])
+        self.assertLessEqual(len(encode(diagnostic)), DIAGNOSTIC_BYTES)
+        self.assertNotIn(b"unknown-sensitive-key", encode(diagnostic))
+        self.assertNotIn(b"withheld", encode(diagnostic))
+        dense = {k: {name: [{"data": [1, 2, 3]}] for name in
+                 ("_id", "data", "terms", "attributes", "geo", "name", "value")} for k in
+                 ("_id", "data", "terms", "attributes", "geo", "name", "value")}
+        bounded = metadata_shape(dense, "station")
+        self.assertEqual(len(bounded["fields"]), SHAPE_FIELDS)
+        self.assertTrue(bounded["truncated"])
+        keys = sorted(SHAPE_KEYS)[:16]
+        wide = {a: {b: {c: None for c in keys} for b in keys} for a in keys}
+        self.assertGreater(len(encode(metadata_shape(wide, "station"))), DIAGNOSTIC_BYTES)
+        *_, diagnostic = self.diagnostic_failure(encode(wide), "station.id_type")
+        self.assertLessEqual(len(encode(diagnostic)), DIAGNOSTIC_BYTES)
+        self.assertLess(len(diagnostic["shape"]["fields"]), SHAPE_FIELDS)
+        self.assertTrue(diagnostic["shape"]["truncated"])
+
+    def test_diagnostic_malformed_json_preserves_specific_safe_reason(self):
+        body = b'{"sensitive-token":"do-not-store",'
+        _, _, root, receipt, diagnostic = self.diagnostic_failure(body, "json.invalid")
+        self.assertIsNone(receipt["source_rows"])
+        self.assertEqual(diagnostic["shape"]["json_type"], "unparsed")
+        self.assertNotIn(b"do-not-store", b"".join(p.read_bytes() for p in root.rglob("*") if p.is_file()))
+
+    def test_diagnostic_private_hidden_and_identity_mismatch_still_hold(self):
+        for changes, code in [(dict(public_level=0), "access.public_nonhidden_required"),
+                              (dict(is_hidden=True), "access.public_nonhidden_required"),
+                              (dict(is_deleted=True), "access.missing_or_deleted"),
+                              (dict(_id=IDENTITIES[DEEP]["station_id"]), "station.id_mismatch")]:
+            with self.subTest(changes=changes):
+                journal, *rest = self.diagnostic_failure(encode(station(CAMP) | changes), code)
+                self.assertFalse(journal.snapshot()["metadata"][CAMP]["raw_eligible"])
+
+    def test_diagnostic_science_unit_and_completeness_rules_still_hold(self):
+        changed = datastreams(CAMP)
+        changed["data"][0]["attributes"]["depth"] = {"value": 300, "unit": "mm"}
+        cases = [(changed, "science.identity_mismatch"),
+                 (datastreams(CAMP) | {"total": 2}, "list.total"),
+                 (datastreams(CAMP) | {"limit": 1}, "list.incomplete")]
+        for value, code in cases:
+            with self.subTest(code=code):
+                _, _, _, receipt, _ = self.diagnostic_failure(encode(value), code,
+                    prefix=metadata_bodies()[:3])
+                self.assertEqual(receipt["source_rows"], 1)
+        changed = vocabulary()
+        changed["terms"][0]["abbreviation"] = "unaccepted"
+        self.diagnostic_failure(encode(changed), "vocabulary.term_mismatch", prefix=[])
+
+    def test_diagnostic_valid_and_descriptive_name_only_keep_prior_projection(self):
+        value = station(CAMP)
+        value["name"] = "Different permitted descriptive name"
+        expected = parse_station(encode(value), IDENTITIES[CAMP]["station_id"],
+                                 checked_at=Clock().now(), now=Clock().now())
+        bodies = metadata_bodies()
+        bodies[1] = encode(value)
+        journal, _, executor, _ = self.run_fake(bodies + [page(), page()])
+        receipt = list(journal.snapshot()["attempts"].values())[1]
+        actual = decode(journal.read_object(receipt["objects"][0]))
+        actual.pop("checked_at"); expected.pop("checked_at")
+        self.assertEqual(actual, expected)
+        self.assertNotIn("reason", actual)
+        self.assertEqual(len(executor.calls), 7)
+        self.assertEqual(journal.snapshot()["metadata"][DEEP]["identity"]["depth_cm"], None)
+
+    def test_diagnostic_observation_unknown_rows_keep_original_guard(self):
+        journal, clock, _ = self.new_journal()
+        executor = FiniteExecutor(journal, clock, metadata_bodies() + [b'{"data":'])
+        with self.assertRaisesRegex(UnknownSourceRowCount, "Unknown source row count"):
+            Adapter(journal).run(executor=executor, wait=executor.wait)
+        receipt = list(journal.snapshot()["attempts"].values())[-1]
+        self.assertEqual(len(executor.calls), 6)
+        self.assertIsNone(receipt["source_rows"])
+        self.assertEqual(receipt["objects"], [])
+        self.assertEqual(receipt["representation"], "omitted")
+        self.assertEqual(journal.snapshot()["counters"]["unknown_row_responses"], 1)
+
+    def test_diagnostic_complete_evidence_and_reopen_recovery_preserve_reason(self):
+        journal, clock, root = self.new_journal()
+        _, _, _, result = self.run_fake(metadata_bodies() + [page([dict(t=START, v=0)]), page()],
+                                       journal=journal, clock=clock)
+        key = next(k for k, v in journal.tasks.items() if v["identity"]["stream_id"] == CAMP)
+        original = journal.completed(key)
+        value = station(CAMP) | {"updated_at": []}
+        adapter = Adapter(journal)
+        executor = FiniteExecutor(journal, clock, [encode(value)])
+        adapter.active, adapter.executor, adapter.wait = True, executor, executor.wait
+        try:
+            with self.assertRaisesRegex(MetadataAdmissionHold, "description.updated_timestamp"):
+                adapter.metadata(RequestSpec("station", CAMP))
+        finally:
+            adapter.active, adapter.executor, adapter.wait = False, None, None
+        self.assertEqual(journal.completed(key), original)
+        self.assertEqual(original, result[CAMP]["envelope"])
+        receipt = list(journal.snapshot()["attempts"].values())[-1]
+        diagnostic = journal.read_object(receipt["objects"][0])
+        self.assertEqual(journal.snapshot()["counters"]["attempts"], 8)
+        before_files = {str(p.relative_to(root)): sha(p.read_bytes()) for p in root.rglob("*") if p.is_file()}
+        binding, tasks = journal.binding, journal.tasks
+        journal.close(); self.open_journals.remove(journal)
+        for recovery in (False, True):
+            with Journal(root, binding, tasks, recovery=recovery, now=clock.now, monotonic=clock.monotonic) as reopened:
+                self.assertEqual(reopened.completed(key), original)
+                self.assertEqual(reopened.read_object(receipt["objects"][0]), diagnostic)
+                with self.assertRaises(UnknownSourceRowCount):
+                    reopened.reserve("metadata-" + DEEP, "station")
+                self.assertEqual(reopened.snapshot()["counters"]["attempts"], 8)
+        self.assertEqual(before_files, {str(p.relative_to(root)): sha(p.read_bytes()) for p in root.rglob("*") if p.is_file()})
+        self.assertEqual(len(executor.calls), 1)
+
+    def test_diagnostic_storage_or_other_integrity_failure_is_not_suppressed(self):
+        for failure in (OSError("synthetic storage"), Hold("Synthetic integrity failure")):
+            journal, clock, _ = self.new_journal()
+            executor = FiniteExecutor(journal, clock, [encode({})])
+            with patch.object(journal, "received", side_effect=failure):
+                with self.assertRaises(Hold) as caught:
+                    Adapter(journal).run(executor=executor, wait=executor.wait)
+            self.assertNotIsInstance(caught.exception, MetadataAdmissionHold)
+            self.assertEqual(len(executor.calls), 1)
+            self.assertEqual(executor.waits, [])
+            self.assertEqual(journal.snapshot()["counters"]["attempts"], 1)
+
     def test_exact_seven_plan_and_encoded_queries(self):
         calls = seven_calls()
         self.assertEqual(len(calls), 7)
@@ -318,7 +528,10 @@ class AdapterTests(unittest.TestCase):
                 journal, executor = self.assert_run_holds(bodies)
                 self.assertTrue(all("/datapoints?" not in url for url, _, _ in executor.calls))
                 self.assertEqual(len(journal.binding["roster"]), 434)
-                self.assertFalse(list(journal.snapshot()["attempts"].values())[-1]["body_retained"])
+                receipt = list(journal.snapshot()["attempts"].values())[-1]
+                self.assertEqual(receipt["representation"], "sanitized")
+                self.assertEqual(decode(journal.read_object(receipt["objects"][0]))["version"],
+                                 "dendra-metadata-diagnostic-1")
         journal, executor = self.assert_run_holds([encode(vocabulary()), Reply(b"synthetic missing", 404)])
         self.assertEqual(len(executor.calls), 2)
         self.assertEqual(executor.waits, [])
