@@ -219,6 +219,11 @@ def _geometry(value, protected):
 
 def parse_station(body, station_id, *, checked_at, now):
     require(station_id in SELECTED.values(), "Station outside D3 selection")
+    return _parse_station(body, station_id, checked_at=checked_at, now=now)
+
+
+def _parse_station(body, station_id, *, checked_at, now):
+    """Shared admission rules; callers must first enforce their exact selection."""
     _fresh(checked_at, now)
     value = _payload(body)
     require(value.get("_id") == station_id, "Station identity mismatch or missing")
@@ -247,6 +252,37 @@ def _scientific(value):
                 cadence_seconds=interval / 1000, time_semantics="canonical_t_unshifted")
 
 
+def _datastream_page(value, station_id, sid):
+    """Unchanged complete-first-page rules shared by the two bounded probes."""
+    rows, limit = value.get("data"), value.get("limit")
+    require(isinstance(rows, list) and type(limit) is int and 1 <= limit <= 500 and len(rows) < limit,
+            "Incomplete, full or unknown-limit datastream list")
+    require(type(value.get("skip", 0)) is int and value.get("skip", 0) == 0,
+            "Metadata list offset is not the complete first page")
+    if "total" in value:
+        require(type(value["total"]) is int and value["total"] == len(rows), "Metadata total incomplete")
+    by_id = {}
+    for row in rows:
+        require(isinstance(row, dict) and isinstance(row.get("_id"), str) and
+                ID.fullmatch(row["_id"]) and row["_id"] not in by_id and
+                row.get("station_id") == station_id, "Metadata list identity or association")
+        by_id[row["_id"]] = row
+    require(sid in by_id, "Selected stream unavailable; deletion is not proved")
+    return by_id, limit
+
+
+def _stream_description(value, now):
+    description = _descriptive(value, now)
+    config_end = _timestamp(value["datapoints_config"][0].get("ends_before"), "Configured end timestamp")
+    if config_end is not None:
+        if description["ended_at"] is not None:
+            require(description["ended_at"] == config_end, "Conflicting end timestamps")
+        description["ended_at"] = config_end
+        if parse_utc(config_end) <= parse_utc(now):
+            description["activity"] = "inactive/ended"
+    return description
+
+
 def parse_datastreams(body, identity, station, vocabulary, authority, *, checked_at, now):
     """Return sanitized claims for the accepted D1+D2 metadata_view contract."""
     validate_authority(authority)
@@ -262,20 +298,7 @@ def parse_datastreams(body, identity, station, vocabulary, authority, *, checked
             vocabulary.get("dictionary_sha256") == authority["dictionary_sha256"],
             "Verified selected dictionary required")
     value = _payload(body)
-    rows, limit = value.get("data"), value.get("limit")
-    require(isinstance(rows, list) and type(limit) is int and 1 <= limit <= 500 and len(rows) < limit,
-            "Incomplete, full or unknown-limit datastream list")
-    require(type(value.get("skip", 0)) is int and value.get("skip", 0) == 0,
-            "Metadata list offset is not the complete first page")
-    if "total" in value:
-        require(type(value["total"]) is int and value["total"] == len(rows), "Metadata total incomplete")
-    by_id = {}
-    for row in rows:
-        require(isinstance(row, dict) and isinstance(row.get("_id"), str) and
-                ID.fullmatch(row["_id"]) and row["_id"] not in by_id and
-                row.get("station_id") == identity["station_id"], "Metadata list identity or association")
-        by_id[row["_id"]] = row
-    require(sid in by_id, "Selected stream unavailable; deletion is not proved")
+    by_id, limit = _datastream_page(value, identity["station_id"], sid)
     selected = by_id[sid]
     level, protected = _public(selected)
     scientific = _scientific(selected)
@@ -295,14 +318,7 @@ def parse_datastreams(body, identity, station, vocabulary, authority, *, checked
     geometry = None
     if not protected and station.get("geometry") is not None:
         geometry = _geometry(dict(geo=dict(type="Point", coordinates=station["geometry"])), False)
-    description = _descriptive(selected, now)
-    config_end = _timestamp(selected["datapoints_config"][0].get("ends_before"), "Configured end timestamp")
-    if config_end is not None:
-        if description["ended_at"] is not None:
-            require(description["ended_at"] == config_end, "Conflicting end timestamps")
-        description["ended_at"] = config_end
-        if parse_utc(config_end) <= parse_utc(now):
-            description["activity"] = "inactive/ended"
+    description = _stream_description(selected, now)
     result = dict(**_copy(identity), complete=True, access_state="accessible", public_level=level,
                   is_hidden=False, station_public_level=3, station_is_hidden=False,
                   geo_protected=protected, geometry=geometry,
@@ -310,7 +326,7 @@ def parse_datastreams(body, identity, station, vocabulary, authority, *, checked
                   metadata_updated_at=description["updated_at"], activity=description["activity"],
                   ended_at=description["ended_at"], scientific_fields=_copy(scientific),
                   scientific_sha256=digest(scientific), dictionary_sha256=authority["dictionary_sha256"],
-                  pagination=dict(effective_limit=limit, row_count=len(rows)),
+                  pagination=dict(effective_limit=limit, row_count=len(by_id)),
                   unexpected_ids=sorted(set(by_id) - {sid}))
     require(len(encode(result)) <= 262144, "Sanitized metadata bound")
     return result

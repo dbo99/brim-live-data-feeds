@@ -228,3 +228,95 @@ the exact campaign, two streams/day, fresh output root, resource window and
 budgets. Real access/privacy, response shape, limits, bytes, latency and units
 remain measurements for that probe. Full backfill, numerical acceptance, browser
 projection, storage capacity and publication remain separate gates.
+
+## Exact Dimensionless metadata readiness (offline only)
+
+`scripts/dendra/history_acquisition/dimensionless_probe.py` adds an independent
+one-shot metadata injection boundary, version `dendra-dimensionless-probe-1`.
+The original D3 selection, vocabulary requirement, observation runner, transport
+and retry policy are unchanged. This boundary does not authorize HTTP, create a
+provider campaign, open a journal, resolve scale or enable an acquisition product.
+
+The sole target is station `5d8f7f052da5c3a1bdf65382`, stream
+`5d9272a12da5c3cff0f655ed`, already used by the accepted offline acquisition
+fixtures. Its hash-bound frozen identity remains null depth/orientation,
+`Dimensionless`, `native_only_scale_unresolved`. Selection does not use observed
+ranges, geography, presumed scale or a desired result. `make_plan` requires the
+accepted complete inventory and these explicit IDs; arbitrary IDs are rejected.
+The plan binds the inventory hash, exact identity, all collector source hashes,
+two request descriptors and the fixed envelope. A mutated plan or changed source
+binding prevents dispatch. Adding this module changes `model.source_binding`.
+Prior journals stay immutable and tied to their original source checkpoint.
+
+The proposed later order is:
+
+1. `GET https://api.dendra.science/v2/stations/5d8f7f052da5c3a1bdf65382`
+2. Only after successful station admission and receipt persistence:
+   `GET https://api.dendra.science/v2/datastreams?station_id=5d8f7f052da5c3a1bdf65382&%24limit=500&%24sort%5B_id%5D=1`
+
+The envelope is at most two logical requests/two HTTP attempts, zero retries,
+zero redirects, concurrency one, 25 seconds and 8 MiB per request, 50 seconds and
+16 MiB total. There is no metadata pagination, vocabulary, observations, witness,
+temperature, POR discovery, other station or automatic continuation. Reads use
+the existing total-deadline primitive, bounded chunks and one overflow sentinel;
+an oversized or interrupted prefix is charged/hash-bound but not retained as an
+original response or represented as a complete body. Any failure terminates the
+one-shot instance. It cannot be rerun, including after a failed reservation.
+
+`Probe.run` requires explicit executor, reservation, receipt and clock callbacks.
+Synthetic tests inject finite in-memory responses; no live opener is constructed
+by this module. Before a future live run, separate authorization must bind the
+reviewed source/plan, a fresh exclusive task root, a fixed window and this exact
+budget. Its tiny driver must use real clocks, the existing anonymous `NoRedirect`
+opener with proxy inheritance disabled and no cookie/auth handlers, exclusive
+durable reservation before each executor call, and durable sanitized receipt
+persistence before continuation. A crash reservation remains spent: no restart,
+new instance or old-journal resume may refund an attempt. The injected executor
+and persistence callbacks are a trusted boundary; arbitrary callbacks are not a
+certified live transport or durable ledger. No live driver or campaign is created
+by the offline readiness gate.
+
+Station and first-page list guards share the existing implementations without
+broadening the old D3 public entry point. Exact station ID, public level 3,
+explicit nonhidden state, deletion/privacy rules, freshness, optional-Z behavior,
+cadence and configured-end validation remain required. A list must have an
+effective limit from 1 to 500 and fewer rows than that limit, zero offset and,
+when supplied, total equal to row count. Duplicate IDs, wrong-station rows, missing
+target, a full/ambiguous page or target privacy failure HOLD without pagination.
+All rows must belong to this station; other streams contribute only IDs, counts
+and response/ID-set hashes. Their scientific or private fields are not projected.
+
+Only the admitted exact target yields `dendra-target-scale-metadata-1`, a bounded
+local review packet. Its original response, selected record, scientific claims
+and configuration receive separate hashes. The packet preserves allowlisted
+terms and scalar depth/orientation/scale/output-unit/calibration/configuration
+fields exactly as provider claims, with omission counts for unknown scientific
+fields. The projection slots describe what can be safely retained; synthetic
+tests do not prove that a real provider uses those fields. Arbitrary nested values
+in recognized leaves HOLD; unrecognized keys/values and coordinates are omitted.
+Unknown claims require review, never silent classification or a follow-up call.
+The packet's content hash is distinct from the original provider-body hash.
+
+No pinned scientific authority exists for this target beyond frozen identity.
+Unlike the existing D3 acquisition gate, this metadata-only gate discovers and
+hashes current scientific claims for review; admission is not scientific approval,
+dictionary verification, raw acquisition permission or a conversion decision.
+Native Unit must still equal `Dimensionless`; that label proves no scale.
+The packet always has `scale_assertions=[]`, `claim_review=unreviewed_provider_metadata`
+and `historical_applicability={"kind":"unknown_history"}`. Present provider
+dates/configuration are retained as claims without inventing historical coverage.
+
+After a separate evidence review, a qualifying exact-stream primary assertion
+can reference the saved sanitized packet bytes/hash/version through unchanged
+`scale_resolution.Evidence.bind`. That hash proves reviewed bytes, not provider
+authority or semantic correctness. The reviewer must establish the source field's
+meaning and temporal applicability. Supporting ranges or sister-stream claims
+cannot resolve scale; absent continuity cannot resolve whole history. No real
+stream is resolved by the synthetic readiness specimens. The accepted 337
+baseline conversions and all 97 unresolved roster entries remain unchanged.
+
+Run only the new `test_dimensionless_probe.py` and affected
+`test_d3_metadata.py` offline with the explicit accepted `DENDRA_INVENTORY` path.
+Both deny sockets/DNS before repository imports; provider entry points and real
+sleeps are guarded. Passing tests mean ready for separate lead review and live
+authorization, not observed provider compatibility or approval to execute.
