@@ -713,6 +713,43 @@ and source-bound, and a later approved witness campaign needs fresh state and
 metadata packets bound to its reviewed checkpoint. This offline gate makes no
 provider requests and grants no live-refresh authority.
 
+## First-witness rejection diagnostics
+
+`witness_diagnostic.py` projects parser rejections into
+`dendra-witness-diagnostic-1` through the existing receipt/object path. Admission
+still belongs to unchanged `observation_shape` and `authority_witness.response_shape`.
+The diagnostic binds the exact planned witness request, station/stream, request
+ID, source-bound request hash, HTTP status and complete response byte count/hash.
+It records normalized rejection codes and allowlisted parser locations, fixed
+envelope/row field names and types, row count, timestamp presence/type and
+parseability, identity match status, and completeness/selection check results.
+These shape checks explain failures; they cannot admit a response or prove order.
+
+Only explicit integer pagination controls (`limit`, `skip`, `total`, `offset`,
+`count`) within ±(2^53−1) retain values. Offset/count remain unsupported envelope
+fields under the unchanged parser. Larger or noninteger controls retain types,
+not values. At most six envelope fields and seven fields in each of the first
+two rows are described; unknown names are omitted and counted. No nested values,
+observation values, timestamps, returned identifiers, credentials, headers or
+coordinates are copied. The complete artifact is capped at 12,288 bytes and
+has a deterministic hash. Missing total, nonzero skip, wrong limit, ambiguous
+empty results and malformed rows still reject under the existing rules.
+
+Journal persistence checks the diagnostic against the actual response and bound
+request, permits it only on a rejected HTTP-200 witness receipt, and marks the
+object `representation=sanitized`. The legacy `body_retained` flag means an
+object was stored; it does not imply retention of the rejected original body.
+Original response hashes/bytes and spent attempts remain accounted. Accepted
+witnesses still require `representation=original` and the original object hash.
+Reopening a diagnostic grants no authority, retry, refund or source-start
+promotion. Unknown row accounting and the whole-witness-journal stop guard remain
+unchanged. Transport/HTTP/body-limit failures retain their existing omitted-body
+behavior. No metadata parser, history observation path or public contract changes.
+
+The historical Deep Canyon failure has no retained raw body; this addition cannot
+reconstruct or promote it. Any future live diagnostic requires new authorization
+and fresh state bound to the new collector fingerprint.
+
 ## Current-source temporal metadata acquisition
 
 `metadata_acquisition.prepare` creates `dendra-temporal-metadata-acquisition-1`

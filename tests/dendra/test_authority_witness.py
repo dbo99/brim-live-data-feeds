@@ -212,7 +212,10 @@ class WitnessTests(unittest.TestCase):
         self.setup_journal(); raw=body(coordinates=[0,0])
         with self.assertRaises(Hold): self.run_witness(raw)
         a=next(iter(self.j.snapshot()["attempts"].values()))
-        self.assertEqual(a["response_bytes"],len(raw)); self.assertFalse(a["body_retained"])
+        self.assertEqual(a["response_bytes"],len(raw)); self.assertEqual(a["representation"],"sanitized")
+        diagnostic=decode(self.j.read_object(a["objects"][0]))
+        self.assertEqual(diagnostic["body_sha256"],sha(raw))
+        self.assertNotIn("coordinates",encode(diagnostic).decode())
         with self.assertRaises(Hold): w.evidence(self.j,SID)
         with self.assertRaises(Hold): self.run_witness()
         self.assertEqual(len(self.calls),1)
@@ -359,6 +362,138 @@ class WitnessTests(unittest.TestCase):
             self.adapter.run(executor=lambda request,timeout:Reply(body(parse_qs(urlsplit(request.full_url).query)["datastream_id"][0])),
                              wait=lambda seconds:None,authorization=self.authorization())
         self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+
+
+    def rejected_diagnostic(self, raw):
+        from dendra.history_acquisition.witness_diagnostic import WitnessAdmissionHold, MAX_BYTES
+        self.setup_journal()
+        with self.assertRaises(Hold) as caught:
+            self.run_witness(raw)
+        a=next(iter(self.j.snapshot()["attempts"].values()))
+        saved=self.j.read_object(a["objects"][0]);d=decode(saved)
+        self.assertLessEqual(len(saved),MAX_BYTES)
+        if isinstance(caught.exception,WitnessAdmissionHold):
+            self.assertEqual(d,caught.exception.diagnostic)
+            self.assertEqual(a['state'],'failure')
+        else:
+            # Receipt persistence precedes the unchanged source-row budget check.
+            # An oversized response stays spent/received and stops all traffic.
+            self.assertEqual(str(caught.exception),'Budget exhausted: source_rows')
+            self.assertEqual(a['state'],'received')
+            self.assertGreater(a['source_rows'],self.binding['budgets']['source_rows'])
+        self.assertEqual((a["representation"],a["response_sha256"]),("sanitized",sha(raw)))
+        self.assertNotEqual(saved,raw)
+        self.assertEqual((d["http_status"],d["body_bytes"],d["body_sha256"]),(200,len(raw),sha(raw)))
+        self.assertFalse(d["admitted"]);self.assertFalse(d["source_start_reviewed"])
+        self.assertFalse(d["dispatch_ready"])
+        self.assertEqual(d["request_id"],self.binding["witness_requests"]["witness-"+SID]["request_id"])
+        self.assertEqual(d["diagnostic_sha256"],digest({k:v for k,v in d.items() if k!="diagnostic_sha256"}))
+        return d
+
+    def test_diagnostic_malformed_root_and_json(self):
+        for raw,kind in [(b'{',"unparsed"),(b'[]',"array"),(b'null',"null"),(b'"private-root"',"string")]:
+            with self.subTest(kind=kind):
+                d=self.rejected_diagnostic(raw)
+                self.assertEqual(d["root_json_type"],kind)
+                self.assertFalse(d["checks"]["root_object"])
+                self.assertNotIn("private-root",encode(d).decode());self.j.close()
+
+    def test_diagnostic_data_presence_and_type(self):
+        for value in [{"limit":1,"total":1},{"data":None,"limit":1,"total":1},{"data":{},"limit":1,"total":1}]:
+            with self.subTest(value=value):
+                d=self.rejected_diagnostic(encode(value))
+                self.assertEqual(d["fields"]["data"]["present"],"data" in value)
+                self.assertFalse(d["checks"]["data_array"]);self.j.close()
+
+    def test_diagnostic_limit_and_cardinality(self):
+        values=[dict(data=[dict(t=FIRST,v=0)],total=1),dict(data=[],limit="1",total=0),
+                dict(data=[],limit=True,total=0),dict(data=[],limit=0,total=0),dict(data=[],limit=2,total=0),
+                dict(data=[dict(t=FIRST,v=0)]*2,limit=2,total=2)]
+        for value in values:
+            with self.subTest(value=value):
+                d=self.rejected_diagnostic(encode(value))
+                self.assertFalse(d["checks"]["limit_one"])
+                self.assertEqual(d["returned_row_count"],len(value["data"]));self.j.close()
+
+    def test_diagnostic_skip_and_total_controls(self):
+        for updates,check in [({'skip':1},'skip_zero'),({'skip':-1},'skip_zero'),
+                              ({'skip':None},'skip_zero'),({'total':None},'total_integer'),
+                              ({'total':True},'total_integer'),({'total':0},'total_covers_rows')]:
+            v=decode(body());v.update(updates)
+            with self.subTest(updates=updates):
+                d=self.rejected_diagnostic(encode(v));self.assertFalse(d['checks'][check]);self.j.close()
+        v=decode(body());del v['total'];d=self.rejected_diagnostic(encode(v))
+        self.assertFalse(d['checks']['total_present'])
+        self.assertEqual(d['reason']['code'],'witness.completeness_selection')
+        self.assertEqual(d['reason']['parser_site']['function'],'response_shape')
+
+    def test_diagnostic_empty_ambiguity_is_not_empty_authority(self):
+        d=self.rejected_diagnostic(encode(dict(data=[],limit=1,total=4)))
+        self.assertFalse(d['checks']['empty_unambiguous'])
+        self.assertEqual(d['reason']['code'],'witness.ambiguous_empty')
+        with self.assertRaises(Hold):w.evidence(self.j,SID)
+
+    def test_diagnostic_row_structure_identity_timestamp(self):
+        for row in [None,[],dict(t=FIRST,v=0,datastream_id=OTHER),dict(v=0),dict(t=None,v=0),
+                    dict(t='PRIVATE-BAD-TIMESTAMP',v=0),dict(t=FIRST,v={'secret':'PRIVATE'})]:
+            with self.subTest(row=row):
+                d=self.rejected_diagnostic(encode(dict(data=[row],limit=1,total=1)))
+                self.assertEqual(d['rows'][0]['json_type'], 'object' if isinstance(row,dict) else 'null' if row is None else 'array')
+                self.assertNotIn('PRIVATE',encode(d).decode());self.j.close()
+
+    def test_diagnostic_multirow_unordered_never_claims_order(self):
+        raw=encode(dict(data=[dict(t=FIRST,v=0),dict(t='2020-01-01T00:00:00Z',v=0)],limit=2,total=2))
+        d=self.rejected_diagnostic(raw)
+        self.assertEqual(d['selection_check'],'FAIL')
+        self.assertEqual(d['ordering_check'],'NOT_EVALUATED_SINGLE_ROW_REQUIRED')
+        self.assertNotIn(FIRST,encode(d).decode())
+
+    def test_diagnostic_privacy_and_explicit_bounds(self):
+        v=dict(data=[dict(t='PRIVATE-TIME',v=987654321.125,datastream_id='PRIVATE-ID',
+            coordinates=[98765,43210],cookie='PRIVATE-COOKIE',q={'secret':'PRIVATE'})]*100,
+            limit=10**100,total=10**100,skip=-1,count=100,offset=0,
+            **{'PRIVATE-KEY-'+str(i):'PRIVATE-VALUE' for i in range(1000)})
+        d=self.rejected_diagnostic(encode(v));text=encode(d).decode()
+        for secret in ['PRIVATE', '987654321', 'coordinates', 'cookie', '10'*100]:self.assertNotIn(secret,text)
+        self.assertEqual(len(d['rows']),2);self.assertTrue(d['rows_truncated'])
+        self.assertEqual(d['omitted_top_level_field_count'],1000)
+        self.assertTrue(d['fields']['limit']['value_withheld'])
+        self.assertNotIn('value',d['fields']['limit'])
+        self.assertEqual(d['fields']['count']['value'],100)
+        self.assertEqual(d['fields']['skip']['value'],-1)
+        self.assertNotIn('value',d['rows'][0]['fields']['v'])
+
+    def test_diagnostic_binding_deterministic_and_tamper_refused(self):
+        from dendra.history_acquisition.witness_diagnostic import projection,validate
+        raw=encode(dict(data=[],limit=1,total=3));d=self.rejected_diagnostic(raw)
+        req=self.binding['witness_requests']['witness-'+SID]
+        self.assertEqual(projection(raw,req,200,d['reason']),d)
+        for field,value in [('body_sha256','0'*64),('request_id','0'*64),('admitted',True),('private','SECRET')]:
+            bad=copy.deepcopy(d);bad[field]=value
+            with self.subTest(field=field),self.assertRaises(Hold):validate(raw,encode(bad),req,200)
+        with self.assertRaises(Hold):validate(raw+b' ',encode(d),req,200)
+
+    def test_diagnostic_journal_reopen_no_retry_no_promotion(self):
+        raw=encode(dict(data=[],limit=1,total=3));d=self.rejected_diagnostic(raw)
+        snapshot=self.j.snapshot();events=len(self.j.events);self.j.close()
+        with Journal(self.root,self.binding,self.tasks,inventory=INV,now=self.clock.now,monotonic=self.clock.monotonic) as j:
+            a=next(iter(j.snapshot()['attempts'].values()))
+            self.assertEqual(decode(j.read_object(a['objects'][0])),d)
+            self.assertEqual(j.snapshot()['counters'],snapshot['counters'])
+            with self.assertRaises(Hold):w.evidence(j,SID)
+            with self.assertRaises(Hold):j.reserve('witness-'+SID,self.binding['witness_requests']['witness-'+SID]['request_id'])
+            with self.assertRaises(Hold):WitnessAdapter(j).run(executor=lambda *a,**k:self.fail('retry'),wait=self.clock.advance,authorization=self.authorization())
+            self.assertEqual(len(j.events),events)
+        self.assertEqual(len(self.calls),1)
+
+    def test_diagnostic_cannot_be_stored_as_success(self):
+        from dendra.history_acquisition.witness_diagnostic import projection
+        self.setup_journal();req=self.binding['witness_requests']['witness-'+SID]
+        raw=encode(dict(data=[],limit=1,total=3))
+        d=projection(raw,req,200,dict(code='witness.ambiguous_empty',parser_site=None))
+        key=self.j.reserve('witness-'+SID,req['request_id']);self.j.started(key)
+        details=self.adapter._details(w.RequestSpec(INV.identity(SID)['station_id'],SID),NOW,0)
+        with self.assertRaises(Hold):self.j.received(key,raw,source_rows=0,sanitized_body=encode(d),retain=False,details=details)
 
 
 if __name__ == "__main__":

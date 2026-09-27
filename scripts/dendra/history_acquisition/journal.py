@@ -388,7 +388,13 @@ class Journal:
             from .d3_plan import validate_receipt_details
             witness = self.binding["mode"] == "authority_witness_adapter"
             validate_receipt_details(details, witness=witness)
-            require(not witness or sanitized_body is None, "Witness requires original response")
+            if witness and sanitized_body is not None:
+                from .witness_diagnostic import validate
+                attempt = self.snapshot()["attempts"][key]
+                require(not retain and status == 200 and details["outcome"] == "hold" and
+                        details["error_code"] == "parse_or_privacy" and details["retryable"] is False,
+                        "Witness diagnostic is rejection only")
+                validate(body, sanitized_body, self.binding["witness_requests"][attempt["task_key"]], status)
             if self.binding["mode"] == "temporal_metadata_adapter":
                 require(not retain and details["kind"] in ("unit-vocabulary", "station", "datastream-list"),
                         "Temporal metadata receipts retain sanitized objects only")

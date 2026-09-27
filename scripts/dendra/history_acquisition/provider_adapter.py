@@ -24,6 +24,7 @@ from .d3_plan import (RequestSpec, SELECTED, START, END, validate_binding,
 from .provider_metadata import parse_vocabulary, parse_station, parse_datastreams
 from .journal import UnknownSourceRowCount
 from .safety import Hold, require, encode, decode, digest, sha
+from .witness_diagnostic import WitnessAdmissionHold
 
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 BODY_LIMIT = 8 * 1024**2
@@ -428,8 +429,10 @@ class Adapter:
                         if spec.kind == "datastream-list":
                             details.update(effective_limit=payload["limit"], page_complete=True)
                 except (Hold, ValueError, TypeError, KeyError, RecursionError) as exc:
-                    if witness or spec.kind == "observations" or isinstance(exc, Deadline):
+                    if isinstance(exc, Deadline) or spec.kind == "observations":
                         raise
+                    if witness:
+                        raise WitnessAdmissionHold(body, self.journal.binding["witness_requests"][task], status, exc) from None
                     raise MetadataAdmissionHold(spec, body, payload, exc) from None
                 details.update(privacy="public", identity="match")
                 # Validate capacity before writing raw/sanitized objects, while
@@ -439,7 +442,7 @@ class Adapter:
         except BaseException as exc:
             caught = exc
             retain = False
-            sanitized = encode(exc.diagnostic) if isinstance(exc, MetadataAdmissionHold) else None
+            sanitized = encode(exc.diagnostic) if isinstance(exc, (MetadataAdmissionHold, WitnessAdmissionHold)) else None
             if body and value is None and status == 200 and row_count == 0:
                 row_count = None
             if details["error_code"] is None:
@@ -460,7 +463,7 @@ class Adapter:
             self._persist(self.journal.received, key, body, source_rows=row_count, status=status, retain=retain,
                           sanitized_body=sanitized, details=details)
         except UnknownSourceRowCount:
-            if not isinstance(caught, MetadataAdmissionHold):
+            if not isinstance(caught, (MetadataAdmissionHold, WitnessAdmissionHold)):
                 raise
             # received() has already durably charged the response and saved its
             # diagnostic. End in the originating HOLD; never bypass the guard
