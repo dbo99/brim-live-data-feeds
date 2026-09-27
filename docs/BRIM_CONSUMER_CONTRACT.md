@@ -884,3 +884,18 @@ reference bands. Accepted daily rows retain query/seal provenance for later
 separately reviewed Dendra reference science. See [the campaign contract](DENDRA_HISTORY_CAMPAIGN.md)
 for preparation inputs and holds. Existing published products and reader contracts
 remain unchanged.
+
+### Dendra browser projection profile (unpublished)
+
+The additive offline review profile `dendra-history-profile-1` in the common
+`brim-soil-history-1` family freezes descriptor-supplied relative paths, exact
+generation/root-revision pins, selected station/stream history and separate
+completed-daily/latest-instantaneous shapes. Its exact schema and validation
+rules are in [the Dendra browser profile](DENDRA_BROWSER_PROFILE.md). Normal
+activation requires zero history/hover body bytes. Last-3 selects current ending
+WY plus the preceding two; All-available is acquired accepted product-horizon
+history, not provider POR. Unresolved Dimensionless is denied numeric percent
+capabilities; reference bands remain unavailable/not_computed. The real fixture
+has no latest witness; the separate AVAILABLE specimen is synthetic and
+nonpublishable. This profile does not replace existing reader contracts or SCAN
+behavior, activate URLs, or authorize consumer/launcher implementation.

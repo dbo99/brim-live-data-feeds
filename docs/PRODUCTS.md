@@ -1267,3 +1267,17 @@ distinct explicit mode. No collection, public product path, workflow or referenc
 band is activated. The separate completed-daily/instantaneous semantics and
 maintainer inputs are defined in [the campaign contract](DENDRA_HISTORY_CAMPAIGN.md)
 and [consumer contract](BRIM_CONSUMER_CONTRACT.md#campaign-preparation-and-point-semantics-unpublished).
+
+### Dendra browser projection profile (unpublished)
+
+`scripts/dendra/history_acquisition/browser_projection.py` projects explicitly
+pinned accepted preparation into a fresh offline delivery root. It performs no
+retrieval or R science. The [versioned browser profile](DENDRA_BROWSER_PROFILE.md)
+defines `manifest.json`, one hashed map index, selected stream descriptors,
+selected hover bodies and stream/WY history shards under `brim-soil-history-1` /
+`dendra-history-profile-1`. These paths have no production `docs/data` ownership.
+The real review fixture retains 15 accepted days each for Percent and VWC,
+unresolved native-only Dimensionless and an unavailable real latest-point state.
+No existing CLI, SCAN/SNOTEL source, workflow, current feed, journal or numerical
+authority changes. Full production capacity and consumer/launcher integration
+remain separately gated.
