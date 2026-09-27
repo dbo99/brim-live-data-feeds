@@ -1249,3 +1249,21 @@ remaining operational gaps are in [the operating design](SOIL_MOISTURE_OPERATION
 ### SM3A local operations (unpublished)
 
 SM3A adds local coverage-driven catch-up and separate network-health records without changing soil calculations or public ownership. See [the versioned SM3A contract](SOIL_MOISTURE_SM3A_CONTRACT.md). Three source-specific templates remain inactive; SNOTEL production and the performance target remain held.
+
+### Campaign daily handoff and presentation planning (unpublished)
+
+The offline `prepare-product` mode of `dendra.history_acquisition.campaign_cli`
+accepts a pinned, sealed campaign evidence root and writes only to an explicit
+fresh scratch root. `daily_handoff.py` translates verified native observations
+to the existing six-column CSV input; `daily_prepare.R` delegates means, cadence,
+QC and fixed-PST calendar semantics to unchanged `core.R`. Archive query completion
+is separate from daily eligibility. Unresolved Dimensionless stays native-only;
+covered-empty intervals create no synthetic zero or null sample.
+
+The explicit `dendra-presentation-horizon-1` initial planning mode covers up to
+the current ending-year WY and preceding nine, clamped by reviewed exact source
+starts. Audit-estimated or unknown starts hold execution. Full POR remains a
+distinct explicit mode. No collection, public product path, workflow or reference
+band is activated. The separate completed-daily/instantaneous semantics and
+maintainer inputs are defined in [the campaign contract](DENDRA_HISTORY_CAMPAIGN.md)
+and [consumer contract](BRIM_CONSUMER_CONTRACT.md#campaign-preparation-and-point-semantics-unpublished).

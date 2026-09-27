@@ -39,6 +39,11 @@ def parser():
     p.add_argument("--execution", help="Absolute prepared execution.json; no implied dispatch authority")
     p.add_argument("--authorization", help="Absolute explicit reviewed dispatch authorization")
     p.add_argument("--campaign-id", help="Read-only journal inspection within --state-root")
+    p.add_argument("--sealed-root", help="Absolute immutable sealed campaign evidence root; offline only")
+    p.add_argument("--sealed-manifest-sha256", help="Trusted SHA-256 of that evidence manifest")
+    p.add_argument("--acquisition-fingerprint", help="Expected original acquisition source fingerprint")
+    p.add_argument("--output-root", help="Absolute fresh product scratch directory; never publication")
+    p.add_argument("--cadence-mode", choices=("initialize",), help="Explicit fresh frozen-context initialization; no existing daily-state update")
     for name in ("logical-requests", "http-attempts", "total-bytes", "wall-seconds"):
         p.add_argument("--" + name, type=int)
     return p
@@ -97,12 +102,18 @@ def _execute(args, inventory, *, executor, wait, now_fn, monotonic):
 
 def main(argv=None, *, executor=None, wait=None, now_fn=None, monotonic=None):
     args = parser().parse_args(argv)
-    if args.mode == "prepare-product" or (args.mode in ("collect", "resume") and
+    if (args.mode == "prepare-product" and not all((args.inventory, args.sealed_root,
+            args.sealed_manifest_sha256, args.acquisition_fingerprint, args.output_root,
+            args.cadence_mode, args.now))) or (args.mode in ("collect", "resume") and
             not (args.execution and args.authorization and args.state_root and args.inventory)):
-        print(encode(dict(outcome="STOP", reason="explicit_execution_authority_required_or_product_unsupported",
+        print(encode(dict(outcome="STOP", reason="explicit_execution_authority_or_sealed_product_inputs_required",
                           mode=args.mode, provider_requests=0)).decode(), end="")
         return EXIT_STOP
     try:
+        product_inputs = (args.sealed_root, args.sealed_manifest_sha256,
+                          args.acquisition_fingerprint, args.output_root, args.cadence_mode)
+        require(args.mode == "prepare-product" or not any(product_inputs),
+                "Sealed product inputs belong only to offline prepare-product")
         require(args.inventory and args.inventory_sha256, "Explicit inventory path/hash required")
         inventory = Inventory.load(args.inventory, args.inventory_sha256)
         fingerprint = digest(source_binding())
@@ -111,6 +122,16 @@ def main(argv=None, *, executor=None, wait=None, now_fn=None, monotonic=None):
         require(executor is None and wait is None and now_fn is None and monotonic is None and not args.execution and not args.authorization and
                 all(v is None for v in (args.logical_requests, args.http_attempts, args.total_bytes, args.wall_seconds)),
                 "Offline modes do not accept dispatch arguments")
+        if args.mode == "prepare-product":
+            require(not any((args.config, args.manifest, args.state_root, args.stream,
+                             args.station, args.after_task, args.campaign_id, args.dry_run)),
+                    "prepare-product requires only sealed inputs, fresh output, inventory and evaluation time")
+            from .daily_handoff import prepare_product
+            value = prepare_product(args.sealed_root, manifest_sha256=args.sealed_manifest_sha256,
+                inventory=inventory, acquisition_fingerprint=args.acquisition_fingerprint,
+                output_root=args.output_root, as_of=args.now, cadence_mode=args.cadence_mode)
+            print(encode(value).decode(), end="")
+            return 0
         if args.mode in ("status", "verify") and args.state_root:
             require(args.campaign_id and not args.manifest and not args.config and not args.stream and
                     not args.station and not args.after_task, "Journal inspection needs state root and campaign ID")
@@ -123,8 +144,16 @@ def main(argv=None, *, executor=None, wait=None, now_fn=None, monotonic=None):
             require(args.dry_run and args.config and args.state_root and args.now and not args.manifest,
                     "plan requires --dry-run --config --state-root --now")
             config = decode(_read(args.config))
-            require(set(config) == {"campaign_id", "horizons", "chunk_days", "budgets", "reviews"},
+            common_fields = {"campaign_id", "chunk_days", "budgets", "reviews"}
+            require(set(config) in (common_fields | {"horizons"}, common_fields | {"presentation"}),
                     "Planning config fields")
+            descriptor = None
+            if "presentation" in config:
+                from . import presentation
+                require(isinstance(config["presentation"], dict) and
+                        set(config["presentation"]) == {"mode", "as_of", "source_starts"},
+                        "Explicit presentation mode, as_of and source starts required")
+                descriptor = presentation.make(inventory, **config["presentation"])
             require(isinstance(config["reviews"], list) and len(config["reviews"]) <= 434, "Review input bound")
             decisions, bundles = {}, {}
             for entry in config["reviews"]:
@@ -138,8 +167,10 @@ def main(argv=None, *, executor=None, wait=None, now_fn=None, monotonic=None):
                 decisions[d["stream_id"]] = d
                 bundles[d["stream_id"]] = dict(packet=decode(packet_body), review=decode(review_body), decision=d)
             manifest = campaign.make_campaign(inventory, campaign_id=config["campaign_id"],
-                executor_fingerprint=fingerprint, horizons=config["horizons"], decisions=decisions,
-                chunk_days=config["chunk_days"], budgets=config["budgets"])
+                executor_fingerprint=fingerprint,
+                horizons=config["horizons"] if descriptor is None else descriptor["horizons"],
+                decisions=decisions, chunk_days=config["chunk_days"], budgets=config["budgets"],
+                **({} if descriptor is None else {"presentation": descriptor}))
             plan = campaign.plan(manifest, inventory, stream_ids=args.stream, station_ids=args.station,
                                  max_tasks=args.max_tasks, after_task=args.after_task, now=args.now)
             state = campaign.partition(manifest, inventory)

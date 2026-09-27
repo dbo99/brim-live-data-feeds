@@ -861,3 +861,26 @@ protected/withheld native coordinates override older catalog coordinates.
 ### SM3A local operations (unpublished)
 
 SM3A leaves the accepted shared interface, daily fields and reader bytes unchanged. Local health stays outside the observation manifests; no health URL or UI freshness reinterpretation is introduced. See [the SM3A operations contract](SOIL_MOISTURE_SM3A_CONTRACT.md).
+
+### Campaign preparation and point semantics (unpublished)
+
+The additive offline campaign preparation contract retains completed fixed-PST
+daily means under `completed_daily`, separate from the proposed
+`latest_instantaneous` marker. The daily trace never includes a partial current-day
+mean. A later instantaneous marker must retain the exact stream and source
+timestamp, fixed-PST source day and observation-age meaning. Stale values are not
+moved to today. Accepted Percent and VWC scale routes remain ×1 and ×100;
+unresolved Dimensionless must not appear as numeric percent VWC.
+
+Historical sealed archives establish `historical_terminal` samples only, not
+current/latest observations. Rebuilding those files does not refresh their age or
+authorize a latest request. This gate prepares local scratch and proposes the
+distinct marker semantics; it adds no public URL, manifest selection or activation
+behavior and does not modify the consumer. A counterpart review is required
+before the proposed marker is published or consumed.
+
+The explicit initial 10-WY planning mode does not fabricate years or compute
+reference bands. Accepted daily rows retain query/seal provenance for later
+separately reviewed Dendra reference science. See [the campaign contract](DENDRA_HISTORY_CAMPAIGN.md)
+for preparation inputs and holds. Existing published products and reader contracts
+remain unchanged.

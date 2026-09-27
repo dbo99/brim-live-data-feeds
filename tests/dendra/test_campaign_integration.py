@@ -666,6 +666,34 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotEqual(first_plan["tasks"][0]["task_id"], second_plan["tasks"][0]["task_id"])
         self.assertFalse(second_path.with_name("execution.json").exists())
 
+    def test_cli_explicit_presentation_unknown_start_is_nonexecuting_hold(self):
+        sid = PERCENT
+        config = dict(campaign_id="synthetic-presentation", chunk_days=30,
+            presentation=dict(mode="INITIAL_PRESENTATION_10_WY", as_of=NOW,
+                source_starts={sid: dict(state="UNKNOWN_SOURCE_START", stream_id=sid,
+                    station_id=INVENTORY.identity(sid)["station_id"],
+                    inventory_sha256=INVENTORY_SHA256, start=None)}),
+            budgets=campaign.policy(), reviews=[])
+        path = self.root/"presentation.json"
+        path.write_bytes(encode(config))
+        code, output = self.invoke(["plan", "--inventory", os.environ["DENDRA_INVENTORY"],
+            "--inventory-sha256", INVENTORY_SHA256, "--config", str(path),
+            "--state-root", str(self.root), "--now", NOW, "--dry-run"])
+        self.assertEqual(code, campaign_cli.EXIT_HOLD)
+        self.assertEqual(output["task_count"], 0)
+        planned = self.root/output["plan_path"]
+        self.assertEqual(decode(planned.read_bytes())["blocked_streams"][sid], ["SOURCE_START_UNKNOWN"])
+        self.assertFalse(planned.with_name("execution.json").exists())
+
+    def test_cli_product_inputs_never_enter_collection(self):
+        code, output = self.invoke(["collect", "--inventory", os.environ["DENDRA_INVENTORY"],
+            "--inventory-sha256", INVENTORY_SHA256, "--execution", "/not-opened",
+            "--authorization", "/not-opened", "--state-root", str(self.root),
+            "--sealed-root", str(self.root)])
+        self.assertEqual(code, campaign_cli.EXIT_HOLD)
+        self.assertEqual(output["reason"], "Sealed product inputs belong only to offline prepare-product")
+        self.assertFalse((self.root/"registry").exists())
+
 
     def test_first_batch_missing_baseline_review_is_not_ready_and_scale_is_separate(self):
         manifest, _, _, _ = self.fixture()

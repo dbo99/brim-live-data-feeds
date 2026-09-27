@@ -12,6 +12,7 @@ from .eligibility import DECISION, _hash
 from .model import Inventory, INVENTORY_SHA256, NAME, MAX_PLAN, source_binding
 from .safety import decode, digest, encode, require
 from .scale_resolution import resolve
+from . import presentation as presentation_contract
 
 VERSION = "dendra-native-campaign-1"
 TASK = "dendra-native-task-1"
@@ -41,7 +42,7 @@ def failure_scope(kind):
 
 
 def make_campaign(inventory, *, campaign_id, executor_fingerprint, horizons, decisions=None,
-                  chunk_days=30, budgets=None):
+                  chunk_days=30, budgets=None, presentation=None):
     require(type(inventory) is Inventory and isinstance(campaign_id, str) and NAME.fullmatch(campaign_id),
             "Explicit campaign identity required")
     require(type(chunk_days) is int and 1 <= chunk_days <= 30, "Chunk ceiling is 30 days")
@@ -49,6 +50,9 @@ def make_campaign(inventory, *, campaign_id, executor_fingerprint, horizons, dec
     require(isinstance(horizons, dict) and set(horizons) <= set(roster), "Horizon outside frozen roster")
     for v in horizons.values():
         require(set(v) == {"start", "end"} and parse_utc(v["start"]) < parse_utc(v["end"]), "Half-open horizon required")
+    if presentation is not None:
+        presentation_contract.verify(presentation, inventory)
+        require(horizons == presentation["horizons"], "Presentation horizon differs from reviewed source starts")
     decisions = {} if decisions is None else decisions
     require(isinstance(decisions, dict) and set(decisions) <= set(roster), "Decision outside roster")
     source = _hash(executor_fingerprint)
@@ -65,6 +69,10 @@ def make_campaign(inventory, *, campaign_id, executor_fingerprint, horizons, dec
     core = dict(version=VERSION, campaign_id=campaign_id, executor_fingerprint=source,
                 inventory_sha256=INVENTORY_SHA256, horizons=horizons, chunk_days=chunk_days,
                 request_policy=POLICY)
+    # Omission preserves the exact legacy manifest and task identity contract.
+    # A new explicit planning mode binds new campaigns; it never migrates one.
+    if presentation is not None:
+        core["presentation"] = presentation
     value = dict(core=core, campaign_identity=digest(core), roster=roster, decisions=decisions,
                  budgets=limits, network_execution_authorized=False)
     return decode(encode(dict(value, manifest_sha256=digest(value))))
@@ -75,7 +83,8 @@ def verify(campaign, inventory, *, executor_fingerprint):
             campaign["core"]["executor_fingerprint"] == executor_fingerprint, "Campaign source/version mismatch")
     expected = make_campaign(inventory, campaign_id=campaign["core"]["campaign_id"],
         executor_fingerprint=executor_fingerprint, horizons=campaign["core"]["horizons"],
-        decisions=campaign["decisions"], chunk_days=campaign["core"]["chunk_days"], budgets=campaign["budgets"])
+        decisions=campaign["decisions"], chunk_days=campaign["core"]["chunk_days"], budgets=campaign["budgets"],
+        presentation=campaign["core"].get("presentation"))
     require(campaign == expected, "Campaign manifest/roster mismatch")
     return True
 
@@ -116,7 +125,12 @@ def plan(campaign, inventory, *, stream_ids=None, station_ids=None, max_tasks=12
     verify(campaign, inventory, executor_fingerprint=digest(source_binding()))
     require(type(max_tasks) is int and 1 <= max_tasks <= MAX_PLAN, "Bounded task maximum required")
     roster = campaign["roster"]
-    selected = set(campaign["core"]["horizons"])
+    presentation = campaign["core"].get("presentation")
+    if presentation is not None:
+        require(now is not None and parse_utc(presentation["as_of"]) <= parse_utc(now),
+                "Presentation as_of must not exceed explicit planning time")
+    available = set(presentation["streams"]) if presentation is not None else set(campaign["core"]["horizons"])
+    selected = available.copy()
     if stream_ids is not None:
         require(isinstance(stream_ids, list) and stream_ids and len(stream_ids) == len(set(stream_ids)) and
                 set(stream_ids) <= set(roster), "Invalid exact stream subset")
@@ -126,9 +140,12 @@ def plan(campaign, inventory, *, stream_ids=None, station_ids=None, max_tasks=12
                 set(station_ids) <= {v["station_id"] for v in roster.values()}, "Invalid exact station subset")
         subset = {sid for sid in roster if roster[sid]["station_id"] in station_ids}
         selected = selected & subset if stream_ids is not None else subset
-    require(selected and selected <= set(campaign["core"]["horizons"]), "Explicit horizon required for every selected stream")
+    require(selected and selected <= available, "Explicit horizon required for every selected stream")
     tasks, blocked, gaps = [], {}, []
     for sid in sorted(selected):
+        if presentation is not None and not presentation["streams"][sid]["eligible_for_campaign_planning"]:
+            blocked[sid] = [presentation["streams"][sid]["planning_state"]]
+            continue
         d = campaign["decisions"].get(sid)
         if not d or not d["native_acquisition_eligible"]:
             blocked[sid] = ["metadata_review_required"] if not d else d["hold_reasons"]

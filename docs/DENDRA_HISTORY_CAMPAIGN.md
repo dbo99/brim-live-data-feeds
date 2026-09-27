@@ -1,14 +1,14 @@
 # Dendra history campaign contract
 
 Status: reviewed eligibility, deterministic planning, durable campaign execution
-and conservative resume are implemented as an uncommitted integration candidate.
-This gate is offline: no metadata or observation request is authorized or made.
-The conditional first live batch remains **NOT_READY** because its Percent and
-VWC candidates require fresh metadata review. A plan, eligibility decision or
-fabricated authorization dictionary never supplies maintainer approval.
+and conservative resume are implemented. The additive daily handoff and explicit
+presentation planner are an offline integration candidate. The separately
+authorized first live batch is sealed; that historical evidence grants no later
+request authority. A plan, eligibility decision or fabricated authorization
+dictionary never supplies maintainer approval.
 
-This is an internal acquisition contract, not a public feed, scheduler, daily
-science implementation, or publication policy. The four technical sources of
+This is an internal acquisition and offline handoff contract, not an activated
+public feed, scheduler or publication policy. The four technical sources of
 truth listed in [README.md](README.md) retain authority. Existing acquisition
 mechanics are described in [DENDRA_HISTORY_ACQUISITION.md](DENDRA_HISTORY_ACQUISITION.md);
 the deliberately narrower live adapter is described in
@@ -28,7 +28,13 @@ The candidate additions in `scripts/dendra/history_acquisition/` are:
 - `journal.py` and `provider_adapter.py`: the existing ledger and HTTP stack also
   accept `campaign_reviewed_adapter`, without changing the narrower D3 policy.
 - `campaign_cli.py`: offline plan/status/verify and separately authorized
-  collect/resume use these same interfaces. `prepare-product` remains unsupported.
+  collect/resume use these same interfaces; `prepare-product` is an explicit
+  offline preparation into fresh scratch, with no publication authority.
+- `presentation.py`: reviewed source-start horizons for explicit initial 10-WY
+  or full-POR planning; audit estimates never authorize executable horizons.
+- `daily_handoff.py` and `daily_prepare.R`: verify sealed native provenance,
+  translate to the existing R input contract and delegate numerical science to
+  unchanged `scripts/dendra/core.R`.
 
 Reuse `model.Inventory`, `safety`, `scale_resolution`, timestamp parsing and
 normalization in `scripts/dendra/transport.py`, and the existing `Journal` object
@@ -369,12 +375,13 @@ normalized-percent eligibility stays HOLD. The integration result's task-local
 readiness/decision artifacts carry exact review times and decision/source hashes.
 This table grants no continuing permission after those decisions expire.
 
-**FIRST_LIVE_BATCH_STATUS=NOT_READY.** The minimum next gate is a separately
-approved metadata-only review for the two baseline candidates: fresh station and
-complete selected datastream-list evidence, followed by explicit reviewed native
-decisions. No observation request belongs to that gate. Recheck all decision
-expiries before proposing a later live batch. Do not substitute streams, merge
-configuration windows or silently expand the four proposed tasks.
+The table records the earlier integration review, before the separately
+authorized baseline metadata review and first live batch. The accepted batch
+sealed 2,160 Percent rows, 2,160 VWC rows, 52 native Dimensionless rows and one
+covered-empty Dimensionless interval. It consumed six observation attempts with
+no retries. Its historical seals remain immutable. Fresh source-bound decisions
+and explicit authorization are required before any later acquisition; do not
+reuse expired decisions or expand those four tasks implicitly.
 
 The task-local first-batch plan must state selected IDs, exact intervals, task
 count, metadata prerequisites, logical/attempt/page limits, concurrency one,
@@ -400,7 +407,7 @@ versions remain `dendra-native-campaign-1`, `dendra-native-task-1` and
 | `status`, `verify` for durable journal state | `--state-root`, `--campaign-id`; verifies stored archive state with no source migration or provider activity, including older source bindings |
 | `collect` | `--execution`, `--authorization`, `--state-root`, and all four explicit budget flags below; exclusively registers new state, then runs exact prepared tasks |
 | `resume` | Same execution/authorization/state/budget arguments as collect; opens existing compatible state, reuses sealed tasks and refuses replay of spent unsealed tasks |
-| `prepare-product` | Unsupported; STOP before provider construction |
+| `prepare-product` | `--sealed-root`, `--sealed-manifest-sha256`, `--acquisition-fingerprint`, `--output-root`, `--now`, `--cadence-mode initialize`; verify immutable evidence and initialize local daily output using installed R, with zero provider access |
 
 Input files use absolute paths and the task-owned state root must already exist.
 `plan` optionally accepts repeated `--stream` or `--station`, `--max-tasks`
@@ -408,8 +415,10 @@ Input files use absolute paths and the task-owned state root must already exist.
 are not collection/resume controls. A continuation plan, blocked selection,
 configuration gap, remainder or zero budget cannot yield an execution descriptor.
 
-The planning config contains exactly `campaign_id`, `horizons`, `chunk_days`,
-`budgets` and `reviews`. Horizons map stream IDs to explicit start/end values;
+The legacy planning config contains exactly `campaign_id`, `horizons`, `chunk_days`,
+`budgets` and `reviews`. Alternatively, replace `horizons` with `presentation`,
+containing exactly `mode`, `as_of` and `source_starts` as described below. The two
+forms are mutually exclusive. Horizons map stream IDs to explicit start/end values;
 chunk days range from 1 to 30. Budgets must equal the complete policy object from
 `campaign.policy`. Every review reference contains exactly `packet_path`,
 `review_path` and `review_sha256`. Packet/review inputs are bounded at 65,536
@@ -471,9 +480,9 @@ seals remain authoritative even when no successful command summary was printed.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Successful dry plan, inspection/verification or all selected execution tasks sealed/reused; never itself a publication approval |
+| 0 | Successful dry plan, inspection/verification, offline preparation or all selected execution tasks sealed/reused; never itself a publication approval |
 | 2 | HOLD or partial task result, expired/missing eligibility, budget/permission refusal, or argument-parser failure |
-| 3 | STOP for source/state incompatibility, unsupported product mode, unreviewed global schema or fatal input/persistence failure |
+| 3 | STOP for source/state incompatibility, missing explicit preparation inputs, unreviewed global schema or fatal input/persistence failure |
 
 Saved offline-manifest inspection reports
 `saved_offline_manifest_integrity_not_current_access_or_archive_verification`.
@@ -482,7 +491,80 @@ and `source_compatible`; neither route refreshes access or grants execution.
 Inspection remains read-only. Damaged state requires review, not repair or retry.
 
 This is the bounded callable surface for a later thin maintainer launcher. No
-00G repository or R launcher is changed by this integration. Product generation,
-daily science, publishing, schedules, storage deployment and long-campaign
-segmentation remain separate gates. The first live collection still requires
-fresh reviewed eligibility for every intended task and explicit Dave approval.
+00G repository or R launcher is changed by this integration. Publishing, schedules,
+storage deployment and long-campaign segmentation remain separate gates. Every
+later live collection requires fresh reviewed eligibility for every intended
+task and explicit Dave approval. `00G_LAUNCHER_CONTRACT=UPDATED_RELAY_REQUIRED`
+for the newly supported offline preparation and optional presentation config;
+existing collect/resume arguments and budgets retain their meanings.
+
+## Offline sealed daily initialization
+
+`prepare-product` implements `dendra-sealed-daily-handoff-1`. The input root must
+carry `evidence-manifest.json`, `execution-binding.json`, `source-binding.json`
+and every immutable journal, anchor, raw page and parsed object used by its seals.
+The caller supplies a trusted manifest SHA-256 and the original acquisition
+fingerprint. The adapter checks original review/decision/task identities and
+receipt-time eligibility, page closure, hashes, bounds and normalized raw/parsed
+agreement. It never resumes or rewrites that older journal. The output separately
+binds the current collector and exact R core/wrapper hashes.
+
+The output root must be absolute and absent under an existing parent. Inputs are
+verified before creating it. It contains `handoff.json`, `native/<stream>.csv`,
+`lineage/<stream>.json`, `daily-output.json`, an R receipt and `result.json`.
+Failures preserve partial scratch for diagnosis; there is no overwrite, retry,
+publication or automatic promotion. The CSV columns are exactly `t`,
+`datastream_id`, `v`, `value_status`, `duplicate_conflict`,
+`alternative_out_of_range`; full native rows, interval/configuration identities,
+receipts and seal/content hashes survive in lineage sidecars. Normalized archive
+row counts are distinct from original raw-page duplicate counts.
+
+`--cadence-mode initialize` is mandatory. This creates and records a fresh frozen
+initialization context using accepted `core.R` rules; it is not an update, resume
+or migration of an existing daily state. Such an update must retain its original
+context through the existing accepted state interface. The wrapper does not
+re-estimate an existing context. Observed-day precedence, count/span/cadence QC,
+no interpolation, fixed-PST days, ending-year WY and leap alignment stay in R.
+Daily rows retain numerical eligibility separately from complete-day query
+coverage. Unqueried gaps never become observed zeros. Dimensionless intervals
+retain native rows and `COVERED_EMPTY` status without percent daily products.
+
+The additive `dendra-soil-point-semantics-1` preparation records only
+`historical_terminal` samples and an empty `latest_instantaneous` collection.
+Each terminal sample retains its source time/day, age, native value and accepted
+scale result; it carries no latest witness, current-state claim or publication
+eligibility. The proposed future marker is separate from `completed_daily` and
+requires its own current/latest evidence and consumer review. No such request or
+public marker implementation is included here.
+
+## Explicit initial presentation horizon
+
+`dendra-presentation-horizon-1` supports `INITIAL_PRESENTATION_10_WY` and separate
+`FULL_POR` modes. Omission preserves the legacy explicit-horizon manifest shape;
+no old campaign or journal is migrated. Both modes end at the start of the current
+fixed-PST civil day (08:00 UTC), excluding the incomplete day. The initial mode
+starts no earlier than October 1 of `current ending-year WY - 10`, so it includes
+at most the current WY and preceding nine. Calendar boundaries retain leap days;
+this is not a 3,650-day duration. Full POR has no ten-WY floor.
+Planning requires an explicit evaluation time at or after the descriptor's
+`as_of`; a future presentation cutoff cannot authorize future queries.
+
+Every selected stream supplies an exact frozen station/stream/inventory-bound
+source-start record. `REVIEWED_SOURCE_START` includes `start`, `evidence_sha256`,
+`reviewer_ref` and `reviewed_at`; its explicit trusted review permits planning
+from the later of that exact instant and the mode floor. An intraday start is
+retained, and ordinary R QC decides whether that partial source day qualifies.
+`AUDIT_ESTIMATED_START` includes a timestamp and evidence hash for estimates only.
+`UNKNOWN_SOURCE_START` keeps start null. Both produce non-executable holds, even
+when another stream is ready. Hashes bind evidence; they do not authenticate a
+review or grant provider permission. A later bounded discovery/review gate can
+supply these records without changing this interface.
+
+The planner claims no gap-free coverage or active tail, and never pads short
+records to ten years. Existing configuration cuts, at-most-30-day chunks,
+eligibility, source bindings, budgets and resume rules still apply. A complete
+434-stream campaign exceeds current bounded execution capacity; smaller reviewed
+selections and a separately reviewed capacity strategy are still required.
+This mode neither computes nor activates reference bands, percentiles or a
+climatology. Later Dendra reference science requires a separate review of daily
+support and provenance; SCAN science is not imported.
