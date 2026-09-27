@@ -705,6 +705,13 @@ contradiction checks. Checksums establish integrity, not reviewer authentication
 An exact nonempty witness may become `REVIEWED_SOURCE_START`; a complete empty
 witness has unknown source start. Missing, malformed, mismatched or ambiguous
 evidence fails closed. `record_age_audit.json` remains planning-only.
+For the exact ascending-first, limit-one request, exactly one otherwise-valid
+selected row may omit `total`. If present, `total` must be an integer covering
+the returned rows. Zero rows without `total` remain HOLD; complete empty evidence
+still requires explicit `total=0`. More than one row is invalid. The shared
+`authority_witness.total_complete` predicate applies both at response admission
+and source-start review; request, source, timestamp and provenance checks remain
+mandatory. Previously rejected bodies are not reconstructed or promoted.
 `SOURCE_START_AUTHORITY` never implies `DISPATCH_READINESS`; native-history
 eligibility, metadata/configuration freshness and separate execution approval
 remain required. No daily science, browser contract or publication changes.
@@ -717,7 +724,7 @@ provider requests and grants no live-refresh authority.
 
 `witness_diagnostic.py` projects parser rejections into
 `dendra-witness-diagnostic-1` through the existing receipt/object path. Admission
-still belongs to unchanged `observation_shape` and `authority_witness.response_shape`.
+still belongs to `observation_shape` and `authority_witness.response_shape`.
 The diagnostic binds the exact planned witness request, station/stream, request
 ID, source-bound request hash, HTTP status and complete response byte count/hash.
 It records normalized rejection codes and allowlisted parser locations, fixed
@@ -732,8 +739,11 @@ not values. At most six envelope fields and seven fields in each of the first
 two rows are described; unknown names are omitted and counted. No nested values,
 observation values, timestamps, returned identifiers, credentials, headers or
 coordinates are copied. The complete artifact is capped at 12,288 bytes and
-has a deterministic hash. Missing total, nonzero skip, wrong limit, ambiguous
-empty results and malformed rows still reject under the existing rules.
+has a deterministic hash. Missing total rejects empty results but is compatible
+with one otherwise-valid row. Literal total presence/type checks remain false
+when absent; the combined completeness result uses the shared optional-total
+rule without changing diagnostic version 1. Nonzero skip, wrong limit, ambiguous
+empty results and malformed rows remain rejected.
 
 Journal persistence checks the diagnostic against the actual response and bound
 request, permits it only on a rejected HTTP-200 witness receipt, and marks the

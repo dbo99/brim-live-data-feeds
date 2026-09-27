@@ -53,7 +53,7 @@ def _fields(value, names, *, controls=False):
 
 def projection(body, request, status, reason):
     """Deterministic bounded shape projection, not an alternate admission rule."""
-    from .authority_witness import RequestSpec
+    from .authority_witness import RequestSpec, total_complete
     identity = request["request"]["identity"]
     require(request["request"] == RequestSpec(identity["station_id"], identity["stream_id"]).descriptor()
             and request["request_id"] == digest({k:v for k,v in request.items() if k != "request_id"}),
@@ -99,7 +99,11 @@ def projection(body, request, status, reason):
             allowed_fields=is_object and set(row) <= {"_id", "datastream_id", "t", "v", "lt", "q"},
             stream_matches=is_object and row.get("datastream_id", identity["stream_id"]) == identity["stream_id"],
             timestamp_parseable=valid_time))
-    completeness = all(checks.values())
+    # Presence/type facts stay literal under diagnostic version 1. An absent
+    # total is compatible only for exactly one row, using the admission owner.
+    completeness = all(v for k,v in checks.items() if k not in
+                       {"total_present", "total_integer", "total_covers_rows"}) and total_complete(
+                           count, "total" in obj, total)
     selection = checks["rows_at_most_one"] and checks["skip_zero"] and all(
         row["allowed_fields"] and row["stream_matches"] for row in selected)
     result = dict(version=VERSION, kind="authority-witness", request=request["request"],

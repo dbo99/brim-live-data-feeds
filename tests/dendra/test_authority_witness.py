@@ -422,7 +422,7 @@ class WitnessTests(unittest.TestCase):
             v=decode(body());v.update(updates)
             with self.subTest(updates=updates):
                 d=self.rejected_diagnostic(encode(v));self.assertFalse(d['checks'][check]);self.j.close()
-        v=decode(body());del v['total'];d=self.rejected_diagnostic(encode(v))
+        v=decode(body());del v['total'];v['data']=[];d=self.rejected_diagnostic(encode(v))
         self.assertFalse(d['checks']['total_present'])
         self.assertEqual(d['reason']['code'],'witness.completeness_selection')
         self.assertEqual(d['reason']['parser_site']['function'],'response_shape')
@@ -494,6 +494,48 @@ class WitnessTests(unittest.TestCase):
         key=self.j.reserve('witness-'+SID,req['request_id']);self.j.started(key)
         details=self.adapter._details(w.RequestSpec(INV.identity(SID)['station_id'],SID),NOW,0)
         with self.assertRaises(Hold):self.j.received(key,raw,source_rows=0,sanitized_body=encode(d),retain=False,details=details)
+
+    def test_one_row_optional_total_journal_review_and_readiness(self):
+        from dendra.history_acquisition.eligibility import dispatch_readiness
+        for present in (False,True):
+            with self.subTest(total_present=present):
+                self.setup_journal();v=decode(body())
+                if not present:del v['total']
+                raw=encode(v);e=self.run_witness(raw)[SID]
+                self.assertEqual(self.j.read_object(e['response_object']),raw)
+                proof=p.review_journal_first(self.j,SID,review=self.review(),as_of=NOW)
+                self.assertEqual(proof['state'],p.REVIEWED)
+                self.assertEqual(proof['start'],FIRST)
+                self.assertFalse(proof['dispatch_ready'])
+                readiness=dispatch_readiness(INV,SID,source_start_authority=proof['state'],
+                    bundle=None,executor_fingerprint=digest(source_binding()),now=NOW)
+                self.assertEqual(readiness['dispatch_readiness'],'NOT_READY')
+                self.assertIn('reviewed_eligibility_missing',readiness['dispatch_blockers'])
+                self.j.close()
+
+    def test_present_invalid_totals_still_rejected(self):
+        for total in (None,True,False,0,-1,1.0,'1',{},[]):
+            with self.subTest(total_type=type(total).__name__):
+                v=decode(body());v['total']=total
+                self.rejected_diagnostic(encode(v));self.j.close()
+
+    def test_absent_total_empty_and_multiple_still_hold(self):
+        for rows in ([],[dict(t=FIRST,v=0)]*2):
+            with self.subTest(rows=len(rows)):
+                d=self.rejected_diagnostic(encode(dict(data=rows,limit=1)))
+                self.assertEqual(d['completeness_check'],'FAIL');self.j.close()
+
+    def test_optional_total_diagnostic_schema_and_literal_facts(self):
+        # A separate scientific rejection may coexist with complete selection.
+        v=decode(body());del v['total'];v['data'][0]['v']=None
+        d=self.rejected_diagnostic(encode(v))
+        self.assertEqual(d['version'],'dendra-witness-diagnostic-1')
+        self.assertFalse(d['checks']['total_present'])
+        self.assertFalse(d['checks']['total_integer'])
+        self.assertFalse(d['checks']['total_covers_rows'])
+        self.assertEqual(d['completeness_check'],'PASS')
+        self.assertEqual(d['reason']['code'],'witness.observation')
+        self.assertFalse(d['admitted'])
 
 
 if __name__ == "__main__":

@@ -92,6 +92,12 @@ def validate_binding(binding, tasks, *, inventory):
     require((binding, tasks) == expected, "Witness source/request/budget binding changed")
 
 
+def total_complete(row_count, present, total):
+    """A single selected first row needs no total; empty evidence still does."""
+    return ((type(total) is int and total >= row_count) if present and type(row_count) is int
+            else not present and row_count == 1)
+
+
 def response_shape(body, sid, *, retrieved_at):
     # Shared observation privacy allowlist rejects coordinates, nested values,
     # credentials and foreign stream fields before any raw object is retained.
@@ -99,7 +105,7 @@ def response_shape(body, sid, *, retrieved_at):
     value = observation_shape(body, sid)
     require(value["limit"] == 1 and len(value["data"]) <= 1 and
             type(value.get("skip", 0)) is int and value.get("skip", 0) == 0 and
-            type(value.get("total")) is int and value["total"] >= len(value["data"]),
+            total_complete(len(value["data"]), "total" in value, value.get("total")),
             "First witness completeness/selection")
     if not value["data"]:
         require(value["total"] == 0, "Ambiguous empty first witness")

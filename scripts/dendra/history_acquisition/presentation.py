@@ -109,6 +109,7 @@ def review_first(inventory, sid, *, response, receipt, review, as_of):
     integrity, not signatures. This grants source-start authority only, no access.
     """
     from urllib.parse import urlsplit, parse_qsl
+    from .authority_witness import total_complete
     import math
     from .safety import sha
     ident = inventory.identity(sid)
@@ -136,7 +137,7 @@ def review_first(inventory, sid, *, response, receipt, review, as_of):
     require(isinstance(value, dict) and isinstance(value.get("data"), list) and
         type(value.get("limit")) is int and value["limit"] == 1 and
         type(value.get("skip",0)) is int and value.get("skip",0) == 0 and
-        len(value["data"]) <= 1 and type(value.get("total")) is int and value["total"] >= len(value["data"]), "First query completeness")
+        len(value["data"]) <= 1 and total_complete(len(value["data"]), "total" in value, value.get("total")), "First query completeness")
     if not value["data"]:
         require(value["total"] == 0, "Ambiguous empty first result")
         return dict(state=UNKNOWN, start=None, reason="complete_empty_no_source_start", evidence_sha256=digest(dict(receipt=receipt,review=review)))
