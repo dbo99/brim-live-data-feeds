@@ -233,3 +233,56 @@ def validate_decision(inventory, packet_bytes, review, decision, *, executor_fin
     require(current["native_acquisition_status"] == NATIVE_ELIGIBLE,
             "Current reviewed native eligibility HOLD")
     return expected
+
+
+def dispatch_readiness(inventory, sid, *, source_start_authority, bundle, executor_fingerprint, now, horizon=None):
+    """Offline normalized view of existing guards; never creates a new decision.
+
+    Historic evidence can explain a blocker, but cannot be rebound to new source.
+    Readiness is not approval, a reservation, or a provider budget.
+    """
+    from .safety import Hold
+    blockers = []
+    if source_start_authority != "REVIEWED_SOURCE_START":
+        blockers.append("source_start_unknown" if source_start_authority == "UNKNOWN_SOURCE_START" else "source_start_non_executable")
+    result = dict(stream_id=sid, metadata_authority_status="unverified", temporal_configuration_status="not_established",
+        reviewed_eligibility_status=NATIVE_HOLD, freshness_expiry_status="not_established",privacy_access_status="unverified",
+        underlying_decision_sha256=None, underlying_hold_reasons=[],live_execution_authorized=False)
+    if bundle is None:
+        blockers.extend(["metadata_authority_missing","temporal_configuration_missing","reviewed_eligibility_missing","freshness_authority_missing"])
+    else:
+        try:
+            require(set(bundle) == {"packet","review","decision"}, "Reviewed bundle fields")
+            packet,review,decision = bundle["packet"],bundle["review"],bundle["decision"]
+            require(packet["stream_id"] == sid and decision["stream_id"] == sid, "Readiness stream mismatch")
+            p,windows = _packet(inventory,encode(packet),review["packet_sha256"],review["packet_source_fingerprint"])
+            result.update(metadata_authority_status="admitted",temporal_configuration_status="reviewed_valid_half_open_windows",
+                privacy_access_status="public_metadata_admitted",underlying_decision_sha256=decision["decision_sha256"],
+                underlying_hold_reasons=decision["hold_reasons"])
+            # Inspect original trusted source binding without changing the old decision.
+            original = decide(inventory,encode(packet),review,executor_fingerprint=decision["executor_fingerprint"],now=decision["evaluated_at"])
+            require(original == decision, "Original eligibility integrity")
+            current = decide(inventory,encode(packet),review,executor_fingerprint=decision["executor_fingerprint"],now=now)
+            result["reviewed_eligibility_status"] = current["native_acquisition_status"]
+            result["freshness_expiry_status"] = "fresh" if current["native_acquisition_eligible"] else "held"
+            result["privacy_access_status"] = current["access_status"]
+            blockers.extend(current["hold_reasons"])
+            if decision["executor_fingerprint"] != executor_fingerprint:
+                blockers.append("executor_source_binding_changed")
+            if horizon is not None:
+                lo,hi = parse_utc(horizon["start"]),parse_utc(horizon["end"])
+                if not parse_utc(decision["scope"]["start"]) <= lo < hi <= parse_utc(decision["scope"]["end"]):
+                    blockers.append("reviewed_scope_insufficient")
+                cursor = lo
+                for w in windows:
+                    a,b = parse_utc(w["start"]),parse_utc(w["end"]) if w["end"] else hi
+                    if a <= cursor < b: cursor = b
+                if cursor < hi:
+                    blockers.append("temporal_configuration_incomplete")
+                    result["temporal_configuration_status"] = "CONFIGURATION_GAP_NOT_QUERIED"
+            if not blockers:
+                validate_decision(inventory,encode(packet),review,decision,executor_fingerprint=executor_fingerprint,now=now)
+        except (Hold,ValueError,KeyError,TypeError):
+            blockers.append("metadata_temporal_or_review_integrity_hold")
+    result.update(dispatch_readiness="NOT_READY" if blockers else "DISPATCH_READY",dispatch_blockers=sorted(set(blockers)))
+    return result

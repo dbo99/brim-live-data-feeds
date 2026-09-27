@@ -215,6 +215,101 @@ plan never silently becomes a larger execution descriptor.
 
 ## Request policy and provider failures
 
+### Offline source-start review, sharding and refresh planning
+
+`presentation.classify_starts` closes over the 337 resolved Percent/VWC streams
+in the frozen inventory. The checksum-bound record-age audit is an index only.
+It cannot create `REVIEWED_SOURCE_START`. The additive
+`dendra-reviewed-first-observation-1` rule requires an explicitly trusted review
+of original response bytes and a bound request/retrieval receipt: exact stream
+and station identity, anonymous datapoints endpoint, ascending time, limit one,
+no range filter, successful complete response, hash/byte count, retrieval time,
+and actual returned numeric observation timestamp. Conflicting identity, missing
+evidence, malformed/ambiguous results and disagreement with the audit retain a
+HOLD. A complete empty response yields no start. Zero and negative observations
+are values, not missing data or scientific acceptance. Receipt/review hashes are
+integrity checks, not signatures or proof that a review was authorized. Synthetic
+test receipts must never be used as real source authority.
+
+`eligibility.dispatch_readiness` separately reports native metadata, temporal,
+review, freshness and access states by reconstructing the existing decision from
+its original trusted inputs. It does not create or rebind eligibility. A reviewed
+start may remain `NOT_READY`. Older source-bound decisions are evidence of earlier
+review only; a new collector fingerprint needs separately reviewed fresh state.
+Missing configuration or scope authority cannot be replaced by guessed cadence.
+
+`campaign.plan_shards` wraps the existing `make_campaign`, `plan` and execution
+preparation functions. It plans completed fixed-PST days within
+`INITIAL_PRESENTATION_10_WY`, clamped to the exact reviewed start including its
+intraday component. It creates small independent campaign envelopes, at most
+30 days each, split at authoritative configuration boundaries. Each envelope uses
+the unchanged `dendra-native-task-1` schema and original task algorithm. These are
+new campaigns with new identities, not aliases or migrations of older campaigns.
+Their tasks equal the ordinary planner's tasks for the same campaign inputs.
+Each shard hash binds source authority, campaign identity, ordered native task
+IDs, execution policy and explicit planning time. Order is first interval start,
+stream ID, final interval end; task order inside a shard remains the existing
+planner order. Completion is not an input to packing. Verified seals are reused
+within the original independent journal, without repacking later shards.
+
+Planning may use an originally valid, now-expired review solely for historical
+configuration/capacity analysis; dispatch readiness is evaluated at the explicit
+planning as-of. The executor still rechecks current eligibility on preparation
+and every dispatch. Missing, changed-source or incomplete authority produces
+explicit planning HOLDs. No guessed task IDs are emitted. A stream whose horizon
+cannot close has no executable prefix. Only fully ready shards enter the proposed
+first wave; every output retains `network_execution_authorized=false`.
+
+Capacity is measured through the real execution-binding and journal-page shapes
+before journal creation. Architectural limits remain separate:
+
+| Layer | Existing controls and applicability |
+| --- | --- |
+| Campaign planner / preparation | 4,096 total task/gap planning bound; preparation accepts at most 128 tasks with no remainder or configuration gaps; binding plus 4,096-byte margin fits 262,144 bytes |
+| Campaign executor | Concurrency 1; spacing at least 1 second; zero retries/redirects; 3 pages/task; 2,016 rows/page; 25 seconds/request; 8 MiB/body |
+| Journal | 4,096 event bound; 65,536-byte events; 262,144-byte header/plan pages; 128 entries/page; 8 MiB archive objects; durable reservation/start before dispatch; spent ambiguity is not refunded |
+| Provider transport | Generic fetcher defaults and legacy adapter limits are not the active campaign policy; campaign explicitly uses one attempt and three pages |
+| Legacy coverage collector | 80 attempts, 300 seconds, 64 MiB, 1,000,000 source rows, 16 new intervals; not used by this planner |
+| Legacy pending storage | 4,096 files and 256 MiB; not a campaign journal or active shard limit |
+
+The offline proposal adds conservative packaging bounds, not increased executor
+limits: at most seven tasks per shard, a 600-second campaign budget and at most
+128 shards in one review package. Configuration splits narrow a shard before the
+seven-task limit. Exceeding the package bound preserves already planned pieces
+and explicitly HOLDs the remainder; this API does not silently page, truncate or
+authorize a larger campaign. A later larger planning package requires review of
+that bound. Actual binding/header overflow or a single task that cannot fit
+current controls HOLDs without increasing them.
+
+Per-shard capacity distinguishes measured serialized binding/page sizes, hard
+body/page/row limits, conservative state components and unknown runtime costs.
+Three requests per task at their full 25-second deadlines is an upper request-time
+allowance; the 600-second campaign budget also covers local work and can stop
+earlier. Spacing-only time is a lower bound, not a runtime prediction. A 10-minute
+cadence sensitivity is explicitly hypothetical, never generalized to the roster.
+Incomplete pagination, object expansion or exhausted budgets do not become
+covered empty. Current failure, durable reservation, seal and recovery rules
+remain controlling.
+
+`presentation.refresh_plan` adds planning contracts only:
+
+- `ROUTINE_REFRESH`: seven-day overlap plus catch-up from a caller-supplied,
+  verified **contiguous** complete query frontier. The newest observation or the
+  maximum end of disconnected seals is not such a frontier. An older frontier
+  exposes the entire missed interval.
+- `CURRENT_WY_RECONCILIATION`: a separate deeper current-WY interval.
+- `WY_CLOSE_RECONCILIATION`: a separate full completed-WY interval after close.
+
+All intervals are half-open, clamped to reviewed source start and exclude the
+incomplete current UTC−08:00 day. Only after complete valid refetch may retained
+native data **inside exactly that interval** be replaced, including authoritative
+empty results; this is not row-by-row newer-wins. Earlier history is untouched.
+Recompute only affected completed fixed-PST days using unchanged accepted science.
+Reconciliation frequency remains `UNSET`; a bounded recommendation is to review
+current-WY reconciliation after the first routine refresh is measured, and review
+WY-close reconciliation once after the year closes. No scheduler, dispatcher,
+replacement writer, daily computation or publication is implemented here.
+
 `dendra-native-request-policy-1` fixes concurrency 1, retries 0, at most three
 pages per task, 2,016 requested rows per page, a 25-second total request deadline,
 8 MiB per response, no redirects and at least one second between dispatches.
