@@ -712,3 +712,62 @@ This addition changes the collector fingerprint: older journals remain immutable
 and source-bound, and a later approved witness campaign needs fresh state and
 metadata packets bound to its reviewed checkpoint. This offline gate makes no
 provider requests and grants no live-refresh authority.
+
+## Current-source temporal metadata acquisition
+
+`metadata_acquisition.prepare` creates `dendra-temporal-metadata-acquisition-1`
+in the existing `Journal`, with no history interval tasks. The explicit selected
+set contains one or both frozen targets in `d3_plan.IDENTITIES`. Preparation
+binds the unchanged accepted unit authority, complete frozen inventory closure,
+actual collector source hashes, existing campaign temporal profile and exact
+request descriptors. There is no fingerprint override or old-packet rebinding.
+
+`MetadataAdapter` uses `Adapter.exchange`, its existing request allowlist,
+durable reservation/start/receipt/object storage, total deadline, privacy-safe
+diagnostics and anonymous transport. It requests the unit vocabulary once,
+then the exact station and first datastream page for each selected target.
+The vocabulary uses `parse_vocabulary`, stations use `parse_station`, and lists
+use the existing generalized `review_packet` with
+`dendra-soil-campaign-temporal-config-review-1`. Historical D3 parsing remains
+unchanged. No duplicate parser, direct HTTP client, interval workaround or
+automatic pagination is introduced.
+
+The metadata phase permits exactly three or five planned request slots, one
+attempt each, zero retries/redirects, concurrency one, at least one second
+between starts, at most 25 seconds and 8 MiB per response, and a maximum
+150-second execution window. The caller must supply a separate explicit approval
+reference, exact binding hash, window and executor/wait callables. Future live
+callers use the existing `anonymous_executor` and `anonymous_wait`; synthetic
+tests exercise the same path. There is no CLI default, implicit permission or
+automatic follow-on. When composing separately approved metadata and witness
+phases, the caller must preserve the overall request budget and start spacing
+across their journals; creating another journal does not reset those limits.
+
+Vocabulary admission precedes station requests. A durable admitted station
+receipt precedes its list request. Unknown response accounting, ambiguous spent
+attempts, transport/deadline/resource failures and throttling stop traffic.
+An accounted stream-local admission HOLD or nonretryable access refusal may
+leave the other target available under the unchanged shared accounting guards.
+Skipped slots authorize no substitution. Reopening a journal cannot dispatch
+again; reading valid saved evidence appends no records and renews no timestamps.
+
+Only sanitized metadata or bounded diagnostics are retained, along with the
+original response hash/byte count. `packet_evidence` verifies journal header,
+event/anchor closure, canonical request, reservation/start/receipt identities,
+sanitized object hashes, packet/source/identity binding, response provenance,
+station-to-list binding, check/retrieval times and freshness. The sidecar is
+`dendra-journal-temporal-metadata-evidence-1`; its embedded packet retains the
+existing `dendra-soil-campaign-temporal-metadata-review-1` schema unchanged.
+Current configuration claims retain exact configuration hashes, temporal
+boundaries, omissions and `unknown_history`; they assert no historical continuity.
+Protected geometry and optional native Z follow the unchanged station parser.
+
+The unchanged packet may enter authority-witness preparation and explicit native
+eligibility review. Metadata admission grants neither `REVIEWED_SOURCE_START`
+nor `DISPATCH_READY`. A separate exact witness review and current explicit
+native-eligibility decision remain necessary; missing, stale or incomplete
+evidence stays held. Old-source journals remain readable through `inspect_only`
+and `read_object` under their original identity; the new current-source evidence
+path rejects incompatible source fingerprints. No history task IDs, campaign
+limits, witness rules, R science or browser contracts change. No live refresh,
+history acquisition or publication is authorized by this offline implementation.

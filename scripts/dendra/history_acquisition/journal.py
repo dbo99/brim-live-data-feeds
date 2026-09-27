@@ -43,8 +43,11 @@ class Journal:
         try:
             require(not (inspect_only and create), "Inspection cannot initialize state")
             if inspect_only:
-                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter"),
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"),
                         "Unsupported historical journal format")
+            elif binding["mode"] == "temporal_metadata_adapter":
+                from .metadata_acquisition import validate_binding
+                validate_binding(binding, tasks, inventory=inventory)
             elif binding["mode"] == "authority_witness_adapter":
                 from .authority_witness import validate_binding
                 validate_binding(binding, tasks, inventory=inventory)
@@ -56,7 +59,7 @@ class Journal:
                 validate_binding(binding, tasks)
             if not inspect_only:
                 require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter"):
+            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"):
                 require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
@@ -175,6 +178,31 @@ class Journal:
             raise
         self.events.append(record)
         return record
+
+    def verify_records(self):
+        """Read-only verification of the held journal against its durable chain."""
+        require(self.lock is not None and not self.damage and
+                digest(self.binding) == self.binding_sha and digest(self.tasks) == self.tasks_sha,
+                "Intact locked journal required")
+        require(sha(self.fs.read(self.prefix + "/manifest.json", PAGE_BYTES)) == self.header_sha,
+                "Journal header changed")
+        require(self.fs.list("anchors/" + self.binding["campaign_id"], MAX_PLAN) ==
+                [f"{i:08d}.json" for i in range(len(self.events))], "Journal anchor closure")
+        directory = self.prefix + "/events"
+        names = [directory + "/" + page + "/" + name
+                 for page in self.fs.list(directory, MAX_PLAN // PAGE_ENTRIES)
+                 for name in self.fs.list(directory + "/" + page, PAGE_ENTRIES)]
+        require(names == [self._event_path(i) for i in range(len(self.events))], "Journal event closure")
+        previous = self.header_sha
+        for n, record in enumerate(self.events):
+            body = encode(record)
+            require(record["sequence"] == n and record["previous_sha256"] == previous and
+                    record["header_sha256"] == self.header_sha and record["record_sha256"] ==
+                    digest({k:v for k,v in record.items() if k != "record_sha256"}) and
+                    self.fs.read(self._event_path(n), EVENT_BYTES) == body and
+                    self.fs.read("anchors/" + self.binding["campaign_id"] + f"/{n:08d}.json", EVENT_BYTES) == body,
+                    "Journal receipt/anchor changed")
+            previous = record["record_sha256"]
 
     def put_object(self, body):
         require(not self.inspect_only, "Historical inspection is read-only")
@@ -297,7 +325,10 @@ class Journal:
 
     def reserve(self, task_key, cursor, *, interval_key=None, run=0):
         witness = self.binding["mode"] == "authority_witness_adapter"
-        if witness:
+        if self.binding["mode"] == "temporal_metadata_adapter":
+            from .metadata_acquisition import validate_reservation
+            validate_reservation(self, task_key, cursor, interval_key=interval_key, run=run)
+        elif witness:
             require(interval_key is None and run == 0 and task_key in self.binding["witness_requests"] and
                     cursor == self.binding["witness_requests"][task_key]["request_id"], "Exact witness reservation required")
             require(self.binding["collector_sources"] == source_binding(), "Witness source binding changed")
@@ -350,13 +381,18 @@ class Journal:
                  sanitized_body=None, details=None):
         require(self.snapshot()["attempts"][key]["state"] == "started", "Attempt not started")
         require(source_rows is None or (type(source_rows) is int and source_rows >= 0), "Response row count")
+        require(self.binding["mode"] != "temporal_metadata_adapter" or (details is not None and not retain),
+                "Temporal metadata requires sanitized receipt details")
         extra = {}
         if sanitized_body is not None or details is not None:
             from .d3_plan import validate_receipt_details
             witness = self.binding["mode"] == "authority_witness_adapter"
             validate_receipt_details(details, witness=witness)
             require(not witness or sanitized_body is None, "Witness requires original response")
-            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter"),
+            if self.binding["mode"] == "temporal_metadata_adapter":
+                require(not retain and details["kind"] in ("unit-vocabulary", "station", "datastream-list"),
+                        "Temporal metadata receipts retain sanitized objects only")
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"),
                     "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and
