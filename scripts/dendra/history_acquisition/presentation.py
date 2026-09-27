@@ -152,6 +152,31 @@ def review_first(inventory, sid, *, response, receipt, review, as_of):
         retrieved_at=receipt["retrieved_at"], reviewer_ref=review["reviewer_ref"], reviewed_at=review["reviewed_at"])
 
 
+def review_journal_first(journal, sid, *, review, as_of):
+    """Feed verified original Journal bytes into the existing source-start rule.
+
+    Reviewer approval is still required. No metadata/access/history eligibility
+    decision is created, and empty responses cannot establish a source start.
+    """
+    from . import authority_witness as witness
+    from .safety import sha
+    bound = witness.evidence(journal, sid)
+    require(isinstance(review, dict) and set(review) == {
+        "rule", "disposition", "evidence_sha256", "reviewer_ref", "reviewed_at"} and
+        review["rule"] == witness.REVIEW and review["disposition"] == "ACCEPT_SOURCE_START" and
+        review["evidence_sha256"] == bound["evidence_sha256"], "Exact journal witness review required")
+    response = journal.read_object(bound["response_object"])
+    receipt = dict(schema_version="dendra-first-response-receipt-1", inventory_sha256=INVENTORY_SHA256,
+        identity=bound["identity"], method="GET", url=bound["request"]["request"]["url"], status=200,
+        response_bytes=len(response), response_sha256=sha(response), complete_body=True,
+        requested_at=bound["requested_at"], retrieved_at=bound["retrieved_at"])
+    approval = dict(rule=FIRST_RULE, disposition=review["disposition"], receipt_sha256=digest(receipt),
+        response_sha256=sha(response), evidence_identity=bound["evidence_sha256"],
+        reviewer_ref=review["reviewer_ref"], reviewed_at=review["reviewed_at"])
+    result = review_first(journal.inventory, sid, response=response, receipt=receipt, review=approval, as_of=as_of)
+    return dict(result, journal_evidence=bound, journal_review_sha256=digest(review), dispatch_ready=False)
+
+
 def classify_starts(inventory, audit_bytes, *, evidence=None, as_of):
     """Close over all 337 resolved IDs; absent originals never inherit audit authority."""
     from .safety import sha, Hold
@@ -184,7 +209,14 @@ def classify_starts(inventory, audit_bytes, *, evidence=None, as_of):
         proof = dict(audit_sha256=AUDIT_SHA256, audit_entry_sha256=digest(item))
         if sid in evidence:
             try:
-                checked = review_first(inventory,sid,as_of=as_of,**evidence[sid])
+                if set(evidence[sid]) == {"journal", "review"}:
+                    from .journal import Journal
+                    journal = evidence[sid]["journal"]
+                    require(type(journal) is Journal and type(journal.inventory) is Inventory and
+                            journal.inventory.roster() == roster, "Witness journal/inventory differs")
+                    checked = review_journal_first(sid=sid,as_of=as_of,**evidence[sid])
+                else:
+                    checked = review_first(inventory,sid,as_of=as_of,**evidence[sid])
                 require(checked["state"] != UNKNOWN or start is None,
                         "Empty original contradicts nonempty audit; review required")
                 require(checked["state"] != REVIEWED or start is None or checked["start"] == start,

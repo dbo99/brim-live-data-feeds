@@ -43,8 +43,11 @@ class Journal:
         try:
             require(not (inspect_only and create), "Inspection cannot initialize state")
             if inspect_only:
-                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter"),
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter"),
                         "Unsupported historical journal format")
+            elif binding["mode"] == "authority_witness_adapter":
+                from .authority_witness import validate_binding
+                validate_binding(binding, tasks, inventory=inventory)
             elif binding["mode"] == "campaign_reviewed_adapter":
                 from .campaign_execution import validate_binding
                 validate_binding(binding, tasks, inventory=inventory)
@@ -53,7 +56,7 @@ class Journal:
                 validate_binding(binding, tasks)
             if not inspect_only:
                 require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            if not inspect_only and binding["mode"] != "campaign_reviewed_adapter":
+            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter"):
                 require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
@@ -293,7 +296,12 @@ class Journal:
         return run
 
     def reserve(self, task_key, cursor, *, interval_key=None, run=0):
-        if interval_key is not None:
+        witness = self.binding["mode"] == "authority_witness_adapter"
+        if witness:
+            require(interval_key is None and run == 0 and task_key in self.binding["witness_requests"] and
+                    cursor == self.binding["witness_requests"][task_key]["request_id"], "Exact witness reservation required")
+            require(self.binding["collector_sources"] == source_binding(), "Witness source binding changed")
+        elif interval_key is not None:
             require(interval_key in self.tasks and task_key == interval_key and
                     run == self.snapshot()["intervals"][interval_key]["runs"] and run > 0,
                     "Attempt interval/run binding")
@@ -307,6 +315,14 @@ class Journal:
         require(len(recent) < 2 or not all(a.get("service_failure") for a in recent),
                 "Persistent service-failure circuit open")
         prior = [a for a in attempts.values() if a["logical_key"] == logical_key]
+        if witness:
+            require(not prior and all(a["state"] == "received" and a.get("status") == 200 and
+                    a.get("details", {}).get("error_code") is None for a in attempts.values()),
+                    "Witness spent/ambiguous attempt requires review; retries are zero")
+            starts = [e for e in self.events if e["kind"] == "started"]
+            require(not starts or (parse_utc(self.now()) - parse_utc(starts[-1]["at"])).total_seconds() >= 1,
+                    "Witness request-start spacing")
+            require(len(self.events) + 6 <= MAX_PLAN, "Journal capacity before witness dispatch")
         if self.binding["mode"] == "campaign_reviewed_adapter":
             require(interval_key is not None and not prior, "Campaign permits observations only and zero retries")
             require(not any(a.get("status") == 429 or a.get("service_failure") or
@@ -337,8 +353,10 @@ class Journal:
         extra = {}
         if sanitized_body is not None or details is not None:
             from .d3_plan import validate_receipt_details
-            validate_receipt_details(details)
-            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter"),
+            witness = self.binding["mode"] == "authority_witness_adapter"
+            validate_receipt_details(details, witness=witness)
+            require(not witness or sanitized_body is None, "Witness requires original response")
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter"),
                     "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and

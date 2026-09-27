@@ -663,3 +663,52 @@ selections and a separately reviewed capacity strategy are still required.
 This mode neither computes nor activates reference bands, percentiles or a
 climatology. Later Dendra reference science requires a separate review of daily
 support and provenance; SCAN science is not imported.
+
+## Journal-backed first-observation authority witness
+
+`authority_witness.prepare` creates `dendra-first-witness-journal-1` for one or
+both exact frozen targets already listed in `d3_plan.IDENTITIES`. Its distinct
+`dendra-first-witness-request-1` request is an anonymous `GET /v2/datapoints`
+with exactly `datastream_id`, `$sort[time]=1` and `$limit=1`, using the existing
+query encoding and endpoint/header allowlist. It has no interval bounds or
+latest/current semantics. The journal has no history tasks; native logical
+history task IDs, campaign limits and coverage states are unchanged.
+
+Preparation requires admitted current-source metadata packets, including the
+unchanged identity, scientific, configuration, public-access and 24-hour
+freshness checks. Dispatch rechecks freshness. `WitnessAdapter.run` requires a
+separate explicit approval reference, exact binding hash and at-most-60-second
+window, with injected executor/wait callables. Future authorized live callers
+use the existing `anonymous_executor` and `anonymous_wait`; offline tests inject
+synthetic responses and clocks through this same adapter. There is no automatic
+live entry, background runner or permission inferred from a packet or hash.
+
+The existing `Journal`, `Adapter.exchange`, transport deadline and object store
+persist reservation before start/dispatch and immutable original receipt bytes.
+Policy is serial, zero retries/redirects, at least one second between request
+starts, at most 25 seconds and 8 MiB per response, and one request per selected
+stream. Reserved, started, failed and ambiguous attempts remain spent. Reopening
+state never silently dispatches again. Rejected/private response bodies are
+omitted while their byte/hash accounting remains. Successful first-selection
+completion is not a history interval seal or `COVERED_EMPTY` history coverage.
+
+`authority_witness.evidence` rechecks the binding, event/anchor chain, exact
+request identity, source fingerprint, reserve/start/receipt identities and
+original object hash before returning `dendra-journal-first-evidence-1`. It
+binds returned timestamp/result, retrieval time and
+`dendra-journal-first-review-1`. `presentation.review_journal_first` requires an
+explicit reviewer decision bound to that evidence and passes the original bytes
+to the existing `review_first` rule (including its stricter 1 MiB review ceiling).
+`classify_starts` accepts `{journal, review}` for this path and retains its audit
+contradiction checks. Checksums establish integrity, not reviewer authentication.
+
+An exact nonempty witness may become `REVIEWED_SOURCE_START`; a complete empty
+witness has unknown source start. Missing, malformed, mismatched or ambiguous
+evidence fails closed. `record_age_audit.json` remains planning-only.
+`SOURCE_START_AUTHORITY` never implies `DISPATCH_READINESS`; native-history
+eligibility, metadata/configuration freshness and separate execution approval
+remain required. No daily science, browser contract or publication changes.
+This addition changes the collector fingerprint: older journals remain immutable
+and source-bound, and a later approved witness campaign needs fresh state and
+metadata packets bound to its reviewed checkpoint. This offline gate makes no
+provider requests and grants no live-refresh authority.

@@ -354,9 +354,11 @@ class Adapter:
         read_limit = min(BODY_LIMIT, budgets["response_bytes"] - counts["response_bytes"])
         if interval_key is not None:
             self._page_permission(spec, interval_key)
-        task = interval_key or ("unit-vocabulary" if spec.kind == "unit-vocabulary"
+        witness = spec.kind == "authority-witness"
+        require(not witness or self.journal.binding["mode"] == "authority_witness_adapter", "Witness journal required")
+        task = ("witness-" + spec.selected_stream) if witness else interval_key or ("unit-vocabulary" if spec.kind == "unit-vocabulary"
                                 else "metadata-" + spec.selected_stream)
-        cursor = spec.cursor if interval_key else spec.kind
+        cursor = self.journal.binding["witness_requests"][task]["request_id"] if witness else spec.cursor if interval_key else spec.kind
         key = self._persist(self.journal.reserve, task, cursor, interval_key=interval_key, run=run)
         self._persist(self.journal.started, key)
         began, mono = format_utc(self.journal.now()), self.journal.monotonic()
@@ -411,7 +413,12 @@ class Adapter:
                         row_count = len(payload["data"])
                     elif spec.kind in ("station", "unit-vocabulary"):
                         row_count = 0
-                    if spec.kind == "observations":
+                    if witness:
+                        from .authority_witness import response_shape
+                        value = response_shape(body, spec.selected_stream, retrieved_at=self.journal.now())
+                        details.update(effective_limit=1, page_complete=True)
+                        retain = True
+                    elif spec.kind == "observations":
                         value = observation_shape(body, spec.selected_stream)
                         details.update(effective_limit=value["limit"], page_complete=len(value["data"]) < value["limit"])
                         retain = True
@@ -421,7 +428,7 @@ class Adapter:
                         if spec.kind == "datastream-list":
                             details.update(effective_limit=payload["limit"], page_complete=True)
                 except (Hold, ValueError, TypeError, KeyError, RecursionError) as exc:
-                    if spec.kind == "observations" or isinstance(exc, Deadline):
+                    if witness or spec.kind == "observations" or isinstance(exc, Deadline):
                         raise
                     raise MetadataAdmissionHold(spec, body, payload, exc) from None
                 details.update(privacy="public", identity="match")
@@ -789,6 +796,78 @@ class CampaignAdapter(Adapter):
             return results
         finally:
             self.executor = self.wait = None
+            self.active = False
+
+
+class WitnessAdapter(Adapter):
+    """One ascending-first request per exact target, using the shared exchange.
+
+    Approval is an explicit trusted caller input, not inferred from a packet.
+    There is no retry/resume dispatcher: preserved receipts are reviewed offline.
+    """
+    attempts_per_page = 1
+
+    def __init__(self, journal):
+        from .authority_witness import validate_binding
+        validate_binding(journal.binding, journal.tasks, inventory=journal.inventory)
+        require(not journal.damage and not journal.inspect_only and journal.lock is not None,
+                "Writable witness journal required")
+        self._initialize(journal, None)
+        self.last_dispatch_mono = None
+        self.used = False
+
+    def plan(self):
+        return self.journal.binding["witness_requests"]
+
+    def _validate_dispatch(self, request, spec, interval_key):
+        from .authority_witness import RequestSpec as WitnessSpec, check_metadata
+        from .model import source_binding
+        require(type(spec) is WitnessSpec and interval_key is None and spec is self.current_spec,
+                "Exact serial witness specification required")
+        key = "witness-" + spec.selected_stream
+        require(key in self.plan() and spec.descriptor() == self.plan()[key]["request"],
+                "Witness differs from frozen request")
+        require(self.journal.binding["collector_sources"] == source_binding(), "Witness source changed")
+        validate_request(request, spec)
+        check_metadata(self.journal.inventory, spec.selected_stream,
+                       self.journal.binding["metadata_packets"][spec.selected_stream], now=self.journal.now())
+        CampaignAdapter._spacing(self)
+
+    def _execute(self, request, *, timeout, interval_key):
+        from .authority_witness import check_metadata
+        from .model import source_binding
+        require(self.journal.binding["collector_sources"] == source_binding(), "Witness source changed")
+        check_metadata(self.journal.inventory, self.current_spec.selected_stream,
+                       self.journal.binding["metadata_packets"][self.current_spec.selected_stream], now=self.journal.now())
+        self.remaining()
+        self.last_dispatch_mono = self.journal.monotonic()
+        return self.executor(request, timeout=timeout)
+
+    def run(self, *, executor, wait, authorization):
+        from .authority_witness import RequestSpec as WitnessSpec, evidence
+        require(callable(executor) and callable(wait) and not self.active and not self.used and
+                threading.current_thread() is threading.main_thread(), "Explicit one-shot serial witness runner required")
+        require(isinstance(authorization, dict) and set(authorization) == {
+            "binding_sha256", "approval_reference", "window_start", "window_end"} and
+            authorization["binding_sha256"] == self.binding_hash and
+            isinstance(authorization["approval_reference"], str) and
+            0 < len(authorization["approval_reference"]) <= 160, "Exact witness execution approval required")
+        start, end, now = map(parse_utc, (authorization["window_start"], authorization["window_end"], self.journal.now()))
+        require(start <= now < end and (end-start).total_seconds() <= 60, "Witness execution window")
+        require(not self.journal.snapshot()["attempts"], "Spent witness state requires review; no replay")
+        self.window_end = authorization["window_end"]
+        self.journal.session()
+        self.used = True
+        self.executor, self.wait, self.active = executor, wait, True
+        results = {}
+        try:
+            for sid in self.journal.binding["selected_ids"]:
+                self.current_spec = WitnessSpec(self.journal.binding["roster"][sid]["station_id"], sid)
+                self.exchange(self._request(self.current_spec), self.current_spec)
+                results[sid] = evidence(self.journal, sid)
+            return results
+        finally:
+            self.current_spec = self.executor = self.wait = None
             self.active = False
 
 
