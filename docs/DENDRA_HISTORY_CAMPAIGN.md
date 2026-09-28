@@ -1029,3 +1029,64 @@ Recovery verification requires its pinned predecessor and witness evidence to
 remain available; it never rewrites those roots. No public schema, `core.R`,
 publication, authority acceptance, history execution or automatic continuation
 is authorized by this implementation.
+
+## Offline multi-Journal full-history preparation
+
+`sealed_history.prepare_product` adds private `dendra-multi-journal-seal-set-1`
+inputs and `dendra-sealed-daily-handoff-3` output. The caller supplies an absolute
+seal-manifest path, its trusted SHA-256, the frozen inventory, an explicit as-of
+time and a fresh output root. This is an offline Python API; it grants no provider,
+authority-refresh, dispatch or publication permission. Existing single-Journal
+CLI preparations and handoff versions 1/2 remain readable.
+
+The manifest names exact ordered stream horizons and original Journal roots,
+campaign/task IDs, acquisition fingerprints, header/seal/archive hashes and
+half-open intervals. Inputs are capped at 8 MiB, 512 seals, 32 streams, 128 seals
+per stream and one million normalized observations across the set. These are
+private preparation bounds, not increased acquisition or browser limits. Within
+each declared horizon, out-of-order, duplicate, overlapping or missing intervals
+refuse preparation. A shorter scope must be explicitly supplied and pinned; no
+missing interval is silently treated as coverage.
+
+Each original Journal is opened for inspection only. Existing binding, historical
+receipt-time review, object, pagination, normalization and seal checks run before
+aggregation. Recovery inspection verifies the original source/approval and
+predecessor/witness lineage without rebuilding it against today's collector.
+Writable recovery/witness preparation and authorization still require current
+source/checkpoint bindings. Inspection cannot refund, resume, promote authority
+or rewrite events. A failed predecessor never contributes successful rows.
+
+Per-interval review scope and configuration window must cover the exact task.
+Frozen station/stream/unit/orientation/depth, scientific and configuration
+identities, accepted scale semantics, privacy and historical access checks remain
+strict. Scale reviews may differ only in their derived decision hash, approved
+scope and segment bounds; every contributing segment must retain the same
+accepted conversion. The original reviews stay immutable. Conflicting scientific
+or configuration assertions hold; no new historical applicability is inferred.
+
+The compact private `dendra-compact-sealed-lineage-1` index replaces embedded
+native/receipt rows for version 3. It binds the seal-set hash, current preparation
+fingerprint, quality policy, exact frozen identity, native CSV and normalized-row
+hashes, original per-seal/task/campaign/source/header/archive/receipt/review/scale/
+configuration hashes, counts, retrieval bounds and quarantine-day disposition.
+It includes neither filesystem locations nor original quality values, annotation
+IDs, raw bodies or receipts. Source locations remain solely in the caller-pinned
+private seal set. `verify_preparation_sources` independently reconstructs the
+index from original evidence; hashes alone are not authenticity claims. The
+compact index is a derived audit index, never a replacement archive.
+
+The shared handoff still supplies the same six-column CSV and calls unchanged
+`core.R` through `daily_prepare.R`. Version 3 uses the existing fixed-PST complete
+day, arithmetic mean, cadence/QC, ending WY, true DOWY, leap plotting and ×1/×100
+rules. Quality withholding is aggregated across all intervals; partial boundary
+days remain query-incomplete. Covered-empty, quarantined, failed and unqueried
+states cannot create zero/fill values. The R result is hash-bound by its receipt
+summary; all version-3 browser inputs retain exact caller pins.
+
+Producer-side browser preparation validates the compact schema, hashes, seal
+closure, interval/configuration bounds, counts, quarantine and scale identity
+before projecting accepted completed rows. Every input file remains capped at
+8 MiB. The public `brim-soil-history-1` / `dendra-history-profile-1` schema,
+version constants, descriptor paths, hover/capability semantics and activation
+behavior are unchanged. No current/latest witness, reference band, official
+output path or deployment is introduced.

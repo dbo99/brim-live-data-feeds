@@ -116,12 +116,19 @@ def prepare(inventory, *, predecessor_ref, bundle, source_start_ref, authorizati
     This does not create a Journal. The future approved caller must supply the
     real checkpoint, unique task-owned root, reviewer reference, start/deadline.
     """
+    return _prepare(inventory, predecessor_ref=predecessor_ref, bundle=bundle,
+        source_start_ref=source_start_ref, authorization=authorization, now=now,
+        sources=source_binding(), checkpoint_id=checkpoint())
+
+
+def _prepare(inventory, *, predecessor_ref, bundle, source_start_ref, authorization,
+             now, sources, checkpoint_id):
     from .eligibility import validate_decision
     from .campaign_execution import VERSION as execution_version
     old = predecessor(predecessor_ref, inventory)
     require(set(authorization) == {"checkpoint", "root", "window_start", "window_end", "approval_reference"},
             "Explicit recovery authorization required")
-    require(authorization["checkpoint"] == checkpoint() and
+    require(authorization["checkpoint"] == checkpoint_id and
             isinstance(authorization["approval_reference"], str) and 0 < len(authorization["approval_reference"]) <= 256,
             "Recovery checkpoint/approval binding")
     out = Path(authorization["root"])
@@ -133,7 +140,7 @@ def prepare(inventory, *, predecessor_ref, bundle, source_start_ref, authorizati
     require(0 < (end-start).total_seconds() <= 600 and start <= at < end and
             parse_utc(old["authorization"]["window_end"]) < start, "Distinct bounded recovery window")
     require(set(bundle) == {"packet", "review", "decision"}, "Exact reviewed bundle required")
-    sources = source_binding(); fingerprint = digest(sources)
+    fingerprint = digest(sources)
     decision = validate_decision(inventory, encode(bundle["packet"]), bundle["review"], bundle["decision"],
                                  executor_fingerprint=fingerprint, now=now)
     task = old["task"]; sid = task["identity"]["stream_id"]
@@ -167,6 +174,21 @@ def validate_binding(binding, tasks, *, inventory):
         bundle=binding["reviewed_bundles"][binding["selected_ids"][0]],
         source_start_ref=binding["source_start_ref"], authorization=binding["authorization"], now=binding["planned_at"])
     require(encode((binding,tasks)) == encode(expected), "Recovery source/policy/task binding changed")
+
+
+def validate_historical_binding(binding, tasks, *, inventory):
+    """Inspection only: original source/approval, never writable admission.
+
+    Callers must also verify the immutable Journal header/anchors and seal.
+    The writable Journal and authorize() still require validate_binding().
+    """
+    require(binding["mode"] == MODE and binding["version"] == VERSION, "Recovery version")
+    expected = _prepare(inventory, predecessor_ref=binding["predecessor_ref"],
+        bundle=binding["reviewed_bundles"][binding["selected_ids"][0]],
+        source_start_ref=binding["source_start_ref"], authorization=binding["authorization"],
+        now=binding["planned_at"], sources=binding["collector_sources"],
+        checkpoint_id=binding["authorization"]["checkpoint"])
+    require(encode((binding,tasks)) == encode(expected), "Historical recovery binding changed")
 
 
 def authorize(journal, key, *, now):

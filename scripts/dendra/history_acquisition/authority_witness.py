@@ -50,8 +50,12 @@ def check_metadata(inventory, sid, packet, *, now):
 This admits only a separately authorized authority witness. It creates no native
 history eligibility decision and does not override any packet's false flags.
 """
+    return _check_metadata(inventory, sid, packet, now=now, fingerprint=digest(source_binding()))
+
+
+def _check_metadata(inventory, sid, packet, *, now, fingerprint):
     body = encode(packet)
-    p, _ = _packet(inventory, body, sha(body), digest(source_binding()))
+    p, _ = _packet(inventory, body, sha(body), fingerprint)
     require(p["stream_id"] == sid, "Witness packet stream mismatch")
     for stamp in (p["checked_at"], p["access_evidence"]["station_checked_at"],
                   p["access_evidence"]["stream_checked_at"]):
@@ -60,23 +64,28 @@ history eligibility decision and does not override any packet's false flags.
 
 
 def prepare(inventory, *, campaign_id, packets, as_of):
+    return _prepare(inventory, campaign_id=campaign_id, packets=packets,
+                    as_of=as_of, sources=source_binding())
+
+
+def _prepare(inventory, *, campaign_id, packets, as_of, sources):
     require(type(inventory) is Inventory and isinstance(campaign_id, str) and
             NAME.fullmatch(campaign_id), "Explicit witness campaign/inventory required")
     require(isinstance(packets, dict) and 1 <= len(packets) <= 2 and
             set(packets) <= set(IDENTITIES), "Exact one/two witness targets required")
     requests = {}
-    fingerprint = digest(source_binding())
+    fingerprint = digest(sources)
     for sid in sorted(packets):
         identity = inventory.identity(sid)
         require(identity == IDENTITIES[sid], "Frozen witness identity changed")
-        check_metadata(inventory, sid, packets[sid], now=as_of)
+        _check_metadata(inventory, sid, packets[sid], now=as_of, fingerprint=fingerprint)
         request = dict(request=RequestSpec(identity["station_id"], sid).descriptor(),
                        inventory_sha256=INVENTORY_SHA256, collector_fingerprint=fingerprint,
                        policy=POLICY, metadata_packet_sha256=digest(packets[sid]))
         requests["witness-" + sid] = dict(request, request_id=digest(request))
     n = len(packets)
     binding = dict(version=VERSION, mode=MODE, campaign_id=campaign_id,
-        inventory_sha256=INVENTORY_SHA256, collector_sources=source_binding(),
+        inventory_sha256=INVENTORY_SHA256, collector_sources=sources,
         roster=inventory.roster(), selected_ids=sorted(packets), prepared_at=format_utc(as_of),
         metadata_packets=packets, witness_requests=requests, request_policy=POLICY,
         budgets=dict(logical_requests=n, attempts=n, response_bytes=n*8*1024**2,
@@ -127,7 +136,14 @@ too, so an in-memory edited receipt cannot supply review authority.
     from .journal import Journal, EVENT_BYTES
     require(type(journal) is Journal and not journal.damage and journal.lock is not None,
             "Intact locked witness journal required")
-    validate_binding(journal.binding, journal.tasks, inventory=journal.inventory)
+    if journal.inspect_only:
+        b = journal.binding
+        expected = _prepare(journal.inventory, campaign_id=b["campaign_id"],
+                            packets=b["metadata_packets"], as_of=b["prepared_at"],
+                            sources=b["collector_sources"])
+        require((b, journal.tasks) == expected, "Historical witness binding changed")
+    else:
+        validate_binding(journal.binding, journal.tasks, inventory=journal.inventory)
     require(digest(journal.binding) == journal.binding_sha and digest(journal.tasks) == journal.tasks_sha,
             "Witness journal memory binding changed")
     header = journal.fs.read(journal.prefix + "/manifest.json", PAGE_BYTES)
@@ -176,7 +192,8 @@ too, so an in-memory edited receipt cannot supply review authority.
     require(a["source_rows"] == len(payload["data"]), "Witness result accounting")
     # Revalidate permission at dispatch time, not today's metadata freshness;
     # reading historical evidence never authorizes a fresh request.
-    check_metadata(journal.inventory, sid, journal.binding["metadata_packets"][sid], now=details["requested_at"])
+    _check_metadata(journal.inventory, sid, journal.binding["metadata_packets"][sid],
+                    now=details["requested_at"], fingerprint=digest(journal.binding["collector_sources"]))
     row = payload["data"][0] if payload["data"] else None
     value = dict(schema_version=EVIDENCE, identity=journal.binding["roster"][sid],
         collector_fingerprint=digest(journal.binding["collector_sources"]), request=request,

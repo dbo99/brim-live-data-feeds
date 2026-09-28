@@ -53,10 +53,10 @@ def _manifest(root, expected):
 
 def _binding(binding, tasks, inventory, acquisition_fingerprint):
     if binding["mode"] == "task37_recovery_adapter":
-        from .recovery import validate_binding
+        from .recovery import validate_historical_binding
         require(digest(binding["collector_sources"]) == _pin(acquisition_fingerprint),
                 "Recovery acquisition fingerprint differs")
-        validate_binding(binding, tasks, inventory=inventory)
+        validate_historical_binding(binding, tasks, inventory=inventory)
         return None
     require(type(inventory) is Inventory and binding["mode"] == "campaign_reviewed_adapter" and
             binding["version"] in ("dendra-campaign-execution-1", "dendra-campaign-execution-2") and
@@ -312,6 +312,16 @@ def prepare_product(sealed_root, *, manifest_sha256, inventory, acquisition_fing
     require(cadence_mode == "initialize", "Explicit fresh cadence initialization required; update/resume unsupported")
     verified = verify_sealed(sealed_root, manifest_sha256=manifest_sha256, inventory=inventory,
                              acquisition_fingerprint=acquisition_fingerprint)
+    return _prepare_verified(verified, sealed_root=sealed_root, manifest_sha256=manifest_sha256,
+                             output_root=output_root, as_of=as_of, rscript=rscript)
+
+
+def _prepare_verified(verified, *, sealed_root, manifest_sha256, output_root, as_of,
+                      rscript="Rscript", compact_lineage=False):
+    """Shared unchanged R input/runner after either original-source reader."""
+    now = parse_utc(as_of)
+    from . import sealed_history
+    version = sealed_history.HANDOFF if compact_lineage else VERSION
     streams = {}
     for record in verified["records"]:
         sid = record["task"]["identity"]["stream_id"]
@@ -322,11 +332,14 @@ def prepare_product(sealed_root, *, manifest_sha256, inventory, acquisition_fing
         for a, b in zip(records, records[1:]):
             require(parse_utc(a["task"]["end"]) <= parse_utc(b["task"]["start"]), "Overlapping input seals")
         identity, scale = records[0]["task"]["identity"], records[0]["decision"]["scale"]
-        require(all(r["task"]["identity"] == identity and r["decision"]["scale"] == scale for r in records),
+        require(all(r["task"]["identity"] == identity and
+                    (sealed_history.scale_semantics(r["decision"]["scale"]) == sealed_history.scale_semantics(scale)
+                     if compact_lineage else r["decision"]["scale"] == scale) for r in records),
                 "Scientific identity or scale conflict")
         rows = [row for r in records for row in r["science_rows"]]
         csv = csv_bytes(rows, identity, scale)
-        lineage = encode(dict(identity=identity, scale=scale, records=preparation_lineage(records)))
+        lineage = encode(sealed_history.compact(records, seal_set_sha256=manifest_sha256, native_sha256=sha(csv))
+                         if compact_lineage else dict(identity=identity, scale=scale, records=preparation_lineage(records)))
         csv_path, lineage_path = "native/"+sid+".csv", "lineage/"+sid+".json"
         files[csv_path], files[lineage_path] = csv, lineage
         resolved = scale["normalized_percent_eligible"]
@@ -348,10 +361,10 @@ def prepare_product(sealed_root, *, manifest_sha256, inventory, acquisition_fing
     science = dict(core_sha256=sha((package.parent/"core.R").read_bytes()),
                    wrapper_sha256=sha((package/"daily_prepare.R").read_bytes()),
                    collector_fingerprint=digest(source_binding()))
-    require(science["core_sha256"] == verified["acquisition_checkpoint"]["sources"]["core.R"],
+    require(compact_lineage or science["core_sha256"] == verified["acquisition_checkpoint"]["sources"]["core.R"],
             "Daily numerical authority changed since acquisition; separate review required")
-    handoff = dict(schema_version=VERSION, as_of=format_utc(now), source_scope="historical_sealed_intervals",
-        cadence_mode=cadence_mode, cadence_policy="fresh_frozen_initialization_only_no_update_or_resume",
+    handoff = dict(schema_version=version, as_of=format_utc(now), source_scope="historical_sealed_intervals",
+        cadence_mode="initialize", cadence_policy="fresh_frozen_initialization_only_no_update_or_resume",
         science_binding=science, evidence_binding={k:v for k,v in verified.items() if k != "records"},
         streams=specifications, latest_instantaneous=[], publication_eligible=False, reference_band="not_computed")
     files["handoff.json"] = encode(handoff)
@@ -383,11 +396,12 @@ def prepare_product(sealed_root, *, manifest_sha256, inventory, acquisition_fing
             stdout=completed.stdout[:8192], stderr=completed.stderr[:8192])), 32768)
         require(completed.returncode == 0, "Accepted R daily preparation failed; preserve output for review")
         daily = decode(destination.read("daily-output.json", BODY_BYTES))
-        require(daily["schema_version"] == VERSION and daily["science_binding"] == science,
+        require(daily["schema_version"] == version and daily["science_binding"] == science,
                 "R science/source binding mismatch")
-        result = dict(schema_version=VERSION, outcome="OFFLINE_DAILY_PREPARED", output_root=str(out),
+        result = dict(schema_version=version, outcome="OFFLINE_DAILY_PREPARED", output_root=str(out),
             source_scope="historical_sealed_intervals", science_binding=science,
             evidence_manifest_sha256=manifest_sha256, stream_count=len(specifications),
-            daily_summaries=daily["summaries"], publication_eligible=False, provider_requests=0)
+            daily_summaries=daily["summaries"], daily_output_sha256=sha(encode(daily)),
+            publication_eligible=False, provider_requests=0)
         destination.write_new("result.json", encode(result), BODY_BYTES)
     return result

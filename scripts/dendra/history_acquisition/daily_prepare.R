@@ -8,7 +8,7 @@ input <- normalizePath(args[1], mustWork=TRUE)
 output <- args[2]
 if(file.exists(output) || dir.exists(output)) stop("Fresh output required")
 h <- json_read(input)
-if(!h$schema_version %in% c("dendra-sealed-daily-handoff-1","dendra-sealed-daily-handoff-2") ||
+if(!h$schema_version %in% c("dendra-sealed-daily-handoff-1","dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3") ||
    !identical(h$source_scope,"historical_sealed_intervals") ||
    !identical(h$cadence_mode,"initialize") ||
    !identical(h$science_binding$core_sha256,sha_file(core)) ||
@@ -39,7 +39,7 @@ for(s in h$streams) {
   x <- normalize_native(x,stream)
   context <- cadence_context(x,stream,s$csv$sha256)
   withheld <- character()
-  if(identical(h$schema_version,"dendra-sealed-daily-handoff-2")) {
+  if(h$schema_version %in% c("dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3")) {
     if(!identical(s$quarantine$policy$policy$version,"dendra-observation-quality-1")) stop("Quality policy differs")
     withheld <- unlist(s$quarantine$withheld_days,use.names=FALSE)
     if(length(withheld) && (anyDuplicated(withheld) || any(!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$",withheld)))) stop("Invalid withheld dates")
