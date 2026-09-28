@@ -19,6 +19,9 @@ MAX_BYTES = 12288
 BODY_BYTES = 8 * 1024**2
 SLOTS = ("_id", "datastream_id", "t", "v", "lt", "q")
 TOP = ("data", "limit", "total", "skip")
+Q_SLOTS = ("attrib", "flag", "annotation_ids", "annotationIds")
+Q_COUNT_CAP = 256
+JSON_TYPES = ("null", "boolean", "integer", "number", "string", "array", "object")
 
 
 def incident(journal, task_id):
@@ -95,6 +98,63 @@ def _type(value):
             str:"string", list:"array", dict:"object"}.get(type(value), "invalid")
 
 
+def _q_structure(value):
+    """Immediate types only: never copy keys/values or descend into children."""
+    slots = {}
+    for name in Q_SLOTS:
+        item = value.get(name)
+        shape = dict(present=name in value, type=_type(item) if name in value else "missing")
+        if type(item) in (list, dict):
+            counts = dict.fromkeys(JSON_TYPES, 0)
+            for child in item.values() if type(item) is dict else item:
+                kind = _type(child)
+                counts[kind] = min(Q_COUNT_CAP, counts[kind] + 1)
+            shape.update(count=min(len(item), Q_COUNT_CAP), count_truncated=len(item) > Q_COUNT_CAP,
+                         child_type_counts=counts)
+        slots[name] = shape
+    unknown = sum(name not in Q_SLOTS for name in value)
+    return dict(slots=slots, total_q_member_count=min(len(value), Q_COUNT_CAP),
+                total_q_member_count_truncated=len(value) > Q_COUNT_CAP,
+                unknown_q_key_count=min(unknown, Q_COUNT_CAP),
+                unknown_q_key_count_truncated=unknown > Q_COUNT_CAP,
+                both_annotation_aliases_present=all(name in value for name in Q_SLOTS[2:]))
+
+
+def _validate_q_structure(value):
+    require(type(value) is dict and set(value) == {
+        "slots", "total_q_member_count", "total_q_member_count_truncated", "unknown_q_key_count",
+        "unknown_q_key_count_truncated", "both_annotation_aliases_present"}, "Quality structure fields")
+    for name in ("total_q_member_count", "unknown_q_key_count"):
+        require(type(value[name]) is int and 0 <= value[name] <= Q_COUNT_CAP and
+                type(value[name + "_truncated"]) is bool and
+                (not value[name + "_truncated"] or value[name] == Q_COUNT_CAP), "Quality count bound")
+    require(type(value["slots"]) is dict and set(value["slots"]) == set(Q_SLOTS), "Quality slots")
+    for shape in value["slots"].values():
+        require(type(shape) is dict and type(shape.get("present")) is bool and
+                shape.get("type") in ("missing", *JSON_TYPES) and
+                shape["present"] == (shape["type"] != "missing"), "Quality slot presence/type")
+        container = shape["type"] in ("array", "object")
+        require(set(shape) == ({"present", "type", "count", "count_truncated", "child_type_counts"}
+                              if container else {"present", "type"}), "Quality slot fields")
+        if container:
+            count, truncated, types = shape["count"], shape["count_truncated"], shape["child_type_counts"]
+            require(type(count) is int and 0 <= count <= Q_COUNT_CAP and type(truncated) is bool and
+                    (not truncated or count == Q_COUNT_CAP) and type(types) is dict and
+                    set(types) == set(JSON_TYPES) and
+                    all(type(n) is int and 0 <= n <= count for n in types.values()), "Quality child counts")
+            require(sum(types.values()) >= count if truncated else sum(types.values()) == count,
+                    "Quality child count closure")
+    known = sum(shape["present"] for shape in value["slots"].values())
+    total, unknown = value["total_q_member_count"], value["unknown_q_key_count"]
+    require(total == min(Q_COUNT_CAP, known + unknown) and
+            value["total_q_member_count_truncated"] ==
+            (value["unknown_q_key_count_truncated"] or known + unknown > Q_COUNT_CAP),
+            "Quality member count closure")
+    require(type(value["both_annotation_aliases_present"]) is bool and
+            value["both_annotation_aliases_present"] ==
+            all(value["slots"][name]["present"] for name in Q_SLOTS[2:]), "Quality alias presence")
+
+
 def projection(body, binding, status):
     """Fixed structural schema. Invoke the unchanged parser; never retain its text."""
     validate_binding(binding, {})
@@ -169,6 +229,8 @@ def projection(body, binding, status):
         fields={k:dict(present=k in rowobj, type=_type(rowobj[k]) if k in rowobj else "missing") for k in SLOTS},
         offending_slot=slot, nested_value=code == "row.nested", scalar_bound_exceeded=code == "row.scalar_bound",
         acquisition_eligible=False, source_start_reviewed=False, dispatch_ready=False, sealed=False)
+    if code == "row.nested" and slot == "q" and type(rowobj.get("q")) is dict:
+        result["q_structure"] = _q_structure(rowobj["q"])
     validate_schema(result)
     require(len(encode(result)) <= MAX_BYTES, "History diagnostic byte ceiling")
     return result
@@ -183,7 +245,7 @@ def validate_schema(value):
     optional_counts = {"row_count", "first_offending_row"}
     other = {"version", "http_status", "admission", "guard_code", "parser_site", "root_type",
              "selected_stream_match", "fields", "offending_slot"}
-    require(type(value) is dict and set(value) == hashes | flags | counts | optional_counts | other,
+    require(type(value) is dict and set(value) - {"q_structure"} == hashes | flags | counts | optional_counts | other,
             "History diagnostic fields")
     require(all(type(value[k]) is str and re.fullmatch(r"[0-9a-f]{64}",value[k]) for k in hashes) and
             all(type(value[k]) is bool for k in flags) and
@@ -206,6 +268,12 @@ def validate_schema(value):
         require(type(field) is dict and set(field) == {"present","type"} and type(field["present"]) is bool and
                 field["type"] in ("missing","null","boolean","integer","number","string","array","object"),
                 "History diagnostic slot type")
+    if "q_structure" in value:
+        require(value["admission"] == "REJECTED" and value["guard_code"] == "row.nested" and
+                value["offending_slot"] == "q" and value["nested_value"] is True and
+                value["first_offending_row"] is not None and value["row_is_object"] is True and
+                value["fields"]["q"] == dict(present=True, type="object"), "Quality structure gate")
+        _validate_q_structure(value["q_structure"])
 
 
 def validate(body, sanitized, binding, status):

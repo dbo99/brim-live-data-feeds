@@ -209,8 +209,10 @@ class DiagnosticTests(unittest.TestCase):
         self.assertFalse(list(self.diagroot.rglob("*.bin")))
 
     def test_wrong_endpoint_or_cursor_refused(self):
-        for cursor in [c.START,c.MIDDLE]:
-            spec = a.CampaignRequestSpec(c.VWC,c.START,c.END,cursor)
+        link = self.binding["incident"]
+        for end, cursor in [(format_utc(parse_utc(link["end"])+timedelta(seconds=1)),link["start"]),
+                            (link["end"],format_utc(parse_utc(link["start"])+timedelta(seconds=1)))]:
+            spec = a.CampaignRequestSpec(c.VWC,link["start"],end,cursor)
             self.adapter.current_spec = spec
             with self.assertRaises(Hold): self.adapter._validate_dispatch(self.adapter._request(spec),spec,None)
 
@@ -283,6 +285,130 @@ class DiagnosticTests(unittest.TestCase):
             self.assertNotIn("PRIVATE-TIME",encode(result).decode())
         result=d.projection(b'{"PRIVATE":',self.binding,200)
         self.assertEqual(result["guard_code"],"json.invalid")
+
+    def test_q_slots_distinguish_aliases_and_scalar_types(self):
+        q = dict(attrib=None, flag=True, annotation_ids=[], annotationIds={})
+        result = self.project(dict(data=[c.row(c.START, q=q)], limit=2016))
+        shape = result["q_structure"]
+        self.assertEqual(shape["total_q_member_count"], 4)
+        self.assertEqual(shape["unknown_q_key_count"], 0)
+        self.assertTrue(shape["both_annotation_aliases_present"])
+        self.assertEqual(shape["slots"]["attrib"], dict(present=True, type="null"))
+        self.assertEqual(shape["slots"]["flag"], dict(present=True, type="boolean"))
+        self.assertEqual(shape["slots"]["annotation_ids"]["type"], "array")
+        self.assertEqual(shape["slots"]["annotationIds"]["type"], "object")
+        for item, kind in [(None,"null"), (False,"boolean"), (1,"integer"), (1.5,"number"), ("private","string")]:
+            with self.subTest(kind=kind):
+                value = self.project(dict(data=[c.row(c.START, q=dict(flag=item))], limit=2016))
+                self.assertEqual(value["q_structure"]["slots"]["flag"], dict(present=True,type=kind))
+                self.assertEqual(value["q_structure"]["slots"]["attrib"], dict(present=False,type="missing"))
+                self.assertFalse(value["q_structure"]["both_annotation_aliases_present"])
+
+    def test_q_immediate_histogram_does_not_descend(self):
+        children = [None,True,1,1.5,"PRIVATE",["PRIVATE-DEEP"],{"PRIVATE-KEY":{"deeper":"PRIVATE"}}]
+        q = dict(attrib={"PRIVATE-"+str(i):v for i,v in enumerate(children)}, annotation_ids=children)
+        shape = self.project(dict(data=[c.row(c.START,q=q)],limit=2016))["q_structure"]
+        for name in ("attrib","annotation_ids"):
+            self.assertEqual(shape["slots"][name]["child_type_counts"], dict.fromkeys(d.JSON_TYPES,1))
+            self.assertEqual(shape["slots"][name]["count"],7)
+            self.assertFalse(shape["slots"][name]["count_truncated"])
+        self.assertNotIn("PRIVATE",encode(shape).decode())
+        self.assertNotIn("deeper",encode(shape).decode())
+
+    def test_q_count_boundaries_and_histogram_saturation(self):
+        for n in (0,255,256,257,1000):
+            with self.subTest(n=n):
+                q = {"PRIVATE-"+str(i):"PRIVATE" for i in range(n)}
+                q["attrib"] = ["PRIVATE"]*n + [False]*n
+                shape = self.project(dict(data=[c.row(c.START,q=q)],limit=2016))["q_structure"]
+                self.assertEqual(shape["unknown_q_key_count"],min(n,256))
+                self.assertEqual(shape["unknown_q_key_count_truncated"],n>256)
+                self.assertEqual(shape["total_q_member_count"],min(n+1,256))
+                self.assertEqual(shape["total_q_member_count_truncated"],n+1>256)
+                slot = shape["slots"]["attrib"]
+                self.assertEqual(slot["count"],min(2*n,256))
+                self.assertEqual(slot["count_truncated"],2*n>256)
+                self.assertEqual(slot["child_type_counts"]["string"],min(n,256))
+                self.assertEqual(slot["child_type_counts"]["boolean"],min(n,256))
+                self.assertLessEqual(len(encode(shape)),12288)
+
+    def test_q_extension_only_for_exact_first_offending_object(self):
+        for q in (None,1,"scalar",[],[{}]):
+            self.assertNotIn("q_structure",self.project(dict(data=[c.row(c.START,q=q)],limit=2016)))
+        for row in (c.row(c.START,lt=[],q={}),c.row(c.START,datastream_id="foreign",q={}),
+                    dict(t="invalid",q={}),c.row(c.START,q={},unknown="PRIVATE")):
+            self.assertNotIn("q_structure",self.project(dict(data=[row],limit=2016)))
+        result = self.project(dict(data=[c.row(c.START,q={})],limit=2016,unknown="PRIVATE"))
+        self.assertNotIn("q_structure",result)
+        empty = self.project(dict(data=[c.row(c.START,q={})],limit=2016))["q_structure"]
+        self.assertEqual(empty["total_q_member_count"],0)
+        self.assertTrue(all(not s["present"] for s in empty["slots"].values()))
+
+    def test_q_projection_journal_late_row_roundtrip_no_leak(self):
+        rows=[c.row(c.START) for _ in range(2016)]
+        rows[1260]["q"] = dict(attrib={"PRIVATE-ATTRIBUTE":"PRIVATE-VALUE"},
+                              annotation_ids=["PRIVATE-ID"],flag="PRIVATE-FLAG")
+        body=c.page(rows)
+        with self.assertRaises(Hold): a.observation_shape(body,c.VWC)
+        result=self.run_page(body)
+        self.assertEqual((result["guard_code"],result["first_offending_row"]),("row.nested",1260))
+        self.assertEqual(result["q_structure"]["slots"]["attrib"]["child_type_counts"]["string"],1)
+        receipt=next(e["data"] for e in self.j.events if e["kind"]=="received")
+        self.assertEqual(receipt["representation"],"sanitized")
+        self.assertEqual(decode(self.j.read_object(receipt["objects"][0])),result)
+        d.validate(body,encode(result),self.binding,200)
+        self.assertEqual(len(self.fake.calls),1)
+        self.assertEqual(self.j.tasks,{})
+        self.assertEqual(self.files(self.source_root),self.original_bytes)
+        for path in self.diagroot.rglob("*"):
+            if path.is_file(): self.assertNotIn(b"PRIVATE-",path.read_bytes())
+        with self.assertRaises(Hold): self.run_page(body)
+
+    def test_q_shape_order_independent_and_no_alias_coalescing(self):
+        first=dict(attrib={"private1":1,"private2":False},annotation_ids=[1,False])
+        second=dict(annotation_ids=[False,1],attrib={"private2":False,"private1":1})
+        one=self.project(dict(data=[c.row(c.START,q=first)],limit=2016))
+        two=self.project(dict(data=[c.row(c.START,q=second)],limit=2016))
+        self.assertEqual(one["q_structure"],two["q_structure"])
+        # Response hashes still bind exact bytes; the summary is deliberately lossy.
+        self.assertNotEqual(one["response_sha256"],two["response_sha256"])
+        self.assertFalse(one["q_structure"]["slots"]["annotationIds"]["present"])
+
+    def test_q_validator_refuses_unknown_content_types_counts_and_gate(self):
+        result=self.project(dict(data=[c.row(c.START,q=dict(attrib=[1]))],limit=2016))
+        bads=[]
+        for k,v in [("total_q_member_count",True),("unknown_q_key_count",257),
+                    ("both_annotation_aliases_present",True),("private","SECRET")]:
+            bad=copy.deepcopy(result);bad["q_structure"][k]=v;bads.append(bad)
+        for k,v in [("value","SECRET"),("count",True),("count_truncated",True),
+                    ("child_type_counts",{"private":1}),("type","invalid"),("present",False)]:
+            bad=copy.deepcopy(result);bad["q_structure"]["slots"]["attrib"][k]=v;bads.append(bad)
+        bad=copy.deepcopy(result);bad["offending_slot"]="v";bads.append(bad)
+        bad=copy.deepcopy(result);bad["q_structure"]=None;bads.append(bad)
+        bad=copy.deepcopy(result);bad["q_structure"]["slots"]["flag"]["count"]=0;bads.append(bad)
+        for bad in bads:
+            with self.subTest(bad=bad),self.assertRaises(Hold):d.validate_schema(bad)
+
+    def test_q_projection_cannot_be_removed_or_forged_for_current_body(self):
+        body=c.page([c.row(c.START,q=dict(flag=1))]);result=d.projection(body,self.binding,200)
+        legacy=copy.deepcopy(result);legacy.pop("q_structure")
+        d.validate_schema(legacy)  # Historical version-1 diagnostics remain readable.
+        with self.assertRaises(Hold):d.validate(body,encode(legacy),self.binding,200)
+        forged=copy.deepcopy(result);forged["q_structure"]["slots"]["flag"]["type"]="string"
+        d.validate_schema(forged)
+        with self.assertRaises(Hold):d.validate(body,encode(forged),self.binding,200)
+
+    def test_q_all_slots_large_histograms_stay_bounded(self):
+        children = [None,True,1,1.5,"PRIVATE",["PRIVATE"],{"PRIVATE":"PRIVATE"}]*300
+        q = {name:children for name in d.Q_SLOTS}
+        q.update({"PRIVATE-"+str(i):{"PRIVATE":"PRIVATE"} for i in range(1000)})
+        body=c.page([c.row(c.START,q=q)]);result=d.projection(body,self.binding,200)
+        self.assertTrue(result["q_structure"]["both_annotation_aliases_present"])
+        for shape in result["q_structure"]["slots"].values():
+            self.assertEqual(shape["child_type_counts"],dict.fromkeys(d.JSON_TYPES,256))
+        self.assertLessEqual(len(encode(result)),d.MAX_BYTES)
+        self.assertNotIn("PRIVATE",encode(result).decode())
+        d.validate(body,encode(result),self.binding,200)
 
 
 if __name__ == "__main__":

@@ -750,6 +750,26 @@ authorized request/source/incident identifiers and response hash/bytes. Unknown
 field names, returned timestamps/IDs/values, coordinates, nested content,
 headers and exception text are omitted. Journal persistence recomputes the
 projection against the body and binding and checks the receipt classification.
+For `row.nested` at the first offending `q` slot only, when `q` is an object,
+an additive `q_structure` summarizes the immediate structure. Its fixed slots
+are `attrib`, `flag`, `annotation_ids` and `annotationIds`; aliases are never
+coalesced. Each slot contains presence and exact JSON type (including missing,
+null, integer and number). Arrays/objects additionally contain `count`,
+`count_truncated` and `child_type_counts` for the seven JSON types. Counts and
+each type histogram bucket independently saturate at 256; a truncated histogram
+can sum above the capped count. No array prefixes or element values are emitted.
+The object summary also includes capped `total_q_member_count` and
+`unknown_q_key_count`, their `_truncated` booleans, and
+`both_annotation_aliases_present`. Traversal is one level only: no nested keys,
+quality values, IDs, text or unknown key names are copied or interpreted.
+The existing 12,288-byte diagnostic ceiling and version remain unchanged.
+Historical projections without this optional summary remain schema-readable;
+new persistence still requires exact recomputation from the current body.
+This extension does not relax observation admission, preserve raw rejected
+quality objects, establish quality science or authorize another provider call.
+It changes the collector fingerprint; old authority and journals remain bound
+to their original source, and later live diagnostics require separately reviewed
+current-source readiness and explicit request authorization.
 Transport, HTTP, body-limit and unprojectable failures retain omission/accounting
 behavior; no original diagnostic response is retained, even if its shape passes.
 
