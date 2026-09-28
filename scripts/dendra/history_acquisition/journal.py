@@ -43,8 +43,11 @@ class Journal:
         try:
             require(not (inspect_only and create), "Inspection cannot initialize state")
             if inspect_only:
-                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"),
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
                         "Unsupported historical journal format")
+            elif binding["mode"] == "history_diagnostic_adapter":
+                from .history_diagnostic import validate_binding
+                validate_binding(binding, tasks)
             elif binding["mode"] == "temporal_metadata_adapter":
                 from .metadata_acquisition import validate_binding
                 validate_binding(binding, tasks, inventory=inventory)
@@ -59,7 +62,7 @@ class Journal:
                 validate_binding(binding, tasks)
             if not inspect_only:
                 require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"):
+            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"):
                 require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
@@ -325,7 +328,13 @@ class Journal:
 
     def reserve(self, task_key, cursor, *, interval_key=None, run=0):
         witness = self.binding["mode"] == "authority_witness_adapter"
-        if self.binding["mode"] == "temporal_metadata_adapter":
+        if self.binding["mode"] == "history_diagnostic_adapter":
+            from .history_diagnostic import validate_binding
+            validate_binding(self.binding, self.tasks)
+            require(interval_key is None and run == 0 and task_key == "history-diagnostic" and
+                    cursor == self.binding["request_id"] and not self.snapshot()["attempts"],
+                    "One separate diagnostic attempt; no acquisition replay")
+        elif self.binding["mode"] == "temporal_metadata_adapter":
             from .metadata_acquisition import validate_reservation
             validate_reservation(self, task_key, cursor, interval_key=interval_key, run=run)
         elif witness:
@@ -384,6 +393,22 @@ class Journal:
         require(self.binding["mode"] != "temporal_metadata_adapter" or (details is not None and not retain),
                 "Temporal metadata requires sanitized receipt details")
         extra = {}
+        if self.binding["mode"] == "history_diagnostic_adapter":
+            from .history_diagnostic import validate, validate_binding
+            validate_binding(self.binding, self.tasks)
+            require(not retain and details is not None and details["kind"] == "observations" and
+                    details["retryable"] is False and details["page_complete"] is None,
+                    "Diagnostic cannot retain originals or advance pagination")
+            if sanitized_body is not None:
+                validate(body, sanitized_body, self.binding, status)
+                projection = decode(sanitized_body)
+                rejected = projection["admission"] == "REJECTED"
+                require(source_rows == projection["row_count"] and
+                        (details["outcome"], details["error_code"], details["privacy"], details["identity"]) ==
+                        (("failure", "parse_or_privacy", "hold", "hold") if rejected else
+                         ("received", None, "public", "match")), "Diagnostic receipt classification binding")
+            else:
+                require(details["error_code"] is not None, "Missing diagnostic projection")
         if sanitized_body is not None or details is not None:
             from .d3_plan import validate_receipt_details
             witness = self.binding["mode"] == "authority_witness_adapter"
@@ -398,7 +423,7 @@ class Journal:
             if self.binding["mode"] == "temporal_metadata_adapter":
                 require(not retain and details["kind"] in ("unit-vocabulary", "station", "datastream-list"),
                         "Temporal metadata receipts retain sanitized objects only")
-            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter"),
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
                     "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and
@@ -431,6 +456,7 @@ class Journal:
 
     def seal(self, key, run, envelope, attempt_keys):
         """Only a complete single-run source envelope may advance coverage."""
+        require(self.binding["mode"] != "history_diagnostic_adapter", "Diagnostic sealing forbidden")
         state = self.snapshot()
         task = self.tasks[key]
         require(run == state["intervals"][key]["runs"] and attempt_keys, "Seal run")

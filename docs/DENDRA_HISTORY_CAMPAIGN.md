@@ -720,6 +720,48 @@ and source-bound, and a later approved witness campaign needs fresh state and
 metadata packets bound to its reviewed checkpoint. This offline gate makes no
 provider requests and grants no live-refresh authority.
 
+## Separate history-page diagnostic
+
+`history_diagnostic.py` adds `dendra-history-page-diagnostic-1`, a local,
+explicitly authorized diagnostic interface. It does not change observation
+admission or `dendra-witness-diagnostic-1`. `prepare` reads an intact original
+failed first-page Journal in inspection mode and binds its task, campaign,
+interval, request, spent receipt chain and body hash. A caller-verified commit
+identity and the actual current collector fingerprint bind the new diagnostic.
+The deterministic diagnostic namespace has no acquisition tasks and a separate
+one-attempt budget. Existing acquisition attempts remain spent and immutable.
+
+`HistoryDiagnosticAdapter` uses the existing anonymous request construction,
+transport and Journal reservation/start/receipt path. A separate approval must
+bind the diagnostic, incident and checkpoint within a <=60-second window. The
+runner waits at least one second before its sole first-page request, uses the
+saved ascending interval request with limit 2,016, and preserves the 25-second
+deadline and 8 MiB body ceiling. Retries, redirects and pagination are forbidden.
+Callers must serialize execution, verify the checkpoint and original incident,
+and preserve the unique diagnostic state across invocations; a new process/root
+or source revision does not authorize a second request or reset any budget.
+
+Only a canonical, validated structural projection <=12,288 bytes is retained.
+It distinguishes extra envelope fields, nonobject rows, extra row fields,
+explicit stream mismatch, nested values and oversized strings, including a
+first offending row late in a full page. It retains fixed guard/site codes,
+counts, allowlisted field-slot presence/types and match/bound flags, plus
+authorized request/source/incident identifiers and response hash/bytes. Unknown
+field names, returned timestamps/IDs/values, coordinates, nested content,
+headers and exception text are omitted. Journal persistence recomputes the
+projection against the body and binding and checks the receipt classification.
+Transport, HTTP, body-limit and unprojectable failures retain omission/accounting
+behavior; no original diagnostic response is retained, even if its shape passes.
+
+The diagnostic cannot start an acquisition interval, seal an archive, promote
+eligibility/source-start authority, or advance another task. Generic rejected
+page classification remains `parse_or_privacy`, paired privacy/identity HOLD,
+and zero retries. `PASSED_SHAPE_ONLY` grants no acquisition or scientific
+authority. Review of a future response cannot establish which field was present
+in a different, previously omitted response. Preparation/tests grant no live
+permission; separately reviewed checkpointing and one-request authorization are
+required before a live invocation. Old journals are never migrated or rehashed.
+
 ## First-witness rejection diagnostics
 
 `witness_diagnostic.py` projects parser rejections into

@@ -342,7 +342,10 @@ class Adapter:
 
     def exchange(self, request, spec, *, interval_key=None, run=0):
         require(self.active and self.executor is not None, "Explicit runner required")
-        require((spec.kind == "observations") == (interval_key is not None), "Receipt task kind mismatch")
+        diagnostic = self.journal.binding["mode"] == "history_diagnostic_adapter"
+        require((diagnostic and spec.kind == "observations" and interval_key is None and run == 0) or
+                (not diagnostic and (spec.kind == "observations") == (interval_key is not None)),
+                "Receipt task kind mismatch")
         if interval_key is not None:
             require(interval_key in self.journal.tasks and self.journal.tasks[interval_key]["identity"]["stream_id"]
                     == spec.selected_stream, "Receipt selected-stream mismatch")
@@ -360,6 +363,8 @@ class Adapter:
         task = ("witness-" + spec.selected_stream) if witness else interval_key or ("unit-vocabulary" if spec.kind == "unit-vocabulary"
                                 else "metadata-" + spec.selected_stream)
         cursor = self.journal.binding["witness_requests"][task]["request_id"] if witness else spec.cursor if interval_key else spec.kind
+        if diagnostic:
+            task, cursor = "history-diagnostic", self.journal.binding["request_id"]
         key = self._persist(self.journal.reserve, task, cursor, interval_key=interval_key, run=run)
         self._persist(self.journal.started, key)
         began, mono = format_utc(self.journal.now()), self.journal.monotonic()
@@ -414,7 +419,16 @@ class Adapter:
                         row_count = len(payload["data"])
                     elif spec.kind in ("station", "unit-vocabulary"):
                         row_count = 0
-                    if witness:
+                    if diagnostic:
+                        from .history_diagnostic import projection
+                        value = projection(body, self.journal.binding, status)
+                        sanitized = encode(value)
+                        if value["admission"] == "REJECTED":
+                            details.update(outcome="failure", error_code="parse_or_privacy",
+                                           privacy="hold", identity="hold")
+                        else:
+                            details.update(privacy="public", identity="match")
+                    elif witness:
                         from .authority_witness import response_shape
                         value = response_shape(body, spec.selected_stream, retrieved_at=self.journal.now())
                         details.update(effective_limit=1, page_complete=True)
@@ -434,7 +448,8 @@ class Adapter:
                     if witness:
                         raise WitnessAdmissionHold(body, self.journal.binding["witness_requests"][task], status, exc) from None
                     raise MetadataAdmissionHold(spec, body, payload, exc) from None
-                details.update(privacy="public", identity="match")
+                if not diagnostic:
+                    details.update(privacy="public", identity="match")
                 # Validate capacity before writing raw/sanitized objects, while
                 # still charging rejected bytes/rows through the same receipt.
                 self.journal.check_budget({"response_bytes": len(body), "source_rows": row_count or 0})
@@ -468,6 +483,8 @@ class Adapter:
             # received() has already durably charged the response and saved its
             # diagnostic. End in the originating HOLD; never bypass the guard
             # for subsequent requests or suppress a storage/integrity failure.
+        if diagnostic and caught is None and details["error_code"] is not None:
+            self._persist(self.journal.failed, key, status)
         if caught is not None:
             self._persist(self.journal.failed, key, status)
             if isinstance(caught, urllib.error.HTTPError):
