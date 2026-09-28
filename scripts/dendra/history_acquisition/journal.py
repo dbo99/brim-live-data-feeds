@@ -502,7 +502,13 @@ class Journal:
         final = decode(self.read_object(attempts[-1]["objects"][0]))
         require(type(final.get("limit")) is int and 0 < final["limit"] <= 2016 and
                 len(final["data"]) < final["limit"], "Full final page cannot seal")
-        rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"])
+        policy = self.binding.get("quality_policy")
+        rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"], quality_policy=policy)
+        if policy is not None:
+            from . import observation_quality as quality
+            quality.validate_policy(policy)
+            require(envelope.get("quality_disposition") == quality.summary(rows) and
+                    envelope.get("query_state") == "QUERY_COMPLETE", "Quality seal disposition mismatch")
         require(rows == envelope["rows"] and envelope["content_sha256"] == _content_hash(envelope)
                 and all(envelope["diagnostics"].get(k) == v for k, v in diagnostics.items()),
                 "Normalized envelope differs from exact received pages")

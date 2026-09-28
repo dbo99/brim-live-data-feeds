@@ -160,7 +160,9 @@ def load_prepared(prepared_root, *, pins, prepared_fingerprint):
             require(len(body) == pin["bytes"] and sha(body) == pin["sha256"], "Prepared input changed")
             docs[name] = decode(body)
     h, d = docs["handoff.json"], docs["daily-output.json"]
-    require(h["schema_version"] == d["schema_version"] == "dendra-sealed-daily-handoff-1" and h["science_binding"] == d["science_binding"] and h["science_binding"]["collector_fingerprint"] == prepared_fingerprint, "Preparation source mismatch")
+    require(h["schema_version"] == d["schema_version"] and h["schema_version"] in
+            ("dendra-sealed-daily-handoff-1", "dendra-sealed-daily-handoff-2") and
+            h["science_binding"] == d["science_binding"] and h["science_binding"]["collector_fingerprint"] == prepared_fingerprint, "Preparation source mismatch")
     require(sha((Path(__file__).parent.parent/"core.R").read_bytes()) == h["science_binding"]["core_sha256"], "Numerical authority changed")
     require(h["source_scope"] == "historical_sealed_intervals" and h["as_of"] == d["as_of"] and h["latest_instantaneous"] == d["latest_instantaneous"] == [] and h["publication_eligible"] is False and d["publication_eligible"] is False, "Historical preparation only; no latest witness")
     require(docs["r-receipt.json"]["exit_code"] == 0 and docs["result.json"]["outcome"] == "OFFLINE_DAILY_PREPARED" and docs["result.json"]["science_binding"] == h["science_binding"], "Unaccepted daily preparation")
@@ -179,6 +181,22 @@ def load_prepared(prepared_root, *, pins, prepared_fingerprint):
         expected_intervals = [dict(task_id=r["task_id"], start=r["task"]["start"], end=r["task"]["end"], query_state="COVERED_EMPTY" if not r["envelope"]["rows"] else "COMPLETE_NONEMPTY", seal_record_sha256=r["seal_record_sha256"], content_sha256=r["envelope"]["content_sha256"], parsed_sha256=r["seal"]["objects"][0]["sha256"], row_count=len(r["envelope"]["rows"])) for r in records]
         require(s["intervals"] == expected_intervals, "Preparation interval lineage")
         source_rows = d["rows"].get(sid, [])
+        if h["schema_version"] == "dendra-sealed-daily-handoff-2":
+            from .daily_handoff import disposition
+            native_rows = [r for record in records for r in record["science_rows"]]
+            require(all("q" not in r for r in native_rows +
+                        [r for record in records for r in record["envelope"]["rows"]]), "Exact quality is native-evidence-only")
+            require(s["quarantine"] == disposition(native_rows), "Quality disposition lineage mismatch")
+            withheld = set(s["quarantine"]["withheld_days"])
+            for row in source_rows:
+                if row["date"] in withheld:
+                    require(row["plot_eligible"] is False and row["presentation_eligible"] is False and
+                            all(row[k] is None for k in ("mean_native", "mean_percent", "mean_value")),
+                            "Quarantined day cannot enter browser science")
+            terminal = s["historical_terminal"]
+            if terminal and terminal["source_fixed_pst_date"] in withheld:
+                require(terminal["native_value"] is None and terminal["normalized_percent"] is None,
+                        "Quarantined terminal value")
         require(not source_rows or factor is not None, "Dimensionless daily denied")
         require(len({x["date"] for x in source_rows}) == len(source_rows), "Duplicate daily date")
         accepted = [x for x in source_rows if x["presentation_eligible"] is True]

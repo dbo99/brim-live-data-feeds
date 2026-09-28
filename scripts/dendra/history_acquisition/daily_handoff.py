@@ -20,7 +20,7 @@ from .journal import Journal, BODY_BYTES
 from .model import Inventory, INVENTORY_SHA256, HASH, source_binding
 from .safety import Root, decode, digest, encode, require, sha
 
-VERSION = "dendra-sealed-daily-handoff-1"
+VERSION = "dendra-sealed-daily-handoff-2"
 POINT_VERSION = "dendra-soil-point-semantics-1"
 PST = timezone(timedelta(hours=-8))
 CSV_FIELDS = ("t", "datastream_id", "v", "value_status", "duplicate_conflict", "alternative_out_of_range")
@@ -53,10 +53,15 @@ def _manifest(root, expected):
 
 def _binding(binding, tasks, inventory, acquisition_fingerprint):
     require(type(inventory) is Inventory and binding["mode"] == "campaign_reviewed_adapter" and
-            binding["version"] == "dendra-campaign-execution-1" and
+            binding["version"] in ("dendra-campaign-execution-1", "dendra-campaign-execution-2") and
             digest(binding["collector_sources"]) == _pin(acquisition_fingerprint) and
             binding["inventory_sha256"] == INVENTORY_SHA256 and binding["roster"] == inventory.roster(),
             "Acquisition source/inventory mismatch")
+    if binding["version"] == "dendra-campaign-execution-2":
+        from .observation_quality import validate_policy
+        validate_policy(binding.get("quality_policy"))
+    else:
+        require("quality_policy" not in binding, "Historical quality policy cannot be rebound")
     manifest = dict(binding["campaign_manifest"], roster=binding["roster"])
     campaign.verify(manifest, inventory, executor_fingerprint=acquisition_fingerprint)
     require(binding["campaign_id"] == manifest["core"]["campaign_id"] and
@@ -161,7 +166,13 @@ def _seal(journal, key, state, inventory, fingerprint):
             require(len(raw["data"]) < raw["limit"], "Full final page cannot seal")
     require(envelope["diagnostics"]["completion_reason"] in ("empty_page", "short_page_with_effective_limit"),
             "No pagination completion proof")
-    rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"])
+    policy = journal.binding.get("quality_policy")
+    rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"], quality_policy=policy)
+    if policy is not None:
+        from . import observation_quality as quality
+        quality.validate_policy(policy)
+        require(envelope.get("quality_disposition") == quality.summary(rows) and
+                envelope.get("query_state") == "QUERY_COMPLETE", "Quality seal disposition mismatch")
     require(rows == envelope["rows"] and envelope["content_sha256"] == _content_hash(envelope) and
             all(envelope["diagnostics"].get(k) == v for k, v in diagnostics.items()), "Parsed/raw semantics mismatch")
     require(envelope["latest_observation_utc"] == (rows[-1]["t"] if rows else None) == seal["latest_source_observation"] and
@@ -172,7 +183,7 @@ def _seal(journal, key, state, inventory, fingerprint):
 
 
 def csv_bytes(rows, identity, scale):
-    """Exactly core.R's six-column input; full rows remain in lineage JSON."""
+    """Exactly core.R's six-column input; exact quality remains native-only."""
     text = io.StringIO(newline="")
     writer = csv.writer(text, lineterminator="\n")
     writer.writerow(CSV_FIELDS)
@@ -200,7 +211,9 @@ def historical_terminal(identity, rows, scale, *, as_of):
     row = rows[-1]
     at = parse_utc(row["t"])
     require(at <= now, "Observation after as-of")
-    numeric = row["value_status"] == "number" and not row.get("duplicate_conflict", False)
+    from .observation_quality import days
+    quality_held = at.astimezone(PST).date().isoformat() in days(rows)
+    numeric = row["value_status"] == "number" and not row.get("duplicate_conflict", False) and not quality_held
     native = row.get("v") if numeric else None
     percent = native * scale["conversion_factor"] if native is not None and scale["normalized_percent_eligible"] else None
     normalized_status = "resolved" if percent is not None else "withheld"
@@ -211,6 +224,23 @@ def historical_terminal(identity, rows, scale, *, as_of):
                 age_seconds=(now-at).total_seconds(), as_of=format_utc(now), native_value=native,
                 normalized_percent=percent, normalized_status=normalized_status, value_status=row["value_status"],
                 latest_witness=False, current_state_claim=False, publication_eligible=False)
+
+
+def disposition(rows):
+    """Private day eligibility only; no exact q or quality alternatives escape."""
+    from .observation_quality import binding, days
+    return dict(policy=binding(), withheld_days=days(rows),
+                quarantined_groups=len({r["t"] for r in rows if r.get("quality", {}).get("quarantined", False)}))
+
+
+def preparation_lineage(records):
+    """References to immutable native evidence, not another copy of exact q."""
+    from copy import deepcopy
+    records = deepcopy(records)
+    for record in records:
+        for row in record["envelope"]["rows"] + record.get("science_rows", []):
+            row.pop("q", None)
+    return records
 
 
 def verify_sealed(sealed_root, *, manifest_sha256, inventory, acquisition_fingerprint):
@@ -237,12 +267,16 @@ def verify_sealed(sealed_root, *, manifest_sha256, inventory, acquisition_finger
         require(needed <= set(entries), "Journal object not in pinned evidence manifest")
         for key, task in sorted(tasks.items()):
             envelope, seal, attempts = _seal(journal, key, state, inventory, acquisition_fingerprint)
+            from .observation_quality import binding as quality_binding
+            originals = [row for attempt in attempts for row in
+                         decode(journal.read_object(attempt["objects"][0]))["data"]]
+            science_rows, _ = normalize_rows(originals, task["start"], task["end"], quality_policy=quality_binding())
             event = [e for e in journal.events if e["kind"] == "sealed" and e["data"] == seal]
             require(len(event) == 1, "Ambiguous seal")
             bundle = binding["reviewed_bundles"][task["identity"]["stream_id"]]
             ordinal = task["native_task"]["identity"]["configuration_ordinal"]
             configuration = next(c for c in bundle["packet"]["configuration_evidence"]["configurations"] if c["ordinal"] == ordinal)
-            records.append(dict(task_id=key, task=task, seal=seal, seal_record_sha256=event[0]["record_sha256"],
+            records.append(dict(task_id=key, task=task, seal=seal, science_rows=science_rows, seal_record_sha256=event[0]["record_sha256"],
                 envelope=envelope, receipts=attempts,
                 configured_cadence_claim=configuration["fields"]["interval"], decision=bundle["decision"]))
     return dict(schema_version=VERSION, evidence_manifest_sha256=manifest_sha256,
@@ -281,16 +315,17 @@ def prepare_product(sealed_root, *, manifest_sha256, inventory, acquisition_fing
         identity, scale = records[0]["task"]["identity"], records[0]["decision"]["scale"]
         require(all(r["task"]["identity"] == identity and r["decision"]["scale"] == scale for r in records),
                 "Scientific identity or scale conflict")
-        rows = [row for r in records for row in r["envelope"]["rows"]]
+        rows = [row for r in records for row in r["science_rows"]]
         csv = csv_bytes(rows, identity, scale)
-        lineage = encode(dict(identity=identity, scale=scale, records=records))
+        lineage = encode(dict(identity=identity, scale=scale, records=preparation_lineage(records)))
         csv_path, lineage_path = "native/"+sid+".csv", "lineage/"+sid+".json"
         files[csv_path], files[lineage_path] = csv, lineage
         resolved = scale["normalized_percent_eligible"]
         require(not resolved or (identity["native_unit"] in ("Percent", "VolumetricWaterContent") and
                 scale["conversion_factor"] == (1 if identity["native_unit"] == "Percent" else 100)),
                 "Unsupported percent route; separately reviewed science required")
-        specifications.append(dict(identity=identity, csv=dict(path=csv_path, sha256=sha(csv), bytes=len(csv)),
+        specifications.append(dict(identity=identity, quarantine=disposition(rows),
+            csv=dict(path=csv_path, sha256=sha(csv), bytes=len(csv)),
             lineage=dict(path=lineage_path, sha256=sha(lineage), bytes=len(lineage)),
             unit_normalization=dict(status="verified_percent_conversion" if resolved else "native_only_scale_unresolved",
                                     multiplier=scale["conversion_factor"] if resolved else None, offset=0 if resolved else None),

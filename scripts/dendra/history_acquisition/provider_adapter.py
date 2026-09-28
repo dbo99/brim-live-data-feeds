@@ -236,7 +236,7 @@ class MemoryResponse(io.BytesIO):
     headers = {}
 
 
-def observation_shape(body, sid):
+def observation_shape(body, sid, *, quality_policy=None):
     payload = decode(body)
     require(isinstance(payload, dict) and set(payload) <= {"data", "limit", "total", "skip"},
             "Unexpected observation envelope fields")
@@ -251,6 +251,11 @@ def observation_shape(body, sid):
                 row.get("datastream_id", sid) == sid, "Restricted or unselected observation metadata")
         parse_utc(row.get("t"))
         for name, value in row.items():
+            if name == "q" and quality_policy is not None:
+                from . import observation_quality as quality
+                quality.validate_policy(quality_policy)
+                quality.classify(row)
+                continue
             require(value is None or type(value) in (str, int, float, bool), "Nested observation metadata")
             require(not isinstance(value, str) or len(value) <= 256, "Observation scalar bound")
     return payload
@@ -434,7 +439,8 @@ class Adapter:
                         details.update(effective_limit=1, page_complete=True)
                         retain = True
                     elif spec.kind == "observations":
-                        value = observation_shape(body, spec.selected_stream)
+                        value = observation_shape(body, spec.selected_stream,
+                            quality_policy=self.journal.binding.get("quality_policy"))
                         details.update(effective_limit=value["limit"], page_complete=len(value["data"]) < value["limit"])
                         retain = True
                     else:
@@ -617,7 +623,8 @@ class CampaignAdapter(Adapter):
     attempts_per_page = 1
 
     def _classify_error(self, error, details):
-        if str(error) in {"Unexpected observation envelope fields",
+        from .observation_quality import UnsupportedQuality
+        if isinstance(error, UnsupportedQuality) or str(error) in {"Unexpected observation envelope fields",
                           "Restricted or unselected observation metadata",
                           "Nested observation metadata", "Observation scalar bound"}:
             # Existing receipt schema: failure + parse/privacy identifies the
@@ -764,6 +771,18 @@ class CampaignAdapter(Adapter):
             sleep_fn=self.pause)
         try:
             envelope = fetcher.fetch_interval(sid, task["start"], task["end"])
+            from . import observation_quality as quality
+            from ..transport import normalize_rows, _content_hash
+            policy = self.journal.binding["quality_policy"]
+            quality.validate_policy(policy)
+            state = self.journal.snapshot()
+            source_rows = [row for key in successful for row in decode(self.journal.read_object(
+                state["attempts"][key]["objects"][0]))["data"]]
+            rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"], quality_policy=policy)
+            envelope["rows"] = rows
+            envelope["diagnostics"].update(diagnostics)
+            envelope.update(quality_disposition=quality.summary(rows), query_state="QUERY_COMPLETE")
+            envelope["content_sha256"] = _content_hash(envelope)
             try:
                 self._persist(self.journal.seal, key, run, envelope, successful)
             except Hold as exc:

@@ -12,7 +12,7 @@ from .eligibility import validate_decision
 from .model import Inventory, INVENTORY_SHA256, NAME, PAGE_BYTES, source_binding
 from .safety import Root, Hold, decode, digest, encode, require
 
-VERSION = "dendra-campaign-execution-1"
+VERSION = "dendra-campaign-execution-2"
 MODE = "campaign_reviewed_adapter"
 
 
@@ -39,7 +39,9 @@ def prepare(manifest, inventory, bundles, *, now, stream_ids=None):
     policy = manifest["budgets"]
     require(all(policy[k] > 0 for k in ("logical_requests", "http_attempts", "total_bytes", "wall_seconds")),
             "Explicit positive provider budgets required")
+    from .observation_quality import binding as quality_binding
     binding = dict(version=VERSION, mode=MODE, campaign_id=manifest["core"]["campaign_id"],
+        quality_policy=quality_binding(),
         collector_sources=source_binding(), inventory_sha256=INVENTORY_SHA256,
         roster=inventory.roster(), selected_ids=selected,
         campaign_manifest={k: v for k, v in manifest.items() if k != "roster"},

@@ -880,3 +880,75 @@ and `read_object` under their original identity; the new current-source evidence
 path rejects incompatible source fingerprints. No history task IDs, campaign
 limits, witness rules, R science or browser contracts change. No live refresh,
 history acquisition or publication is authorized by this offline implementation.
+
+## Local native quality quarantine
+
+`observation_quality.py` owns `dendra-observation-quality-1`. New reviewed
+campaign executions use `dendra-campaign-execution-2` and bind the exact quality
+policy plus its SHA-256 separately from logical task identity. The task-ID
+schema, campaign limits, metadata and source-start admission remain unchanged.
+The collector fingerprint changes with source bytes: prior campaigns and
+journals retain their original identities and cannot be silently resumed,
+rebound or migrated. Historical native seals remain readable under their
+original normalization rules.
+
+Version 1 retains only a closed native `q` representation: absent, null,
+bounded JSON primitives, or an object with only `attrib`, `flag`,
+`annotation_ids` and `annotationIds`. The aliases remain separate. `attrib`
+may contain a primitive or an array of primitives; the other three slots may
+contain null or arrays of strings. Root arrays and nested objects/arrays are
+unsupported. Arrays have at most eight items, strings at most 256 characters
+with no Unicode control/format characters, and finite numbers have magnitude
+at most 1e308. Canonical `q` occupies at most 4,096 UTF-8 bytes. No truncation,
+coercion, unknown-key deletion or interpretation of flags/annotations occurs.
+Unsupported, unsafe or oversized quality is a hard schema HOLD that stops
+campaign traffic through the existing persisted receipt guard, also on restart.
+
+Absent quality is `NO_PROVIDER_QUALITY_CLAIM`; explicit null is
+`EXPLICIT_NULL`. Neither vetoes science by itself. Empty string and empty object
+also have no quality veto. Every other supported non-null claim is quarantined,
+including false, numeric zero, or a nonempty object whose members are empty
+arrays/nulls. These are conservative eligibility decisions, not provider flag
+meaning or statements that an unflagged observation is scientifically valid.
+
+Exact quality stays only in immutable local native pages/archives. Compact
+classification records contain fixed codes, types, counts and hashes. Each
+timestamp group retains presence/type-sensitive alternative hashes and source
+occurrence indices into concatenated original pages in sealed receipt order.
+The task, page, receipt and object hashes resolve those indices back to exact
+native quality, including alternatives not selected as the first normalized
+row. Missing/null, boolean/number and distinct aliases remain distinct. Any
+quarantined occurrence vetoes the entire timestamp group; value-conflict
+semantics remain independent. Derived preparation lineage drops direct `q`
+values and keeps these references. Logs, daily CSV and browser products never
+copy exact quality values.
+
+No row is filtered before limit/cursor/pagination checks or sealing. A sealed
+nonempty query records `QUERY_COMPLETE` independently of
+`OBSERVATIONS_QUARANTINED`; even an all-quarantined query remains nonempty.
+`COVERED_EMPTY` still requires a genuinely empty completed query. Failed,
+incomplete, unqueried and inactive states are not converted into coverage.
+Timestamp, stream, access, configuration, accounting and provenance failures
+remain hard refusals. Retry, spent-attempt and full-third-page rules are
+unchanged.
+
+The private `dendra-sealed-daily-handoff-2` derives day disposition from verified
+native evidence. A completed fixed-PST day `[08:00Z, next 08:00Z)` intersecting
+quarantine is `DAILY_VALUE_WITHHELD`. An incompletely queried affected day
+remains `QUERY_INCOMPLETE`. No observation on an affected day is supplied to
+`core.R` numerical aggregation. Its result has no accepted numeric mean and
+retains a separate `provider_quality_unreviewed` reason, never a fabricated
+zero, missing measurement or duplicate conflict. Real source timestamps remain
+available to unchanged cadence calculations and neighboring-day cadence state.
+Original missing/null/invalid and duplicate counts remain distinguishable.
+Full-day query coverage is still checked across adjacent task seals; query
+completion does not assert continuous valid observations.
+
+`core.R` is unchanged. Historical version-1 preparations remain readable, and
+new preparations may conservatively classify original native evidence without
+rewriting its seals. Private browser-input validation accepts handoff version 2
+and rejects numeric leakage from withheld days or affected historical terminal
+points. Public browser schemas, paths and rendering contracts remain unchanged.
+This implementation authorizes no publication, daily production or live retry.
+Task 37's original spent attempt and unsealed state are preserved; any future
+resume/accounting decision and current-source authority require separate review.

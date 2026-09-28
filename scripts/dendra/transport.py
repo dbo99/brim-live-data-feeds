@@ -130,7 +130,7 @@ def _value_status(row: dict) -> str:
     return "invalid"
 
 
-def normalize_rows(rows: list, start: str | datetime, end: str | datetime) -> tuple[list[dict], dict]:
+def normalize_rows(rows: list, start: str | datetime, end: str | datetime, *, quality_policy=None) -> tuple[list[dict], dict]:
     """Normalize native rows, flag conflicts, and enforce [start, end).
 
     Unparseable UTC times fail the interval: they cannot safely advance a
@@ -181,6 +181,10 @@ def normalize_rows(rows: list, start: str | datetime, end: str | datetime) -> tu
         if previous.get("q") != row.get("q"):
             previous["source_quality_conflict"] = True
     normalized = [by_time[key] for key in sorted(by_time)]
+    if quality_policy is not None:
+        from .history_acquisition import observation_quality as quality
+        quality.validate_policy(quality_policy)
+        quality.attach(normalized, rows)
     counts = Counter(row["value_status"] for row in normalized)
     diagnostics = {"raw_row_count": len(rows), "row_count": len(normalized),
                    "duplicate_rows": duplicate_count, "outside_interval_rows": outside_count,
