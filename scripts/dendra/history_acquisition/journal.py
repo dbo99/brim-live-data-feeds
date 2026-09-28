@@ -43,8 +43,12 @@ class Journal:
         try:
             require(not (inspect_only and create), "Inspection cannot initialize state")
             if inspect_only:
-                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
                         "Unsupported historical journal format")
+            elif binding["mode"] == "task37_recovery_adapter":
+                from .recovery import validate_binding, validate_storage
+                validate_binding(binding, tasks, inventory=inventory)
+                validate_storage(binding, self.fs)
             elif binding["mode"] == "history_diagnostic_adapter":
                 from .history_diagnostic import validate_binding
                 validate_binding(binding, tasks)
@@ -62,7 +66,7 @@ class Journal:
                 validate_binding(binding, tasks)
             if not inspect_only:
                 require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"):
+            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"):
                 require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
@@ -232,6 +236,10 @@ class Journal:
         counters = dict(logical_requests=0, attempts=0, response_bytes=0, source_rows=0,
                         intervals=0, interval_runs=0, sessions=0, elapsed_ms=0,
                         unknown_row_responses=0)
+        if self.binding["mode"] == "task37_recovery_adapter":
+            # Immutable predecessor charges seed the same ledger. They are not
+            # successful pages, current attempts, cursors or a second budget.
+            counters.update(self.binding["predecessor"]["charges"])
         states = {key: dict(state="unqueried", latest_attempt=None, last_successful_source_check=None,
                            latest_source_observation=None, latest_eligible_daily_date=None,
                            complete=None, runs=0) for key in self.tasks}
@@ -275,7 +283,8 @@ class Journal:
                     latest_source_observation=data["latest_source_observation"])
             elif kind == "daily_evidence":
                 states[data["interval_key"]]["latest_eligible_daily_date"] = data["date"]
-        counters["logical_requests"], counters["intervals"] = len(logical), len(intervals)
+        counters["logical_requests"] += len(logical)
+        counters["intervals"] = len(intervals)
         for state in states.values():
             if state["state"] == "in_progress" and state["run_sequence"] < self.open_sequence:
                 state["state"] = "incomplete"
@@ -293,6 +302,9 @@ class Journal:
                    self.base_elapsed + int((self.monotonic() - self.open_mono) * 1000))
 
     def check_budget(self, increments=None):
+        if self.binding["mode"] == "task37_recovery_adapter":
+            from .recovery import check_window
+            check_window(self.binding, self.now())
         counts = self.snapshot()["counters"]
         if counts["unknown_row_responses"] != 0:
             raise UnknownSourceRowCount("Unknown source row count requires review")
@@ -316,7 +328,7 @@ class Journal:
     def start_run(self, key, *, recheck=False):
         require(key in self.tasks, "Unplanned interval")
         state = self.snapshot()["intervals"][key]
-        if self.binding["mode"] == "campaign_reviewed_adapter":
+        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter"):
             require(not recheck and not state["complete"], "Campaign seals are immutable; use fresh authorized state")
             require(not any(a["interval_key"] == key for a in self.snapshot()["attempts"].values()),
                     "Unsealed spent attempt requires operator review; retries are zero")
@@ -363,7 +375,7 @@ class Journal:
             require(not starts or (parse_utc(self.now()) - parse_utc(starts[-1]["at"])).total_seconds() >= 1,
                     "Witness request-start spacing")
             require(len(self.events) + 6 <= MAX_PLAN, "Journal capacity before witness dispatch")
-        if self.binding["mode"] == "campaign_reviewed_adapter":
+        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter"):
             require(interval_key is not None and not prior, "Campaign permits observations only and zero retries")
             require(not any(a.get("status") == 429 or a.get("service_failure") or
                         a.get("details", {}).get("error_code") in ("transport", "deadline")
@@ -423,7 +435,7 @@ class Journal:
             if self.binding["mode"] == "temporal_metadata_adapter":
                 require(not retain and details["kind"] in ("unit-vocabulary", "station", "datastream-list"),
                         "Temporal metadata receipts retain sanitized objects only")
-            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter"),
                     "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and
@@ -457,6 +469,9 @@ class Journal:
     def seal(self, key, run, envelope, attempt_keys):
         """Only a complete single-run source envelope may advance coverage."""
         require(self.binding["mode"] != "history_diagnostic_adapter", "Diagnostic sealing forbidden")
+        if self.binding["mode"] == "task37_recovery_adapter":
+            from .recovery import authorize
+            authorize(self, key, now=self.now())
         state = self.snapshot()
         task = self.tasks[key]
         require(run == state["intervals"][key]["runs"] and attempt_keys, "Seal run")
@@ -523,6 +538,9 @@ class Journal:
                       checked_at=envelope["retrieval_last_utc"],
                       latest_source_observation=envelope["latest_observation_utc"],
                       attempt_keys=attempt_keys, objects=[obj])
+        if self.binding["mode"] == "task37_recovery_adapter":
+            from .recovery import seal_lineage
+            result["recovery_lineage"] = seal_lineage(self, attempt_keys, envelope)
         self._append("sealed", result)
         return result
 

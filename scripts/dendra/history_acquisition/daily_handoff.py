@@ -52,6 +52,12 @@ def _manifest(root, expected):
 
 
 def _binding(binding, tasks, inventory, acquisition_fingerprint):
+    if binding["mode"] == "task37_recovery_adapter":
+        from .recovery import validate_binding
+        require(digest(binding["collector_sources"]) == _pin(acquisition_fingerprint),
+                "Recovery acquisition fingerprint differs")
+        validate_binding(binding, tasks, inventory=inventory)
+        return None
     require(type(inventory) is Inventory and binding["mode"] == "campaign_reviewed_adapter" and
             binding["version"] in ("dendra-campaign-execution-1", "dendra-campaign-execution-2") and
             digest(binding["collector_sources"]) == _pin(acquisition_fingerprint) and
@@ -179,6 +185,9 @@ def _seal(journal, key, state, inventory, fingerprint):
             envelope["retrieval_first_utc"] == envelope["pages"][0]["retrieved_at_utc"] and
             envelope["retrieval_last_utc"] == envelope["pages"][-1]["retrieved_at_utc"] == seal["checked_at"] and
             seal["state"] == ("complete_nonempty" if rows else "complete_empty"), "Seal clock/state mismatch")
+    if journal.binding["mode"] == "task37_recovery_adapter":
+        from .recovery import seal_lineage
+        require(seal.get("recovery_lineage") == seal_lineage(journal, keys, envelope), "Recovery seal lineage differs")
     return envelope, seal, attempts
 
 

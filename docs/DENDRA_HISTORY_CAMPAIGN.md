@@ -952,3 +952,80 @@ points. Public browser schemas, paths and rendering contracts remain unchanged.
 This implementation authorizes no publication, daily production or live retry.
 Task 37's original spent attempt and unsealed state are preserved; any future
 resume/accounting decision and current-source authority require separate review.
+
+### Explicit task-37 cross-source recovery (local only)
+
+`recovery.py` owns `dendra-task37-recovery-1`, a single approved incident
+transition using the existing `Journal` and `CampaignAdapter`. It is not a
+generic retry, source override, campaign migration, or suffix planner. The
+approved predecessor task/header and final anchor are fixed pins. Preparation
+opens its original Journal read-only, validates its original task and native
+decision, recomputes its receipt/anchor chain and charges, and checks the
+separately pinned historical authorization. The omitted failed body remains
+omitted; it supplies no observations, cursor, or query coverage.
+
+The predecessor task/campaign identity remains historical. A distinct recovery
+slot and execution key explicitly link that identity without repacking it.
+The retained `native_task` member supplies only the predecessor request and
+configuration ordinal; the Journal dispatch key is the distinct recovery key.
+The slot is stable across attempted changes to source, authority or window.
+The new binding separately records current HEAD, collector sources, campaign
+execution version, `dendra-observation-quality-1`, frozen interval/identity,
+configuration hashes, current native-review bundle and an explicitly accepted
+Journal-backed source-start review. Current metadata is not an identity rewrite.
+The complete configuration hash and the exact covering configuration window
+must match the predecessor. Source-start review does not substitute for native
+eligibility, access or temporal freshness checks.
+
+`prepare(...)` requires explicit predecessor and witness references, reviewed
+native authority and a recovery authorization containing a checkpoint, one
+absolute private output root, approval reference, start and deadline. It writes
+nothing. A future authorized caller may create the ordinary Journal from that
+binding, then use `CampaignAdapter.run`; no new client or acquisition CLI is
+added. Every reservation/dispatch path retains the current source, authority,
+privacy, configuration and request checks. Real dispatch is separately gated.
+
+The recovery authorization is a new immutable window of at most 600 seconds;
+the old expired window is retained verbatim. The real window must be supplied
+only by the later approved live invocation. Reopening the same binding cannot
+change the root or deadline, and the stable Journal registration rejects a
+replacement binding. A caller must reuse the approved root/binding; preparing
+another root or approval is not a permitted budget reset. Trusted approval and
+root preservation remain operator responsibilities, as for ordinary campaigns;
+hashes are integrity checks, not signatures or protection from deliberate
+deletion of all evidence.
+
+The Journal is the sole cumulative ledger. Its snapshot starts with the
+immutable predecessor's one attempt/logical request, 177,290 bytes and 2,016
+source rows, then adds durable recovery events. Limits are four cumulative
+attempts/requests, 33,554,432 cumulative bytes and 8,064 cumulative source rows.
+At most three new requests/pages remain. Each request still has a 2,016-row
+limit, 8 MiB body ceiling, 25-second deadline, serial execution, at least one
+second between request starts, zero retries and zero redirects. The three-body
+ceiling also remains binding even when cumulative bytes have unused capacity.
+Unknown accounting, failed or ambiguous new attempts remain spent and require
+review; restart does not silently replay even a received but unsealed page.
+
+Recovery begins at a new page 1 at the original interval start. Only complete,
+admitted, full pages with advancing last timestamps can supply page-2/page-3
+cursors. A short page may seal; a full third page holds. There is no fourth new
+page. Successful seals are reusable with zero requests. No task-38 state or
+other interval can be placed in this recovery binding.
+
+Recovered seals distinguish `PREDECESSOR_FAILED_ATTEMPT`, its immutable
+receipt/failure/anchor hashes, original authorization and charges, from
+`RECOVERY_ADMITTED_PAGES`, the new authorization and successful receipt keys.
+`QUERY_COMPLETE` is established entirely by the new sequence. The seal also
+records the quality disposition (including `OBSERVATIONS_QUARANTINED`) and
+cumulative charges. The failed predecessor is never required to masquerade as
+a successful retained page. Daily handoff verifies this lineage and consumes
+only new admitted pages, retaining predecessor references/charges in private
+lineage. Supported quality quarantine, pagination of all rows and fixed-PST
+day withholding remain unchanged; all-quarantined nonempty recovery cannot
+become covered-empty. Unknown unsafe quality remains a hard HOLD.
+
+Ordinary historical non-recovery bindings/seals retain their original reader.
+Recovery verification requires its pinned predecessor and witness evidence to
+remain available; it never rewrites those roots. No public schema, `core.R`,
+publication, authority acceptance, history execution or automatic continuation
+is authorized by this implementation.

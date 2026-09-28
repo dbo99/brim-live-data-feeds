@@ -74,6 +74,9 @@ def authorize_task(journal, key, *, now):
         raise Stop("Journal/source binding changed")
     if key not in journal.tasks:
         raise Stop("Task outside bound campaign")
+    if journal.binding["mode"] == "task37_recovery_adapter":
+        from .recovery import authorize
+        return authorize(journal, key, now=now)
     task = journal.tasks[key]
     sid = task["identity"]["stream_id"]
     bundle = journal.binding["reviewed_bundles"][sid]

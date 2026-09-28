@@ -633,7 +633,7 @@ class CampaignAdapter(Adapter):
         return details
 
     def __init__(self, journal):
-        require(journal.binding.get("mode") == "campaign_reviewed_adapter" and
+        require(journal.binding.get("mode") in ("campaign_reviewed_adapter", "task37_recovery_adapter") and
                 not journal.damage and not journal.inspect_only and journal.lock is not None,
                 "Writable reviewed campaign journal required")
         from .campaign import policy
@@ -807,6 +807,10 @@ class CampaignAdapter(Adapter):
         keys = list(self.journal.tasks) if task_keys is None else list(task_keys)
         require(len(set(keys)) == len(keys) and all(k in self.journal.tasks for k in keys),
                 "Exact unique planned task keys required")
+        if self.journal.binding["mode"] == "task37_recovery_adapter":
+            fixed = self.journal.binding["authorization"]["window_end"]
+            require(window_end is None or window_end == fixed, "Recovery deadline cannot be reset")
+            window_end = fixed
         if window_end is not None:
             require(0 < (parse_utc(window_end) - parse_utc(self.journal.now())).total_seconds() <=
                     self.journal.binding["request_policy"]["wall_seconds"],
