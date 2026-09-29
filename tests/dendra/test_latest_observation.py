@@ -142,14 +142,104 @@ class LatestTests(unittest.TestCase):
         self.assertEqual(point["normalized_percent"],25)
         self.assertEqual(e["scale"],self.bundle["decision"]["scale"])
         self.assertEqual(point["identity"],self.inv.identity(DEEP))
+        self.assertEqual(e["qa"]["identity_inherited_count"],0)
 
     def test_two_rows_newest_selected(self):
         self.run_latest(response([self.row(),dict(t=FIRST,v=.9,datastream_id=DEEP)]))
         self.assertEqual(self.project()["record"]["normalized_percent"],25)
 
-    def test_tied_newest_hold_even_equal_values(self):
-        with self.assertRaises(Hold): self.run_latest(response([self.row(),self.row()]))
+    def test_equal_tied_newest_accepts_one_with_private_qa(self):
+        rows=[self.row(),self.row()]
+        body=response(rows)
+        e=self.run_latest(body)
+        self.assertEqual(e["status"],"AVAILABLE")
+        self.assertEqual(self.project()["record"]["native_value"],.25)
+        self.assertEqual(e["source_rows"],2)
+        self.assertEqual(e["qa"]["newest_group_occurrence_count"],2)
+        self.assertEqual(e["qa"]["newest_group_duplicate_count"],1)
+        self.assertEqual(e["qa"]["newest_group_row_sha256"],[digest(r) for r in rows])
+        self.assertFalse(e["qa"]["newest_group_value_conflict"])
+        self.assertFalse(e["qa"]["newest_group_exhaustive"])
+        self.assertTrue(e["qa"]["newest_group_at_response_limit"])
+        self.assertEqual(self.j.read_object(e["response_object"]),body)
+        self.assertNotIn("qa",self.project())
+        self.assertEqual(set(self.project()["record"]),set(synthetic_latest()["record"]))
         self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+
+    def test_equal_zero_int_float_tie_preserved(self):
+        e=self.run_latest(response([dict(t=LATEST,v=0,datastream_id=DEEP),dict(t=LATEST,v=0.0)]))
+        self.assertEqual(e["status"],"AVAILABLE")
+        self.assertEqual(e["native_value"],0)
+        self.assertEqual(e["qa"]["identity_inherited_row_indices"],[1])
+        self.assertFalse(e["qa"]["newest_group_value_conflict"])
+
+    def test_tied_quality_veto_on_second_occurrence(self):
+        e=self.run_latest(response([self.row(),self.row(q={"flag":["private-veto"]})]))
+        self.assertEqual(e["status"],"UNAVAILABLE")
+        self.assertEqual(e["reason"],"provider_quality_quarantined")
+        self.assertTrue(e["quality"]["quarantined"])
+        self.assertEqual(e["state"]["latest_quality_disposition"],e["quality"])
+        self.assertEqual(e["quality"]["alternatives"][1]["source_occurrences"],[1])
+        self.assertIsNone(self.project()["record"])
+        self.assertNotIn(b"private-veto",encode(e))
+
+    def test_tied_quality_veto_on_first_occurrence(self):
+        e=self.run_latest(response([self.row(q={"flag":["private-veto"]}),self.row()]))
+        self.assertEqual(e["status"],"UNAVAILABLE")
+        self.assertTrue(e["quality"]["quarantined"])
+        self.assertIsNone(e["native_value"])
+
+    def test_tied_absent_and_null_quality_no_veto(self):
+        e=self.run_latest(response([self.row(),self.row(q=None)]))
+        self.assertEqual(e["status"],"AVAILABLE")
+        self.assertFalse(e["quality"]["quarantined"])
+        self.assertEqual(len(e["quality"]["alternatives"]),2)
+
+    def test_conflicting_newest_no_winner_or_older_fallback(self):
+        rows=[self.row(),dict(t=LATEST,v=.9,datastream_id=DEEP)]
+        body=response(rows)
+        e=self.run_latest(body)
+        self.assertEqual((e["status"],e["reason"]),("UNAVAILABLE","conflicting_latest_values"))
+        self.assertIsNone(e["selected_row_sha256"])
+        self.assertIsNone(e["native_value"])
+        self.assertIsNone(e["normalized_percent"])
+        self.assertIsNone(e["state"]["latest_eligible_source_timestamp"])
+        self.assertEqual(e["source_timestamp"],LATEST)
+        self.assertTrue(e["qa"]["newest_group_value_conflict"])
+        self.assertEqual(e["source_rows"],2)
+        self.assertEqual(self.j.read_object(e["response_object"]),body)
+        self.assertIsNone(self.project()["record"])
+        self.assertEqual(len(self.calls),1)
+        self.assertEqual(self.j.snapshot()["intervals"],{})
+
+    def test_conflict_disposition_independent_of_provider_tie_order(self):
+        e=self.run_latest(response([dict(t=LATEST,v=.9,datastream_id=DEEP),self.row()]))
+        self.assertEqual(e["reason"],"conflicting_latest_values")
+        self.assertIsNone(e["selected_row_sha256"])
+        self.assertIsNone(self.project()["record"])
+
+    def test_tied_null_cannot_promote_other_value(self):
+        e=self.run_latest(response([dict(t=LATEST,v=None,datastream_id=DEEP),self.row()]))
+        self.assertEqual(e["reason"],"conflicting_latest_values")
+        self.assertIsNone(self.project()["record"])
+
+    def test_tied_missing_cannot_promote_other_value(self):
+        e=self.run_latest(response([self.row(),dict(t=LATEST,datastream_id=DEEP)]))
+        self.assertEqual(e["reason"],"conflicting_latest_values")
+        self.assertIsNone(self.project()["record"])
+
+    def test_tied_null_missing_stays_unavailable(self):
+        e=self.run_latest(response([dict(t=LATEST,v=None),dict(t=LATEST)]))
+        self.assertEqual(e["reason"],"missing_latest_value")
+        self.assertIsNone(self.project()["record"])
+
+    def test_tied_wrong_stream_still_hard_hold(self):
+        with self.assertRaises(Hold):self.run_latest(response([self.row(),dict(t=LATEST,v=.25,datastream_id=CAMP)]))
+        self.assertFalse(next(iter(self.j.snapshot()["attempts"].values()))["body_retained"])
+
+    def test_tied_unsafe_quality_still_hard_hold(self):
+        with self.assertRaises(Hold):self.run_latest(response([self.row(),self.row(q={"unsafe":[]})]))
+        self.assertFalse(next(iter(self.j.snapshot()["attempts"].values()))["body_retained"])
 
     def test_ascending_response_hold(self):
         with self.assertRaises(Hold): self.run_latest(response([dict(t=FIRST,v=.1,datastream_id=DEEP),self.row()]))
@@ -160,8 +250,61 @@ class LatestTests(unittest.TestCase):
     def test_wrong_returned_stream_hold(self):
         with self.assertRaises(Hold): self.run_latest(response([dict(t=LATEST,v=.25,datastream_id=CAMP)]))
 
-    def test_missing_returned_stream_hold(self):
-        with self.assertRaises(Hold): self.run_latest(response([dict(t=LATEST,v=.25)]))
+    def test_missing_returned_stream_inherits_bound_request(self):
+        rows=[dict(t=LATEST,v=.25),dict(t=FIRST,v=.9)]
+        body=response(rows)
+        e=self.run_latest(body)
+        self.assertEqual(e["status"],"AVAILABLE")
+        self.assertEqual(e["qa"]["identity_inherited_row_indices"],[0,1])
+        self.assertEqual(e["qa"]["identity_inherited_count"],2)
+        self.assertEqual(e["qa"]["newest_group_occurrence_count"],1)
+        self.assertEqual(e["identity"],self.inv.identity(DEEP))
+        self.assertEqual(self.j.read_object(e["response_object"]),body)
+        self.assertEqual(latest.evidence(self.j,evaluated_at=self.clock.now()),e)
+
+    def test_present_null_stream_is_not_absence(self):
+        with self.assertRaises(Hold):self.run_latest(response([dict(t=LATEST,v=.25,datastream_id=None)]))
+
+    def test_unsupported_stream_types_are_not_absence(self):
+        self.setup_journal()
+        for sid in (True,42,[],{},""):
+            with self.subTest(sid=sid),self.assertRaises(Hold):
+                latest.response_shape(response([dict(t=LATEST,v=.25,datastream_id=sid)]),
+                                      self.binding,retrieved_at=self.clock.now())
+
+    def test_inheritance_requires_exact_single_stream_descriptor(self):
+        b,_=self.prepare()
+        for ids in ([],[DEEP,CAMP],[DEEP,DEEP]):
+            bad=copy.deepcopy(b);bad["selected_ids"]=ids
+            with self.subTest(ids=ids),self.assertRaises(Hold):
+                latest.response_shape(response([dict(t=LATEST,v=.25)]),bad,retrieved_at=self.clock.now())
+        for url in (latest.BASE+"datapoints?%24limit=2&%24sort%5Btime%5D=-1",
+                    b["request"]["url"]+"&datastream_id="+CAMP,b["request"]["url"].replace(DEEP,CAMP)):
+            bad=copy.deepcopy(b);bad["request"]["url"]=url
+            with self.subTest(url=url),self.assertRaises(Hold):
+                latest.response_shape(response([dict(t=LATEST,v=.25)]),bad,retrieved_at=self.clock.now())
+
+    def test_inheritance_cannot_bypass_changed_request(self):
+        self.setup_journal();self.j.binding["request"]["url"]+="&datastream_id="+CAMP
+        with self.assertRaises(Hold):self.run_latest(response([dict(t=LATEST,v=.25)]))
+        self.assertEqual(self.calls,[])
+
+    def test_inheritance_cannot_bypass_changed_source(self):
+        self.setup_journal()
+        changed=dict(source_binding());changed["history_acquisition/latest_observation.py"]="0"*64
+        with patch.object(latest,"source_binding",return_value=changed),self.assertRaises(Hold):
+            self.run_latest(response([dict(t=LATEST,v=.25)]))
+        self.assertEqual(self.calls,[])
+
+    def test_inherited_row_evidence_still_checks_journal_provenance(self):
+        self.run_latest(response([dict(t=LATEST,v=.25)]))
+        self.j.events[-1]["data"]["response_sha256"]="0"*64
+        with self.assertRaises(Hold):self.project()
+
+    def test_inherited_row_evidence_still_checks_original_object(self):
+        e=self.run_latest(response([dict(t=LATEST,v=.25)]))
+        path=self.root/self.j.prefix/e["response_object"]["path"];path.write_bytes(b"{}")
+        with self.assertRaises(Hold):self.project()
 
     def test_malformed_time_hold(self):
         with self.assertRaises((Hold,ValueError)): self.run_latest(response([dict(t="yesterday",v=.25,datastream_id=DEEP)]))
@@ -513,13 +656,12 @@ class LatestDiagnosticTests(unittest.TestCase):
         self.assertEqual(many["rows"],[])
         with self.assertRaises(Hold):self.projection(b" "*(8*1024**2+1))
 
-    def test_production_rejections_unchanged(self):
+    def test_production_timestamp_rejections_unchanged(self):
         ordinary,_=latest.prepare(self.inv,campaign_id="latest-proof",sid=DEEP,bundle=self.bundle,
             first_ref=self.first,authorization=self.authorization,now=self.clock.now())
-        for raw in (response([dict(t=LATEST,v=.2)]),
-                    response([dict(t="1899-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)]),
+        for raw in (response([dict(t="1899-01-01T00:00:00.000Z",v=.2)]),
                     response([dict(t="2099-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)])):
-            with self.subTest(raw=raw),self.assertRaisesRegex(Hold,"Latest stream/source timestamp invalid"):
+            with self.subTest(raw=raw),self.assertRaisesRegex(Hold,"Latest source timestamp invalid"):
                 latest.response_shape(raw,ordinary,retrieved_at=self.clock.now())
 
     def test_diagnostic_cannot_enter_production_or_history(self):

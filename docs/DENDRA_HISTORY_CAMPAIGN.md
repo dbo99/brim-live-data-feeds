@@ -1117,11 +1117,41 @@ attempt remains spent; reopening, renaming the campaign or relocating the approv
 reset its single-attempt budget. A separate future approval is not implied.
 
 Zero rows is a valid UNAVAILABLE check. One valid row can supply the newest
-point. Two rows must be strictly descending; tied newest timestamps hold even
-if their values match. Wrong/absent stream identity, unsupported schema, unsafe
-quality, ambiguous configuration or provenance failure holds. The optional
-`total`, when present, remains a nonnegative integer covering returned rows;
-top-two completion is not historical query completeness.
+point. Rows must be in descending source-time order, allowing equal timestamps.
+Only an absent row `datastream_id` inherits the exact selected request identity;
+private QA records the inherited row indices/count. A supplied null, unsupported
+type or different ID holds. Unfiltered, multi-stream, substituted or ambiguous
+requests cannot inherit identity. Full source/checkpoint, authority/configuration,
+reservation/start/receipt and original-object bindings remain mandatory. Original
+rows are never rewritten to insert an ID. Unsupported schema, unsafe quality,
+ambiguous configuration or provenance failure still holds. The optional `total`,
+when present, remains a nonnegative integer covering returned rows; top-two
+completion is not historical query completeness.
+
+Equal newest timestamps with equal finite native values yield one logical latest
+observation, without averaging or double-counting. One owner-local group selector
+uses the existing quality policy to combine all returned occurrences: any quality
+veto makes the timestamp unavailable. Differing values yield UNAVAILABLE with
+`conflicting_latest_values`, no selected row/value, and no older-row substitution.
+A null/missing value tied with a number cannot promote that number; all-null or
+missing groups remain unavailable. Original contradictory occurrences remain in
+the private admitted response object. No sensor, depth, configuration or unit is
+selected or averaged across identities.
+
+Private evidence `qa` binds inheritance counts/indices, newest occurrence and
+duplicate counts, occurrence hashes, value conflict and response-limit facts.
+`newest_group_exhaustive=false` explicitly avoids a full-group coverage claim:
+agreement among two returned tied rows cannot prove that no third occurrence
+exists. This limitation is accepted for the bounded screening proof; it grants
+no pagination or extra request. A singleton retains the existing quality claim;
+a tied group uses the existing quality alternatives/occurrences and combined veto.
+These private QA fields do not enter the frozen browser marker or record.
+
+Localized degradation separates preserved acquisition evidence, a timestamp's
+scientific usability and later stream processing. Conflicting/unusable latest
+groups are unavailable rather than a pipeline-wide failure; identity, provenance
+and unsafe parsing failures remain hard holds at the affected request. There is
+no fabrication, interpolation, forward fill, zero fill or altered daily science.
 
 The unchanged `dendra-observation-quality-1` controls native retention. Absent
 and explicit-null quality impose no veto; its existing empty-claim behavior is
@@ -1200,6 +1230,12 @@ privacy/identity admission: those receipt classifications stay `not_evaluated`,
 and effective limit/page-completion admission fields stay null. Transport,
 decoding or resource failures may instead leave an omitted-body spent receipt
 without a diagnostic result. No automatic retry follows either outcome.
+
+The diagnostic's version-1 predicates remain unchanged: they report raw field
+presence and strict order, so absent IDs or equal timestamps can still produce
+a diagnostic rejection even though the bound production route now handles them.
+Its classification is not a production-admission oracle. Stored outcomes are
+not reclassified; sanitized diagnostic evidence can never supply a latest point.
 
 Before writing the object, the Journal recomputes the exact safe projection
 against the original in-memory response and receipt retrieval time. The received

@@ -156,7 +156,13 @@ def validate_storage(binding, fs):
 
 def response_shape(body, binding, *, retrieved_at):
     require(binding["version"] == VERSION, "Diagnostic is never latest admission")
+    require(type(binding["selected_ids"]) is list and len(binding["selected_ids"]) == 1,
+            "Exact single-stream latest request required")
     sid = binding["selected_ids"][0]
+    require(binding["request"] == RequestSpec(binding["roster"][sid]["station_id"], sid).descriptor(),
+            "Exact single-stream latest request required")
+    # Shared admission inherits only absent IDs; supplied null/wrong IDs refuse.
+    # Dispatch and _receipt separately verify the full authority/Journal binding.
     value = observation_shape(body, sid, quality_policy=binding["quality_policy"])
     rows = value["data"]
     require(value["limit"] == 2 and len(rows) <= 2 and value.get("skip", 0) == 0 and
@@ -165,8 +171,7 @@ def response_shape(body, binding, *, retrieved_at):
     times = []
     for row in rows:
         at = parse_utc(row["t"])
-        require(row.get("datastream_id") == sid and 1900 <= at.year and at <= parse_utc(retrieved_at),
-                "Latest stream/source timestamp invalid")
+        require(1900 <= at.year and at <= parse_utc(retrieved_at), "Latest source timestamp invalid")
         require(parse_utc(binding["authority"]["source_start"]["start"]) <= at and
                 parse_utc(decision["scope"]["start"]) <= at < parse_utc(decision["scope"]["end"]),
                 "Latest outside reviewed source/native scope")
@@ -177,8 +182,33 @@ def response_shape(body, binding, *, retrieved_at):
                 abs(row["v"]) <= 1e308 and math.isfinite(row["v"])),
                 "Malformed latest value")
         times.append(at)
-    require(len(times) < 2 or times[0] > times[1], "Latest tied/non-descending source timestamps")
+    require(len(times) < 2 or times[0] >= times[1], "Latest non-descending source timestamps")
     return value
+
+
+def _latest_group(rows):
+    """Select only within admitted newest rows; keep originals and QA private.
+
+    A limit-two tie is agreement/conflict among returned occurrences, never
+    proof of exhaustive timestamp-group coverage. No older-row fallback.
+    """
+    group = [r for r in rows if parse_utc(r["t"]) == parse_utc(rows[0]["t"])] if rows else []
+    conflict = any(r.get("v") != group[0].get("v") for r in group)
+    inherited = [i for i, r in enumerate(rows) if "datastream_id" not in r]
+    qa = dict(identity_inherited_row_indices=inherited, identity_inherited_count=len(inherited),
+        newest_group_occurrence_count=len(group), newest_group_duplicate_count=max(0, len(group)-1),
+        newest_group_row_sha256=[digest(r) for r in group], newest_group_value_conflict=conflict,
+        newest_group_exhaustive=False, newest_group_at_response_limit=len(group) == 2)
+    if not group:
+        return None, None, qa
+    if len(group) == 1:
+        disposition = quality.classify(group[0])
+    else:
+        # Reuse the history policy's union of claims and source occurrences.
+        derived = {"t": format_utc(parse_utc(group[0]["t"]))}
+        quality.attach([derived], group)
+        disposition = derived["quality"]
+    return None if conflict else group[0], disposition, qa
 
 
 def diagnostic_projection(body, binding, *, retrieved_at):
@@ -341,18 +371,19 @@ def evidence(journal, *, evaluated_at, live_proof=False):
     if live_proof:
         require(b["checkpoint"] == checkpoint() and b["collector_sources"] == source_binding() and
                 age <= MAX_PROOF_RECEIPT_AGE_SECONDS, "Fresh current-source proof receipt required")
-    row = payload["data"][0] if payload["data"] else None
-    disposition = quality.classify(row) if row is not None else None
+    row, disposition, qa = _latest_group(payload["data"])
     scale = b["bundle"]["decision"]["scale"]
     factor = scale["conversion_factor"]
     status, reason, native, normalized = "UNAVAILABLE", "empty_latest_response", None, None
-    if row is not None:
+    if qa["newest_group_value_conflict"]:
+        reason = "conflicting_latest_values"
+    elif row is not None:
         reason = "provider_quality_quarantined" if disposition["quarantined"] else "missing_latest_value"
         if not disposition["quarantined"] and row.get("v") is not None:
             native, normalized = row["v"], row["v"] * factor
             require(math.isfinite(normalized) and 0 <= normalized <= 100, "Latest resolved display bounds")
             status, reason = "AVAILABLE", "verified_private_latest_witness"
-    stamp = row["t"] if row is not None else None
+    stamp = payload["data"][0]["t"] if payload["data"] else None
     source_age = None if stamp is None else (parse_utc(evaluated_at)-parse_utc(stamp)).total_seconds()
     result = dict(schema_version=VERSION, checkpoint=b["checkpoint"], collector_fingerprint=digest(b["collector_sources"]),
         identity=b["roster"][b["selected_ids"][0]], configuration_sha256=b["authority"]["configuration_sha256"],
@@ -362,7 +393,7 @@ def evidence(journal, *, evaluated_at, live_proof=False):
         response_object=a["objects"][0], source_rows=a["source_rows"], requested_at=d["requested_at"],
         retrieved_at=d["retrieved_at"], evaluated_at=format_utc(evaluated_at), source_timestamp=stamp,
         selected_row_sha256=None if row is None else digest(row), native_value=native,
-        normalized_percent=normalized, scale=scale, quality=disposition, status=status, reason=reason,
+        normalized_percent=normalized, scale=scale, quality=disposition, qa=qa, status=status, reason=reason,
         observation_age_seconds=source_age, retrieval_age_seconds=age, history_coverage=False,
         publication_allowed=False, current_state_claim=False,
         state=dict(latest_request_attempt_time=d["requested_at"], last_successful_source_check=d["retrieved_at"],
