@@ -133,6 +133,65 @@ class PackageTests(unittest.TestCase):
         self.run_package()
         self.assertTrue(all(b[2]-a[2]>=1 for a,b in zip(self.calls,self.calls[1:])))
 
+    def test_advancing_clock_child_windows_capture_once(self):
+        from dendra.history_acquisition import provider_adapter
+        class AdvancingClock(Clock):
+            def __init__(self):self.reads=[]
+            def now(self):
+                stamp=super().now();self.reads.append(stamp)
+                self.advance(0.001)
+                return stamp
+        self.clock=AdvancingClock();self.configure([OTHER]);windows=[]
+        def observe(adapter_type,seconds):
+            def construct(journal):
+                adapter=adapter_type(journal);run=adapter.run;before=len(self.clock.reads)
+                def checked(**kwargs):
+                    approval=kwargs['authorization']
+                    windows.append((seconds,copy.deepcopy(approval),self.clock.reads[before:]))
+                    # Exercise the unchanged production validator and adapters.
+                    return run(**kwargs)
+                adapter.run=checked
+                return adapter
+            return construct
+        with patch.object(m,'MetadataAdapter',side_effect=observe(m.MetadataAdapter,150)), \
+             patch.object(provider_adapter,'WitnessAdapter',side_effect=observe(provider_adapter.WitnessAdapter,60)):
+            result=self.run_package()
+        self.assertEqual([seconds for seconds,_,_ in windows],[150,60])
+        for seconds,approval,reads in windows:
+            self.assertEqual(reads,[approval['window_start']])
+            self.assertEqual((parse_utc(approval['window_end'])-parse_utc(approval['window_start'])).total_seconds(),seconds)
+        self.assertTrue(all(parse_utc(b)>parse_utc(a) for a,b in zip(self.clock.reads,self.clock.reads[1:])))
+        self.assertEqual(len(self.calls),4)
+        self.assertIn('packet',result[OTHER]['metadata']);self.assertIn('witness',result[OTHER])
+
+    def test_child_window_clipped_to_parent_deadline(self):
+        self.configure([OTHER]);deadline=format_utc(parse_utc(NOW)+timedelta(seconds=10))
+        self.approval['window_end']=deadline
+        run=m.MetadataAdapter.run;windows=[]
+        def checked(adapter,**kwargs):
+            windows.append(copy.deepcopy(kwargs['authorization']))
+            return run(adapter,**kwargs)
+        with patch.object(m.MetadataAdapter,'run',checked):result=self.run_package()
+        self.assertEqual(len(windows),1)
+        self.assertEqual(windows[0]['window_end'],deadline)
+        self.assertEqual((parse_utc(windows[0]['window_end'])-parse_utc(windows[0]['window_start'])).total_seconds(),10)
+        self.assertIn('witness',result[OTHER])
+
+    def test_malformed_or_oversized_child_window_still_refused(self):
+        self.configure([OTHER]);run=m.MetadataAdapter.run
+        for seconds in (-1,0,150.001):
+            with self.subTest(seconds=seconds):
+                def altered(adapter,**kwargs):
+                    approval=copy.deepcopy(kwargs['authorization'])
+                    approval['window_end']=format_utc(parse_utc(approval['window_start'])+timedelta(seconds=seconds))
+                    return run(adapter,**dict(kwargs,authorization=approval))
+                with patch.object(m.MetadataAdapter,'run',altered),self.assertRaisesRegex(Hold,'Metadata runner window'):
+                    self.run_package()
+                self.assertEqual(self.calls,[])
+                with self.journal(p.metadata_campaign_id(self.package,ROSTER[OTHER]['station_id'])) as j:
+                    self.assertEqual(j.events,[])
+                    self.assertEqual(j.snapshot()['counters']['attempts'],0)
+
     def test_station_privacy_failure_isolated(self):
         failed=ROSTER[IDS[0]]['station_id']
         def mutate(k,i,v):

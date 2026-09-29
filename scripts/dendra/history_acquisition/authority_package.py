@@ -293,8 +293,9 @@ def _run_locked(root, fs, package, inventory, authority, approval, executor, wai
         return executor(request,timeout=min(timeout,(end-at).total_seconds()))
 
     def child_approval(j,seconds):
+        start = parse_utc(now())
         return dict(binding_sha256=j.binding_sha,approval_reference=approval["approval_reference"],
-            window_start=format_utc(now()),window_end=format_utc(min(end,parse_utc(now())+timedelta(seconds=seconds))))
+            window_start=format_utc(start),window_end=format_utc(min(end,start+timedelta(seconds=seconds))))
 
     results = {}
     for station,ids in station_groups(package).items():
