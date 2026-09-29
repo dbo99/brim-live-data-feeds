@@ -135,11 +135,12 @@ def validate_binding(binding, tasks=None):
         require(list(tasks) == sorted(tasks), "Canonical D3 plan page order required")
 
 
-def validate_receipt_details(details, *, witness=False):
+def validate_receipt_details(details, *, witness=False, latest=False):
     require(isinstance(details, dict) and set(details) == {"kind", "outcome", "requested_at", "retrieved_at",
         "duration_ms", "retryable", "retry_after_seconds", "effective_limit", "page_complete",
         "privacy", "identity", "error_code"}, "Receipt detail allowlist")
-    kinds = {"authority-witness"} if witness else {"unit-vocabulary", "station", "datastream-list", "observations"}
+    require(not (witness and latest), "Distinct witness receipt kinds")
+    kinds = {"latest-witness"} if latest else {"authority-witness"} if witness else {"unit-vocabulary", "station", "datastream-list", "observations"}
     require(details["kind"] in kinds and
             details["outcome"] in {"received", "retry", "hold", "failure"}, "Receipt classification")
     require(parse_utc(details["requested_at"]) <= parse_utc(details["retrieved_at"]), "Receipt time order")

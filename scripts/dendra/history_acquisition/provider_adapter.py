@@ -368,6 +368,10 @@ class Adapter:
         task = ("witness-" + spec.selected_stream) if witness else interval_key or ("unit-vocabulary" if spec.kind == "unit-vocabulary"
                                 else "metadata-" + spec.selected_stream)
         cursor = self.journal.binding["witness_requests"][task]["request_id"] if witness else spec.cursor if interval_key else spec.kind
+        latest = spec.kind == "latest-witness"
+        if latest:
+            require(self.journal.binding["mode"] == "latest_evidence_adapter", "Latest journal required")
+            task, cursor = "latest-witness", self.journal.binding["request_id"]
         if diagnostic:
             task, cursor = "history-diagnostic", self.journal.binding["request_id"]
         key = self._persist(self.journal.reserve, task, cursor, interval_key=interval_key, run=run)
@@ -438,6 +442,12 @@ class Adapter:
                         value = response_shape(body, spec.selected_stream, retrieved_at=self.journal.now())
                         details.update(effective_limit=1, page_complete=True)
                         retain = True
+                    elif latest:
+                        from .latest_observation import response_shape
+                        value = response_shape(body, self.journal.binding, retrieved_at=self.journal.now())
+                        # Complete bounded top-two selection, never interval coverage.
+                        details.update(effective_limit=2, page_complete=True)
+                        retain = True
                     elif spec.kind == "observations":
                         value = observation_shape(body, spec.selected_stream,
                             quality_policy=self.journal.binding.get("quality_policy"))
@@ -449,7 +459,7 @@ class Adapter:
                         if spec.kind == "datastream-list":
                             details.update(effective_limit=payload["limit"], page_complete=True)
                 except (Hold, ValueError, TypeError, KeyError, RecursionError) as exc:
-                    if isinstance(exc, Deadline) or spec.kind == "observations":
+                    if isinstance(exc, Deadline) or spec.kind == "observations" or latest:
                         raise
                     if witness:
                         raise WitnessAdmissionHold(body, self.journal.binding["witness_requests"][task], status, exc) from None

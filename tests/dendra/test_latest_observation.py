@@ -1,0 +1,391 @@
+"""Offline latest requests use real preparation, Journal, Adapter and review guards."""
+import copy
+from datetime import timedelta
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qs, urlsplit
+
+import test_authority_witness as fixture
+from test_browser_projection import synthetic_latest
+from dendra.history_acquisition import latest_observation as latest, eligibility, authority_witness as witness
+from dendra.history_acquisition.browser_projection import validate_latest
+from dendra.history_acquisition.d3_plan import validate_request
+from dendra.history_acquisition.journal import Journal
+from dendra.history_acquisition.model import source_binding
+from dendra.history_acquisition.provider_adapter import WitnessAdapter
+from dendra.history_acquisition.recovery import checkpoint, open_evidence
+from dendra.history_acquisition.safety import Hold, decode, digest, encode
+from dendra.transport import parse_utc, format_utc
+
+NOW, FIRST = fixture.NOW, fixture.FIRST
+DEEP, CAMP = fixture.OTHER, fixture.SID
+LATEST = "2026-09-26T13:59:00.123Z"
+
+
+def root(name):
+    return Path(tempfile.mkdtemp(prefix=name, dir=os.environ["DENDRA_TEST_ROOT"]))
+
+
+def response(rows=None, **envelope):
+    return encode(dict(data=rows if rows is not None else [dict(t=LATEST, v=.25, datastream_id=DEEP)],
+                       limit=2, **envelope))
+
+
+class LatestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fixture.setUpModule()
+        cls.inv = fixture.INV
+        cls.head, cls.fp = checkpoint(), digest(source_binding())
+        cls.authorities = {}
+        for sid in (DEEP, CAMP):
+            packet = fixture.packet(sid)
+            clock = fixture.Clock()
+            location = root("latest-first-")
+            binding, tasks = witness.prepare(cls.inv, campaign_id="accepted-first", packets={sid:packet}, as_of=NOW)
+            with Journal(location, binding, tasks, create=True, inventory=cls.inv,
+                         now=clock.now, monotonic=clock.monotonic) as j:
+                WitnessAdapter(j).run(executor=lambda request, timeout:fixture.Reply(fixture.body(sid)),
+                    wait=clock.advance, authorization=dict(binding_sha256=digest(binding),
+                    approval_reference="synthetic-only", window_start=NOW,
+                    window_end=format_utc(parse_utc(NOW)+timedelta(seconds=60))))
+                e = witness.evidence(j, sid)
+            first = dict(root=str(location), campaign_id="accepted-first", review=dict(rule=witness.REVIEW,
+                disposition="ACCEPT_SOURCE_START", evidence_sha256=e["evidence_sha256"],
+                reviewer_ref="synthetic-review", reviewed_at=NOW))
+            review = eligibility.propose(cls.inv, encode(packet), packet_sha256=digest(packet),
+                packet_source_fingerprint=cls.fp, executor_fingerprint=cls.fp,
+                start=FIRST, end="2026-09-27T14:00:00.000Z")
+            review.update(disposition="ACCEPT_NATIVE", reviewer_ref="synthetic-review", reviewed_at=NOW,
+                expires_at="2026-09-27T14:00:00.000Z", acknowledgements=list(eligibility.ACKNOWLEDGEMENTS))
+            decision = eligibility.decide(cls.inv, encode(packet), review, executor_fingerprint=cls.fp, now=NOW)
+            cls.authorities[sid] = dict(packet=packet, review=review, decision=decision), first
+
+    def setUp(self):
+        self.clock, self.calls, self.j = fixture.Clock(), [], None
+        self.clock.advance(2)
+        self.root = root("latest-")
+        self.bundle, self.first = copy.deepcopy(self.authorities[DEEP])
+        self.authorization = dict(checkpoint=self.head, root=str(self.root), approval_reference="synthetic-only",
+            window_start=NOW, window_end=format_utc(parse_utc(NOW)+timedelta(seconds=300)),
+            previous_request_started_at=NOW)
+
+    def prepare(self, sid=DEEP):
+        return latest.prepare(self.inv, campaign_id="latest-proof", sid=sid, bundle=self.bundle,
+            first_ref=self.first, authorization=self.authorization, now=self.clock.now())
+
+    def setup_journal(self, sid=DEEP):
+        self.binding, self.tasks = self.prepare(sid)
+        self.j = Journal(self.root, self.binding, self.tasks, create=True, inventory=self.inv,
+                         now=self.clock.now, monotonic=self.clock.monotonic)
+        self.addCleanup(self.j.close)
+        self.adapter = latest.LatestAdapter(self.j)
+
+    def run_latest(self, body=None, executor=None, sid=DEEP):
+        if self.j is None:
+            self.setup_journal(sid)
+        def execute(request, timeout):
+            self.assertLessEqual(timeout,25)
+            self.assertEqual([e["kind"] for e in self.j.events][-2:],["reserved","started"])
+            self.j.verify_records()
+            self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+            self.calls.append(request.full_url)
+            self.clock.advance(.25)
+            return fixture.Reply(response() if body is None else body)
+        return self.adapter.run(executor=executor or execute, wait=self.clock.advance, authorization=self.authorization)
+
+    def project(self, **kwargs):
+        return latest.project(self.j, evaluated_at=self.clock.now(), **kwargs)
+
+    def row(self, **changes):
+        return dict(t=LATEST, v=.25, datastream_id=DEEP, **changes)
+
+    def test_exact_request_and_deterministic_preparation(self):
+        a, tasks = self.prepare()
+        self.assertEqual((a,tasks),self.prepare())
+        self.assertEqual(tasks,{})
+        self.assertEqual(parse_qs(urlsplit(a["request"]["url"]).query),
+            {"datastream_id":[DEEP],"$sort[time]":["-1"],"$limit":["2"]})
+        self.assertEqual(a["budgets"]["attempts"],1)
+        self.setup_journal()
+        self.assertEqual(self.adapter.plan(),[a["request"]])
+
+    def test_request_substitutions_refused(self):
+        spec = latest.RequestSpec(self.inv.identity(DEEP)["station_id"],DEEP)
+        for url in (spec.url().replace("%24limit=2","%24limit=1"), spec.url()+"&skip=1",
+                    spec.url()+"&time[$gte]=2024-01-01",spec.url().replace("=-1","=1"),
+                    spec.url().replace(DEEP,CAMP)):
+            with self.subTest(url=url), self.assertRaises(Hold):
+                validate_request(urllib.request.Request(url),spec)
+
+    def test_wrong_station_stream(self):
+        for station,sid in (("0"*24,DEEP),(self.inv.identity(DEEP)["station_id"],CAMP)):
+            with self.subTest(sid=sid), self.assertRaises(Hold): latest.RequestSpec(station,sid).url()
+
+    def test_empty_is_unavailable_without_total(self):
+        e = self.run_latest(response([]))
+        self.assertEqual(e["status"],"UNAVAILABLE")
+        self.assertIsNone(self.project()["record"])
+        self.assertIsNone(e["state"]["source_age_seconds"])
+        self.assertEqual(e["state"]["last_successful_source_check"], e["retrieved_at"])
+
+    def test_one_row_available_exact_time_and_scale(self):
+        e = self.run_latest()
+        point = self.project()["record"]
+        self.assertEqual(point["source_timestamp"],LATEST)
+        self.assertEqual(point["native_value"],.25)
+        self.assertEqual(point["normalized_percent"],25)
+        self.assertEqual(e["scale"],self.bundle["decision"]["scale"])
+        self.assertEqual(point["identity"],self.inv.identity(DEEP))
+
+    def test_two_rows_newest_selected(self):
+        self.run_latest(response([self.row(),dict(t=FIRST,v=.9,datastream_id=DEEP)]))
+        self.assertEqual(self.project()["record"]["normalized_percent"],25)
+
+    def test_tied_newest_hold_even_equal_values(self):
+        with self.assertRaises(Hold): self.run_latest(response([self.row(),self.row()]))
+        self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+
+    def test_ascending_response_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t=FIRST,v=.1,datastream_id=DEEP),self.row()]))
+
+    def test_third_row_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([self.row()]*3))
+
+    def test_wrong_returned_stream_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t=LATEST,v=.25,datastream_id=CAMP)]))
+
+    def test_missing_returned_stream_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t=LATEST,v=.25)]))
+
+    def test_malformed_time_hold(self):
+        with self.assertRaises((Hold,ValueError)): self.run_latest(response([dict(t="yesterday",v=.25,datastream_id=DEEP)]))
+
+    def test_future_timestamp_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t="2026-09-26T15:00:00Z",v=.25,datastream_id=DEEP)]))
+
+    def test_outside_reviewed_scope_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t="2020-01-01T00:00:00Z",v=.25,datastream_id=DEEP)]))
+
+    def test_q_absent_eligible(self):
+        e=self.run_latest()
+        self.assertEqual(e["quality"]["presence"],"NO_PROVIDER_QUALITY_CLAIM")
+        self.assertEqual(e["status"],"AVAILABLE")
+
+    def test_q_null_eligible(self):
+        e=self.run_latest(response([self.row(q=None)]))
+        self.assertEqual(e["quality"]["presence"],"EXPLICIT_NULL")
+        self.assertEqual(e["status"],"AVAILABLE")
+
+    def test_quarantine_no_fallback_or_leak(self):
+        private=dict(flag=["private-quality"],annotation_ids=["private-annotation"])
+        body=response([self.row(q=private),dict(t=FIRST,v=.8,datastream_id=DEEP)])
+        e=self.run_latest(body)
+        self.assertEqual(e["status"],"UNAVAILABLE")
+        self.assertIsNone(e["native_value"])
+        self.assertIsNone(e["state"]["latest_eligible_source_timestamp"])
+        point=self.project()
+        self.assertIsNone(point["record"])
+        self.assertNotIn(b"private-",encode(point))
+        self.assertEqual(self.j.read_object(e["response_object"]),body)
+
+    def test_scalar_false_quality_is_not_empty(self):
+        self.assertEqual(self.run_latest(response([self.row(q=False)]))["status"],"UNAVAILABLE")
+
+    def test_existing_empty_quality_policy_preserved(self):
+        self.assertEqual(self.run_latest(response([self.row(q={})]))["status"],"AVAILABLE")
+
+    def test_unsupported_quality_hold_omits_body(self):
+        with self.assertRaises(Hold): self.run_latest(response([self.row(q={"unknown-private-key":"secret"})]))
+        self.assertFalse(next(iter(self.j.snapshot()["attempts"].values()))["body_retained"])
+
+    def test_missing_value_unavailable_no_fallback(self):
+        self.run_latest(response([dict(t=LATEST,datastream_id=DEEP),dict(t=FIRST,v=.8,datastream_id=DEEP)]))
+        self.assertIsNone(self.project()["record"])
+
+    def test_null_value_unavailable(self):
+        self.run_latest(response([dict(t=LATEST,v=None,datastream_id=DEEP)]))
+        self.assertIsNone(self.project()["record"])
+
+    def test_malformed_value_hold(self):
+        with self.assertRaises(Hold): self.run_latest(response([dict(t=LATEST,v=True,datastream_id=DEEP)]))
+
+    def test_zero_value_preserved(self):
+        self.run_latest(response([dict(t=LATEST,v=0,datastream_id=DEEP)]))
+        self.assertEqual(self.project()["record"]["normalized_percent"],0)
+
+    def test_percent_uses_reviewed_factor(self):
+        self.bundle,self.first=copy.deepcopy(self.authorities[CAMP])
+        self.run_latest(response([dict(t=LATEST,v=25,datastream_id=CAMP)]),sid=CAMP)
+        self.assertEqual(self.project()["record"]["normalized_percent"],25)
+
+    def test_stale_source_no_day_cutoff(self):
+        self.run_latest(response([dict(t=FIRST,v=.25,datastream_id=DEEP)]))
+        point=self.project()["record"]
+        self.assertEqual(point["source_timestamp"],FIRST)
+        self.assertGreater(point["observation_age_seconds"],86400)
+        self.assertEqual(point["observation_age_seconds"],(parse_utc(self.clock.now())-parse_utc(FIRST)).total_seconds())
+
+    def test_receipt_age_exact(self):
+        self.run_latest();self.clock.advance(10.125)
+        self.assertEqual(self.project()["record"]["retrieval_age_seconds"],10.125)
+
+    def test_receipt_300_boundary_and_historical_read(self):
+        self.run_latest();self.clock.advance(300)
+        self.assertEqual(self.project(live_proof=True)["status"],"AVAILABLE")
+        self.clock.advance(.001)
+        with self.assertRaises(Hold): self.project(live_proof=True)
+        self.assertEqual(self.project()["status"],"AVAILABLE")
+
+    def test_freshness_not_authority_override(self):
+        self.clock.advance(86401)
+        self.authorization["window_start"]=self.clock.now()
+        self.authorization["window_end"]=format_utc(parse_utc(self.clock.now())+timedelta(seconds=60))
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_explicit_reviews_required(self):
+        self.bundle["review"]["disposition"]="PENDING"
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_first_review_cannot_be_audit_timestamp(self):
+        self.first["review"]={"start":FIRST}
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_source_binding_mismatch_refused(self):
+        self.bundle["decision"]["executor_fingerprint"]="0"*64
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_checkpoint_mismatch_refused(self):
+        self.authorization["checkpoint"]="0"*40
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_configuration_mutation_refused(self):
+        self.bundle["decision"]["configuration_windows"][0]["start"]="1900-01-01T00:00:00Z"
+        with self.assertRaises(Hold): self.prepare()
+
+    def test_one_attempt_restart_and_reopen(self):
+        e=self.run_latest()
+        self.j.close()
+        with Journal(self.root,self.binding,{},inventory=self.inv,now=self.clock.now,
+                     monotonic=self.clock.monotonic) as j:
+            with self.assertRaises(Hold): latest.LatestAdapter(j).run(executor=lambda *a,**k:self.fail("repeat"),
+                wait=self.clock.advance,authorization=self.authorization)
+            self.assertEqual(j.snapshot()["counters"]["attempts"],1)
+        with open_evidence(str(self.root),"latest-proof",self.inv) as j:
+            self.assertEqual(latest.evidence(j,evaluated_at=self.clock.now()),e)
+            with self.assertRaises(Hold): latest.LatestAdapter(j)
+
+    def test_ambiguous_reserved_attempt_stays_spent(self):
+        self.setup_journal()
+        self.j.reserve("latest-witness",self.binding["request_id"])
+        self.j.close()
+        with Journal(self.root,self.binding,{},inventory=self.inv,now=self.clock.now,
+                     monotonic=self.clock.monotonic) as j:
+            with self.assertRaises(Hold): latest.LatestAdapter(j).run(executor=lambda *a,**k:self.fail("repeat"),
+                wait=self.clock.advance,authorization=self.authorization)
+            self.assertEqual(j.snapshot()["counters"]["attempts"],1)
+
+    def test_authorization_cannot_move_storage(self):
+        binding,_=self.prepare()
+        with self.assertRaises(Hold): Journal(root("moved-"),binding,{},create=True,inventory=self.inv)
+
+    def test_campaign_rename_cannot_reset_approved_root(self):
+        self.run_latest()
+        renamed,tasks=latest.prepare(self.inv,campaign_id="another-name",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        with self.assertRaises(Hold):Journal(self.root,renamed,tasks,create=True,inventory=self.inv)
+        self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+
+    def test_oversized_integer_is_bounded_hold(self):
+        with self.assertRaises(Hold):self.run_latest(response([dict(t=LATEST,v=10**400,datastream_id=DEEP)]))
+        self.assertFalse(next(iter(self.j.snapshot()["attempts"].values()))["body_retained"])
+
+    def test_failed_response_no_retry(self):
+        def fail(request,timeout):
+            self.calls.append(request.full_url)
+            raise urllib.error.URLError("test-only")
+        with self.assertRaises(urllib.error.URLError):self.run_latest(executor=fail)
+        self.assertEqual(len(self.calls),1)
+        self.assertEqual(self.j.snapshot()["counters"]["attempts"],1)
+        with self.assertRaises(Hold):self.run_latest()
+
+    def test_redirect_and_http_failure_no_retry(self):
+        reply=fixture.Reply(b"");reply.status=302
+        with self.assertRaises(Hold):self.run_latest(executor=lambda request,timeout:reply)
+        self.assertFalse(next(iter(self.j.snapshot()["attempts"].values()))["details"]["retryable"])
+
+    def test_receipt_tamper_refused(self):
+        self.run_latest()
+        self.j.events[-1]["data"]["response_bytes"]+=1
+        with self.assertRaises(Hold):self.project()
+
+    def test_object_tamper_refused(self):
+        e=self.run_latest()
+        path=self.root/self.j.prefix/e["response_object"]["path"]
+        path.write_bytes(b"{}")
+        with self.assertRaises(Hold):self.project()
+
+    def test_no_history_or_daily_mutation(self):
+        self.run_latest()
+        self.assertEqual(self.j.snapshot()["intervals"],{})
+        self.assertFalse(any(e["kind"] in ("run","sealed","daily_evidence") for e in self.j.events))
+        with self.assertRaises((Hold,KeyError)):self.j.start_run("history-task")
+        with self.assertRaises((Hold,KeyError)):self.j.seal("history-task",0,{},[])
+        with self.assertRaises((Hold,KeyError)):self.j.daily_evidence("history-task","2026-09-25","0"*64)
+
+    def test_private_projection_fields_match_existing_available(self):
+        self.run_latest()
+        point=self.project()
+        self.assertEqual(set(point),{"schema_version","status","reason","record"})
+        self.assertEqual(set(point["record"]),set(synthetic_latest()["record"]))
+        self.assertEqual(point["schema_version"],synthetic_latest()["schema_version"])
+        self.assertFalse(any(k in encode(point).decode() for k in ("annotation_ids","approval_reference","configuration_windows","quality")))
+        self.assertTrue(validate_latest(synthetic_latest()))
+
+    def test_real_unavailable_uses_existing_four_field_marker(self):
+        self.run_latest(response([]))
+        point=self.project()
+        self.assertEqual(set(point),{"schema_version","status","reason","record"})
+        self.assertEqual(point["status"],"UNAVAILABLE")
+        self.assertIsNone(point["record"])
+
+    def test_receipt_state_and_saved_artifact_are_bound(self):
+        e=self.run_latest()
+        saved=decode(self.j.fs.read(self.j.prefix+"/latest-evidence.json",262144))
+        self.assertEqual(e,saved)
+        self.assertEqual(set(e["record_identities"]),{"reserved","started","received"})
+        self.assertFalse(e["history_coverage"])
+        self.assertFalse(e["publication_allowed"])
+        self.assertFalse(e["current_state_claim"])
+
+    def test_spacing_across_prior_witness(self):
+        self.clock.seconds=0
+        self.run_latest()
+        self.assertGreaterEqual((parse_utc(self.j.events[-1]["data"]["details"]["requested_at"])-parse_utc(NOW)).total_seconds(),1)
+
+    def test_total_and_skip_are_checked(self):
+        self.setup_journal()
+        for body in (response(total=False),response(total=0),response(skip=1),
+                     encode(dict(data=[self.row()],limit=1)),response(unknown="private")):
+            with self.subTest(body=body),self.assertRaises(Hold):latest.response_shape(body,self.binding,retrieved_at=self.clock.now())
+
+    def test_no_interval_reservation_substitution(self):
+        self.setup_journal()
+        with self.assertRaises(Hold):self.j.reserve("latest-witness",self.binding["request_id"],interval_key="history-task",run=1)
+        self.assertEqual(self.j.snapshot()["counters"]["attempts"],0)
+
+    def test_native_scale_tamper_refused(self):
+        self.bundle["decision"]["scale"]["conversion_factor"]=1
+        with self.assertRaises(Hold):self.prepare()
+
+    def test_window_not_extendible_at_run(self):
+        self.setup_journal()
+        auth=dict(self.authorization,window_end="2026-09-27T14:00:00Z")
+        with self.assertRaises(Hold):self.adapter.run(executor=lambda *a,**k:self.fail("dispatch"),
+            wait=self.clock.advance,authorization=auth)
+        self.assertEqual(self.j.snapshot()["counters"]["attempts"],0)

@@ -1090,3 +1090,81 @@ before projecting accepted completed rows. Every input file remains capped at
 version constants, descriptor paths, hover/capability semantics and activation
 behavior are unchanged. No current/latest witness, reference band, official
 output path or deployment is introduced.
+
+## Private latest-evidence readiness
+
+`latest_observation.py` owns `dendra-private-latest-evidence-1`. This is an
+explicit-input private Python route, not a scheduler or a public delivery.
+`prepare` requires an exact frozen station/stream, current checkpoint and source
+fingerprint, admitted temporal metadata, explicitly accepted native/scale review,
+and the original Journal-backed first-witness review. It reuses the existing
+review validators; it neither creates acceptance nor infers authority from the
+record-age audit. The reviewed native scope and one unambiguous configuration
+window must cover each returned timestamp. Unknown historical applicability
+remains unknown. Old-source reviews are never silently rebound.
+
+One caller-authorized window of at most 300 seconds is bound to one absolute
+private task root and one campaign. The existing Journal registry, reservation,
+start, receipt and object path provide immutable accounting. `LatestAdapter`
+uses the shared Adapter and anonymous transport; it issues only the exact
+`datastream_id`, descending `$sort[time]=-1`, `$limit=2` datapoints request.
+No interval, skip, subsequent page, retry, redirect or alternate stream is
+permitted. Concurrency is one; every request is at most 25 seconds and 8 MiB.
+The caller supplies the preceding request-start timestamp, no earlier than the
+bound first-witness request, so spacing is at least one second across the proof
+boundary. Reservation/start precede dispatch. A failed, reserved or ambiguous
+attempt remains spent; reopening, renaming the campaign or relocating the approved binding cannot
+reset its single-attempt budget. A separate future approval is not implied.
+
+Zero rows is a valid UNAVAILABLE check. One valid row can supply the newest
+point. Two rows must be strictly descending; tied newest timestamps hold even
+if their values match. Wrong/absent stream identity, unsupported schema, unsafe
+quality, ambiguous configuration or provenance failure holds. The optional
+`total`, when present, remains a nonnegative integer covering returned rows;
+top-two completion is not historical query completeness.
+
+The unchanged `dendra-observation-quality-1` controls native retention. Absent
+and explicit-null quality impose no veto; its existing empty-claim behavior is
+also unchanged. Supported nonempty quality remains only in the private native
+object and makes the newest point UNAVAILABLE with `record=null`. Missing/null
+values likewise provide no point. Neither case falls back to the second row.
+No flag meaning is inferred. Display conversion comes from the verified scale
+decision, not an independent latest conversion rule.
+
+`evidence` reopens/verifies the original binding, event/anchor chain, response
+object, accepted reviews and dispatch-time permission. It derives exact source
+and retrieval ages. `live_proof=True` additionally requires the current source
+and receipt age at most 300 seconds. Historical read-only evidence remains
+readable after this proof limit; it cannot claim a fresh check. There is no
+86,400-second observation cutoff or other new scientific age threshold. Source
+timestamps, including stale timestamps and their precision, are preserved.
+
+`project` provides the separately authorized private real-AVAILABLE route using
+the existing four-field latest marker and frozen AVAILABLE record fields in
+[DENDRA_BROWSER_PROFILE.md](DENDRA_BROWSER_PROFILE.md). The public historical
+exporter still emits its existing UNAVAILABLE marker, and its synthetic-only
+AVAILABLE validator remains unchanged. Private evidence is never inserted into
+the public descriptor graph by this route. Generation/lineage hashes, actual
+source/retrieval/evaluation timestamps, exact ages, native/resolved value and
+frozen identity are projected; quality values, annotation IDs, private paths and
+review payloads are not. A point is separate instantaneous evidence, never a
+partial-day mean, historical terminal, filled gap or replacement for a withheld
+day. No current-state or publication claim is granted by private availability.
+
+The successful immutable `latest-evidence.json` and original receipts bind the
+latest attempt time, last successful source check, latest eligible timestamp
+(null when unavailable), retrieval time, quality disposition, receipt/object
+hashes and exact ages. Failed attempts remain represented by their Journal
+events and never advance a successful-check field. Latest state is independent
+of historical query coverage, the sealed-history manifest and contiguous
+coverage frontier, frozen cadence, quarantine/withheld daily disposition,
+daily candidate state, publication acknowledgement and last publication.
+There are no history tasks in a latest Journal and it cannot seal an interval.
+Routine catch-up, overlap replacement and publication coordination remain
+separate work.
+
+A future separately approved Deep-only proof may use four prerequisite calls
+(vocabulary, exact station, first datastream page, ascending-first witness),
+explicit review, then one descending latest call. The maximum is five calls /
+41,943,040 bytes; the latest window is at most 300 seconds. This readiness route
+does not execute those calls, accept those reviews, or grant follow-on authority.
