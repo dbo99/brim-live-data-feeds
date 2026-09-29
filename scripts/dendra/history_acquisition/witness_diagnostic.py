@@ -55,7 +55,7 @@ def projection(body, request, status, reason):
     """Deterministic bounded shape projection, not an alternate admission rule."""
     from .authority_witness import RequestSpec, total_complete
     identity = request["request"]["identity"]
-    require(request["request"] == RequestSpec(identity["station_id"], identity["stream_id"]).descriptor()
+    require(request["request"] == RequestSpec(identity["station_id"], identity["stream_id"], identity).descriptor()
             and request["request_id"] == digest({k:v for k,v in request.items() if k != "request_id"}),
             "Diagnostic exact witness binding")
     require(type(status) is int and status == 200 and isinstance(body, bytes) and len(body) <= 8*1024**2,

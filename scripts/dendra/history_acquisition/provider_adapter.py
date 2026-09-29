@@ -383,6 +383,7 @@ class Adapter:
         self._persist(self.journal.started, key)
         began, mono = format_utc(self.journal.now()), self.journal.monotonic()
         body, status, row_count, value, headers, caught = b"", None, 0, None, {}, None
+        payload = UNPARSED
         details = self._details(spec, began, mono)
         retain, sanitized = False, None
         try:
@@ -426,7 +427,6 @@ class Adapter:
                             details["outcome"] = "retry"
                     raise urllib.error.HTTPError(spec.url(), status, "D3 HTTP status", {}, None)
                 row_count = None
-                payload = UNPARSED
                 try:
                     payload = decode(body)
                     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
@@ -486,7 +486,13 @@ class Adapter:
             caught = exc
             retain = False
             sanitized = encode(exc.diagnostic) if isinstance(exc, (MetadataAdmissionHold, WitnessAdmissionHold)) else None
-            if body and value is None and status == 200 and row_count == 0:
+            # Recognized station objects contain zero observation/list rows;
+            # parsed list arrays have an exact count even on admission failure.
+            # Only the generalized metadata profile uses this structural count.
+            counted_metadata = (status == 200 and self.journal.binding.get("version") == "dendra-roster-metadata-acquisition-1" and
+                isinstance(payload, dict) and ((spec.kind == "station" and "data" not in payload) or
+                (spec.kind == "datastream-list" and isinstance(payload.get("data"), list))))
+            if body and value is None and status == 200 and row_count == 0 and not counted_metadata:
                 row_count = None
             if details["error_code"] is None:
                 transport = isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, OSError))
@@ -928,7 +934,8 @@ class WitnessAdapter(Adapter):
         results = {}
         try:
             for sid in self.journal.binding["selected_ids"]:
-                self.current_spec = WitnessSpec(self.journal.binding["roster"][sid]["station_id"], sid)
+                identity = self.journal.binding["roster"][sid]
+                self.current_spec = WitnessSpec(identity["station_id"], sid, identity)
                 self.exchange(self._request(self.current_spec), self.current_spec)
                 results[sid] = evidence(self.journal, sid)
             return results

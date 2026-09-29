@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from ..transport import parse_utc, format_utc
 from .d3_plan import BASE, IDENTITIES
 from .eligibility import _packet
-from .model import Inventory, INVENTORY_SHA256, NAME, PAGE_BYTES, source_binding
+from .model import Inventory, INVENTORY_SHA256, NAME, PAGE_BYTES, ID, source_binding
 from .provider_metadata import _fresh
 from .safety import decode, digest, encode, require, sha
 
@@ -30,18 +30,27 @@ POLICY = dict(version="dendra-first-witness-policy-1", concurrency=1, retries=0,
 class RequestSpec:
     station_id: str
     selected_stream: str
+    frozen_identity: dict | None = None
     kind = KIND
 
-    def url(self):
-        require(self.selected_stream in IDENTITIES and
-                self.station_id == IDENTITIES[self.selected_stream]["station_id"],
+    def identity(self):
+        # Legacy callers/receipts retain their exact descriptor. Generalized
+        # callers supply an identity verified against Inventory by preparation.
+        identity = self.frozen_identity or IDENTITIES.get(self.selected_stream)
+        require(isinstance(identity, dict) and identity.get("stream_id") == self.selected_stream and
+                identity.get("station_id") == self.station_id and ID.fullmatch(self.selected_stream) and
+                ID.fullmatch(self.station_id) and identity.get("native_unit") in ("Percent", "VolumetricWaterContent"),
                 "Exact witness station/stream required")
+        return identity
+
+    def url(self):
+        self.identity()
         return BASE + "datapoints?" + urlencode({"datastream_id": self.selected_stream,
                                                  "$sort[time]": 1, "$limit": 1})
 
     def descriptor(self):
         return dict(schema_version=REQUEST, kind=KIND, method="GET", url=self.url(),
-                    identity=IDENTITIES[self.selected_stream])
+                    identity=self.identity())
 
 
 def check_metadata(inventory, sid, packet, *, now):
@@ -71,15 +80,16 @@ def prepare(inventory, *, campaign_id, packets, as_of):
 def _prepare(inventory, *, campaign_id, packets, as_of, sources):
     require(type(inventory) is Inventory and isinstance(campaign_id, str) and
             NAME.fullmatch(campaign_id), "Explicit witness campaign/inventory required")
-    require(isinstance(packets, dict) and 1 <= len(packets) <= 2 and
-            set(packets) <= set(IDENTITIES), "Exact one/two witness targets required")
+    require(isinstance(packets, dict) and 1 <= len(packets) <= 2,
+            "One/two frozen witness targets per bounded journal required")
     requests = {}
     fingerprint = digest(sources)
     for sid in sorted(packets):
         identity = inventory.identity(sid)
-        require(identity == IDENTITIES[sid], "Frozen witness identity changed")
+        require(identity["native_unit"] in ("Percent", "VolumetricWaterContent") and
+                identity["unit_status"] == "verified_percent_conversion", "Resolved frozen witness required")
         _check_metadata(inventory, sid, packets[sid], now=as_of, fingerprint=fingerprint)
-        request = dict(request=RequestSpec(identity["station_id"], sid).descriptor(),
+        request = dict(request=RequestSpec(identity["station_id"], sid, identity).descriptor(),
                        inventory_sha256=INVENTORY_SHA256, collector_fingerprint=fingerprint,
                        policy=POLICY, metadata_packet_sha256=digest(packets[sid]))
         requests["witness-" + sid] = dict(request, request_id=digest(request))

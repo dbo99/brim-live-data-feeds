@@ -824,7 +824,7 @@ and fresh state bound to the new collector fingerprint.
 
 ## Current-source temporal metadata acquisition
 
-`metadata_acquisition.prepare` creates `dendra-temporal-metadata-acquisition-1`
+The retained legacy invocation of `metadata_acquisition.prepare` creates `dendra-temporal-metadata-acquisition-1`
 in the existing `Journal`, with no history interval tasks. The explicit selected
 set contains one or both frozen targets in `d3_plan.IDENTITIES`. Preparation
 binds the unchanged accepted unit authority, complete frozen inventory closure,
@@ -880,6 +880,79 @@ and `read_object` under their original identity; the new current-source evidence
 path rejects incompatible source fingerprints. No history task IDs, campaign
 limits, witness rules, R science or browser contracts change. No live refresh,
 history acquisition or publication is authorized by this offline implementation.
+
+### Frozen resolved-roster authority packages
+
+`authority_package.py` adds `dendra-roster-authority-package-1`. Explicit frozen
+Percent/VWC selections are canonically ordered by station and stream, with a
+content hash binding the local checkpoint, collector fingerprint, inventory,
+membership, expected measurement/unit/depth/orientation, scale, access rules and
+budgets. Caller-supplied foreign identities, reordered or rehashed altered
+descriptors, and source/checkpoint changes refuse execution. Frozen null identity
+fields remain unknown; fresh configuration claims do not rewrite the inventory.
+Dimensionless is excluded from this enabling route and remains native-only under
+its separate review rules. Percent ×1 and VWC ×100 are unchanged.
+
+Each package contains at most 32 streams, 16 stations and 16 selected streams per
+station. `partition` produces deterministic bounded packages for larger explicit
+selections without dropping streams. The package is a selection manifest, not a
+second ledger. Metadata Journals use `dendra-roster-metadata-acquisition-1`:
+one vocabulary, one exact station and one datastream-list request per station
+campaign. All selected streams on that station share the same verified response
+receipt/object; the existing generalized temporal parser validates each selected
+target independently. Only sanitized packets or fixed safe HOLD reasons persist.
+No raw listing is copied between campaigns. Vocabulary reuse is intentionally
+within each station campaign; cross-station receipt copying is not supported.
+
+Station/list admission reuses the existing public-access, optional-Z, exact
+association, scientific identity, configuration and freshness parsers. The strict
+D3 station wrapper and historical D3 contracts remain unchanged. A recognized
+station JSON object has zero list/observation rows even on an access rejection;
+a parsed datastream array retains its exact row count on rejection. That explicit
+accounting is confined to the new metadata version. Unknown row
+accounting still stops the package. One complete first datastream page is required
+(effective limit at most 500, short page, zero skip, exact total when present).
+Full/incomplete pages HOLD every dependent stream; there is no automatic second
+page. A missing selected stream, malformed configuration, unit or stream access
+failure holds that target. A station failure holds its selected streams only.
+
+Witness preparation now validates arbitrary resolved identities against the
+frozen inventory and admitted current-source packet. Requests remain exact
+ascending source time, limit 1, without interval bounds. Existing first-response
+admission, receipt/object provenance and explicit review semantics are unchanged.
+The package uses one bounded witness Journal per stream, so one accounted witness
+admission failure does not invalidate unrelated streams. Legacy request/evidence
+descriptors remain readable under their original source binding.
+
+All children reuse `Adapter.exchange`, `Journal` and the anonymous transport.
+Metadata children keep the existing 150-second window and three attempt slots;
+witness children keep 60 seconds and one attempt. Every response remains bounded
+to 8 MiB and 25 seconds, concurrency one, spacing at least one second, retries
+and redirects zero. Package ceilings are exactly `3 * stations + streams`
+requests, that count times 8 MiB, and `150 * stations + 60 * streams` seconds.
+No history interval, daily/product output, CLI default or implicit live approval
+is introduced.
+
+An explicit caller supplies one immutable package authorization/window and the
+existing executor/wait functions. A package writer lock serializes its children.
+On restart, original Journals reconstruct attempts and cross-campaign spacing.
+Complete valid evidence is reused without requests or timestamp renewal;
+partially spent children remain held, never retried or initialized under new IDs.
+Unstarted children may continue only inside the original package window and
+current source/freshness guards. Ambiguous starts, unknown accounting, corrupt
+receipts/anchors, throttling, service/transport/deadline/resource failures stop
+the package. No spent budget is refunded by reopening a process.
+
+Every selected stream receives an explicit outcome; admission alone remains
+`SOURCE_START_HOLD` / `NOT_READY` pending review. `reviewed_status` requires exact
+same-package metadata/witness Journals, an explicitly accepted source review,
+and the corresponding native packet/review/decision. It reuses source-start and
+dispatch-readiness owners, including configuration coverage of the reviewed
+scope and expiry; it never manufactures an acceptance. Audit-estimated and
+unknown starts cannot become executable. Ready bundles feed the existing
+sharding/execution and routine-update machinery; no new history task schema or
+science/public/browser contract is defined here. Bounded browser roots remain
+separately subject to later full-roster consumer selection verification.
 
 ## Local native quality quarantine
 
