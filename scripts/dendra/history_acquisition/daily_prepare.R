@@ -8,14 +8,24 @@ input <- normalizePath(args[1], mustWork=TRUE)
 output <- args[2]
 if(file.exists(output) || dir.exists(output)) stop("Fresh output required")
 h <- json_read(input)
-if(!h$schema_version %in% c("dendra-sealed-daily-handoff-1","dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3") ||
+routine <- identical(h$schema_version,"dendra-sealed-daily-handoff-4")
+if(!h$schema_version %in% c("dendra-sealed-daily-handoff-1","dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3","dendra-sealed-daily-handoff-4") ||
    !identical(h$source_scope,"historical_sealed_intervals") ||
-   !identical(h$cadence_mode,"initialize") ||
+   !identical(h$cadence_mode,if(routine) "routine" else "initialize") ||
    !identical(h$science_binding$core_sha256,sha_file(core)) ||
    !identical(h$science_binding$wrapper_sha256,sha_file(normalizePath(script)))) stop("Handoff/science binding differs")
 cutoff <- completed_cutoff(h$as_of)
 base <- dirname(input)
 rows_out <- list(); summaries <- list(); contexts <- list(); quality_out <- list()
+changes_out <- list(); loss_out <- list(); recomputed_out <- list(); assessments <- list()
+prior <- NULL
+if(routine) {
+  if(!identical(h$prior_daily$path,"prior-daily.json") ||
+     !identical(sha_file(file.path(base,h$prior_daily$path)),h$prior_daily$sha256)) stop("Prior daily binding differs")
+  prior <- json_read(file.path(base,h$prior_daily$path))
+  if(!identical(prior$science_binding$core_sha256,h$science_binding$core_sha256) ||
+     !identical(prior$numerical_policy,DENDRA_POLICY)) stop("Prior numerical authority differs")
+}
 for(s in h$streams) {
   sid <- s$identity$stream_id
   if(!grepl("^[0-9a-f]{24}$",sid) || !identical(s$csv$path,paste0("native/",sid,".csv")) ||
@@ -37,9 +47,10 @@ for(s in h$streams) {
   stream <- list(datastream_id=sid,parameter="soil_moisture",unit_normalization=s$unit_normalization,
                  cadence_seconds=s$configured_cadence_seconds)
   x <- normalize_native(x,stream)
-  context <- cadence_context(x,stream,s$csv$sha256)
+  context <- if(routine) prior$cadence_contexts[[sid]] else cadence_context(x,stream,s$csv$sha256)
+  if(is.null(context) || !identical(context$version,"frozen-cadence-context-1")) stop("Pinned cadence context required")
   withheld <- character()
-  if(h$schema_version %in% c("dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3")) {
+  if(h$schema_version %in% c("dendra-sealed-daily-handoff-2","dendra-sealed-daily-handoff-3","dendra-sealed-daily-handoff-4")) {
     if(!identical(s$quarantine$policy$policy$version,"dendra-observation-quality-1")) stop("Quality policy differs")
     withheld <- unlist(s$quarantine$withheld_days,use.names=FALSE)
     if(length(withheld) && (anyDuplicated(withheld) || any(!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$",withheld)))) stop("Invalid withheld dates")
@@ -55,7 +66,19 @@ for(s in h$streams) {
   # samples. Carry cadence from their real timestamps across the day boundary.
   result <- list(rows=list()); previous <- NULL
   by_day <- split(seq_len(nrow(x)),x$date)
-  if(as.Date(start)<end) for(day in as.character(seq(as.Date(start),end-1,by="day"))) {
+  days <- if(routine) unlist(s$recompute_dates,use.names=FALSE) else if(as.Date(start)<end) as.character(seq(as.Date(start),end-1,by="day")) else character()
+  if(length(days) && (anyDuplicated(days) || any(as.Date(days)>as.Date(cutoff)))) stop("Invalid recomputation dates")
+  for(day in days) {
+    if(routine) {
+      # Only the previous observed cadence is needed, not another daily mean.
+      earlier <- sort(names(by_day)[names(by_day)<day])
+      previous <- NULL
+      if(length(earlier)) {
+        before <- x[by_day[[tail(earlier,1)]],,drop=FALSE]
+        dm <- mode_interval(round(diff(before$time),3))
+        previous <- if(!is.null(dm)) dm$seconds else context$seconds
+      }
+    }
     obs <- x[by_day[[day]] %||% integer(),,drop=FALSE]; held <- day %in% withheld
     one <- aggregate_daily(if(held) obs[FALSE,,drop=FALSE] else obs,stream,day,
                            as.character(as.Date(day)+1),context,previous)
@@ -87,15 +110,34 @@ for(s in h$streams) {
       presentation_eligible=isTRUE(row$plot_eligible)&&cursor>=hi,
       source_intervals=lapply(contributors,function(i)i[c("task_id","query_state","seal_record_sha256","content_sha256","parsed_sha256")])))
   })
+  if(routine) {
+    old <- prior$rows[[sid]] %||% list()
+    disposition <- function(r) if(is.null(r)) "UNQUERIED" else if("provider_quality_unreviewed" %in% unlist(r$flags)) "DAILY_VALUE_WITHHELD" else if(isTRUE(r$presentation_eligible)) "ACCEPTED" else "MISSING_OR_REJECTED"
+    lookup <- setNames(old,vapply(old,`[[`,character(1),"date"))
+    changes_out[[sid]] <- lapply(enriched,function(r) list(date=r$date,before=disposition(lookup[[r$date]]),after=disposition(r)))
+    recomputed_out[[sid]] <- as.list(days)
+    if(length(days)) {
+      assessment <- replacement_assessment(Filter(function(r)r$date %in% days,old),enriched,min(days),as.character(as.Date(max(days))+1),sid)
+      loss_out[[sid]] <- loss_decision(list(assessment$assessment))
+      assessments[[sid]] <- assessment$assessment
+    }
+    # Complete interval replacement, not value-by-value conflict arbitration.
+    enriched <- c(Filter(function(r)!r$date %in% days,old),enriched)
+    if(length(enriched)) enriched <- enriched[order(vapply(enriched,`[[`,character(1),"date"))]
+    result$rows <- enriched
+  }
   rows_out[[sid]] <- enriched
   quality_out[[sid]] <- lapply(Filter(function(r)r$date %in% withheld,enriched),function(r)
     list(date=r$date,state=if(isTRUE(r$query_complete)) "DAILY_VALUE_WITHHELD" else "QUERY_INCOMPLETE",
          reason="PROVIDER_QUALITY_UNREVIEWED"))
-  summaries[[sid]] <- c(list(route="completed_daily",native_rows=nrow(x)),daily_summary(result$rows),
+  summaries[[sid]] <- c(list(route="completed_daily",native_rows=if(routine) s$native_view_rows else nrow(x)),daily_summary(result$rows),
                        list(rejected_row_count=sum(!vapply(result$rows,function(r)isTRUE(r$plot_eligible),logical(1)))))
   contexts[[sid]] <- context
 }
 json_write(list(schema_version=h$schema_version,daily_schema=DENDRA_SCHEMA,numerical_policy=DENDRA_POLICY,
   science_binding=h$science_binding,as_of=h$as_of,completed_fixed_pst_cutoff=cutoff,
   rows=rows_out,summaries=summaries,cadence_contexts=contexts,quality_disposition=quality_out,latest_instantaneous=list(),
-  publication_eligible=FALSE,reference_band="not_computed"),output)
+  publication_eligible=FALSE,reference_band="not_computed",
+  routine_day_changes=changes_out,routine_recomputed_dates=recomputed_out,
+  routine_publication_loss_assessment=loss_out,
+  routine_publication_selection_loss=if(length(assessments)) loss_decision(assessments) else NULL),output)

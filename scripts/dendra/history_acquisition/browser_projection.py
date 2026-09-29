@@ -161,12 +161,13 @@ def load_prepared(prepared_root, *, pins, prepared_fingerprint):
             docs[name] = decode(body)
     h, d = docs["handoff.json"], docs["daily-output.json"]
     require(h["schema_version"] == d["schema_version"] and h["schema_version"] in
-            ("dendra-sealed-daily-handoff-1", "dendra-sealed-daily-handoff-2", "dendra-sealed-daily-handoff-3") and
+            ("dendra-sealed-daily-handoff-1", "dendra-sealed-daily-handoff-2", "dendra-sealed-daily-handoff-3", "dendra-sealed-daily-handoff-4") and
             h["science_binding"] == d["science_binding"] and h["science_binding"]["collector_fingerprint"] == prepared_fingerprint, "Preparation source mismatch")
     require(sha((Path(__file__).parent.parent/"core.R").read_bytes()) == h["science_binding"]["core_sha256"], "Numerical authority changed")
     require(h["source_scope"] == "historical_sealed_intervals" and h["as_of"] == d["as_of"] and h["latest_instantaneous"] == d["latest_instantaneous"] == [] and h["publication_eligible"] is False and d["publication_eligible"] is False, "Historical preparation only; no latest witness")
     require(docs["r-receipt.json"]["exit_code"] == 0 and docs["result.json"]["outcome"] == "OFFLINE_DAILY_PREPARED" and docs["result.json"]["science_binding"] == h["science_binding"], "Unaccepted daily preparation")
-    compact = h["schema_version"] == "dendra-sealed-daily-handoff-3"
+    routine = h["schema_version"] == "dendra-sealed-daily-handoff-4"
+    compact = routine or h["schema_version"] == "dendra-sealed-daily-handoff-3"
     if compact:
         require(docs["result.json"]["daily_output_sha256"] == digest(d), "Daily output binding changed")
     view = horizon(d["as_of"])
@@ -179,8 +180,12 @@ def load_prepared(prepared_root, *, pins, prepared_fingerprint):
         require(lineage["identity"] == ident and next(p for p in pins if p["path"] == s["lineage"]["path"]) == s["lineage"], "Lineage pin/identity")
         factor = {"Percent":1, "VolumetricWaterContent":100}.get(ident["native_unit"])
         if compact:
-            from .sealed_history import validate_compact
-            refs = validate_compact(lineage, s, h)
+            if routine:
+                from .routine_update import validate_lineage
+                refs = validate_lineage(lineage, s, h)
+            else:
+                from .sealed_history import validate_compact
+                refs = validate_compact(lineage, s, h)
             review_hash, scale_hash = lineage["review_set_sha256"], lineage["scale_set_sha256"]
             retrieval_first = min(r["retrieval_first_utc"] for r in refs)
             retrieval_last = max(r["retrieval_last_utc"] for r in refs)
@@ -194,7 +199,7 @@ def load_prepared(prepared_root, *, pins, prepared_fingerprint):
             retrieval_first = min(r["envelope"]["retrieval_first_utc"] for r in records)
             retrieval_last = max(r["envelope"]["retrieval_last_utc"] for r in records)
         source_rows = d["rows"].get(sid, [])
-        if h["schema_version"] in ("dendra-sealed-daily-handoff-2", "dendra-sealed-daily-handoff-3"):
+        if h["schema_version"] in ("dendra-sealed-daily-handoff-2", "dendra-sealed-daily-handoff-3", "dendra-sealed-daily-handoff-4"):
             if not compact:
                 from .daily_handoff import disposition
                 native_rows = [r for record in records for r in record["science_rows"]]

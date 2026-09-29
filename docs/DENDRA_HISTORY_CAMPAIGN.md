@@ -1259,3 +1259,108 @@ The separate future ribbon design remains governed by versioned configurable
 policy inputs. SCAN's existing 7/200 remains preserved; Dendra/common 200 versus
 300 qualifying days and 9 versus 10 reference WYs remain undecided. The ten-WY
 trace display direction is not statistical science. No threshold is changed here.
+
+### Private routine overlap and interval replacement (offline candidate)
+
+`routine_update.py` owns `dendra-routine-generation-1`,
+`dendra-routine-cycle-1` and `dendra-routine-overlap-1`. These are private
+acquisition/preparation manifests, not public feed envelopes or publication
+acknowledgements. Existing provider adapters, Journal accounting, task IDs,
+request policy and the public browser profile remain unchanged.
+
+The explicit API sequence is `initialize(seal_ref, daily_ref, ...)`,
+`plan(parent_ref, target=..., as_of=..., selected_ids=..., ...)`,
+`prepare_campaigns(cycle_ref, bundles, ...)` when fresh reviewed authority is
+available, `assemble(cycle_ref, replacements, ...)`, `prepare(generation_ref,
+...)`, then `checkpoint_preparation(...)`. Every output requires a fresh absolute
+directory. Inputs use path/SHA pins and descriptor-relative no-follow reads.
+Checksums bind trusted accepted inputs; they are not signatures or authority
+approval. None of these operations dispatches a request, creates an acquisition
+Journal, accepts authority, publishes, or changes a published pointer.
+
+Initialization verifies original seals, receipts, objects, science and prepared
+CSV bindings through the existing multi-Journal reader and browser preparation
+validator. It creates a verified seed, never invents a publication receipt.
+The routine planner uses the earliest contiguous query frontier, explicit gaps,
+queried-empty intervals and the caller's exact completed fixed-PST target.
+The default overlap is seven days, configurable from one through thirty under
+the versioned policy. A twelve-day missed period therefore plans nineteen days
+where prior scope permits. Catch-up exceeding the explicit policy ceiling
+(default 366 days) holds for separate approval; it is never shortened to fit.
+An unbackfilled selected stream requires explicit bootstrap. The immutable cycle
+pins the parent, target, overlap and current source fingerprint. `resume` reopens
+that exact intent instead of recalculating a shorter window.
+
+Planning cuts use the existing thirty-day maximum and at most 128 prepared
+tasks. `prepare_campaigns` delegates to normal campaign/execution preparation,
+with three attempts/pages, 2016 rows/page, 8 MiB/body, 25 seconds/request,
+25,165,824 bytes and 600 seconds per explicit campaign; concurrency one,
+one-second spacing, no retries or redirects. Configuration-split tasks that
+do not match the pinned interval require a separate configuration-aware plan.
+The routine layer does not override review freshness or source binding. Future
+execution still needs its own approval and the committed cross-campaign spacing
+and stop rules. Pending acquisition and spent attempts remain in their original
+Journals; a new routine process cannot reset them.
+
+Each replacement must close the entire planned stream interval set. Every
+original Journal seal is independently verified, including recovered lineage.
+Exact frozen identity, scientific assertions, configuration and normalized scale
+must agree with the parent; new receipts must bind the cycle's source. Incomplete,
+unsafe or mismatched replacement evidence retains that stream's prior views.
+Manifest/parent corruption holds the entire operation. A successful stream can
+form a private candidate independently of another stream's failure. Optional
+`attempt_refs` derive failed/incomplete source-check time and spent accounting
+read-only from the existing Journal, not a second ledger. Missing attempt
+evidence means unknown/no new source-check claim, never a successful check.
+
+New complete evidence owns explicit half-open intervals. Retained portions point
+to their original seal and row hash; supersession records bind the parent views,
+replacement source and retained views. No old seal, raw object, task, receipt or
+recovery event is rewritten. No contradictory row-wise merge or double-counting
+occurs. Complete-empty replaces with truthful empty coverage and no synthetic
+sample; uncovered intervals remain explicit gaps. `continue_assembly` reuses
+successful replacement references after interruption, leaving the uncompleted
+suffix and all original accounting intact. Source changes refuse saved cycles.
+
+The private `dendra-sealed-daily-handoff-4` adapter transfers only affected days
+and their preceding observed cadence dependencies. Unchanged daily rows are
+copied from pinned accepted preparation. A changed cadence can also require the
+next observed day's diagnostic to be recomputed. The original frozen cadence
+context is retained; it is not estimated again from the overlap. Means, QC,
+ending-year WY, true DOWY, leap plotting coordinate, fixed UTC−08 days, Percent
+×1 and VWC ×100 remain in unchanged `core.R`. Current partial days never enter
+routine daily science. Before/after day dispositions and exact recomputed dates
+are recorded. Missing/invalid hours, duplicates/conflicts and supported nonempty
+quality retain the existing localized science/quarantine behavior. Private
+quality remains in native evidence; no raw quality enters CSV or browser output.
+
+Query-complete empty history is not a promise of continuous valid daily values.
+The unchanged R1 mass-loss assessments (per stream and whole selection) remain
+explicit publication holds, even when a private complete-query candidate can be
+prepared. This layer grants no partial-publication policy or override of the
+existing publisher's whole-candidate requirements.
+
+State distinguishes attempted source check, successful complete query, coverage
+frontier/gaps, separate latest timestamp, routine generation, prepared candidate
+and acknowledged publication receipt. The latter stays unchanged/null here.
+`latest_observation` remains the sole latest evidence owner: no latest state
+adds coverage, repairs a missing day, seals history or enters a daily mean.
+`latest_state` verifies the separate saved latest Journal read-only and writes a
+private snapshot tied to the history generation. It retains the real source
+timestamp and recalculated age, including stale observations, and never changes
+the history generation or claims a new source check. Diagnostic receipts cannot
+enter this ordinary latest path. Preparing a subsequent cycle requires the
+parent candidate's daily preparation to have been checkpointed first; otherwise
+earlier changed-day work could be lost and the planner refuses.
+The historical browser projection remains unchanged publicly and carries its
+existing separate unavailable latest marker; combining a separately verified
+real latest marker into a hosted product remains a consumer/publication gate.
+
+There is no two-stream control flow. The model supports exact roster selections
+and mixed history/catch-up lengths; preparation and public delivery retain their
+existing bounded package limits (including 32 public streams). Larger resolved
+roster rollout requires explicitly selected bounded packages, not a limit
+increase or automatic acquisition. Routine generations are capped at 4096 views,
+32 MiB manifests and one million normalized rows per stream. Original seals are
+reverified, so large-history verification cost remains a scaling consideration;
+this gate introduces no verification cache, cleanup or performance claim.
