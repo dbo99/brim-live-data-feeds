@@ -28,6 +28,8 @@ from .witness_diagnostic import WitnessAdmissionHold
 
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 BODY_LIMIT = 8 * 1024**2
+OBSERVATION_ENVELOPE = frozenset({"data", "limit", "total", "skip"})
+OBSERVATION_FIELDS = frozenset({"_id", "datastream_id", "t", "v", "lt", "q"})
 
 # These are diagnostic names only. Admission remains in provider_metadata.py.
 METADATA_REASONS = {
@@ -238,7 +240,7 @@ class MemoryResponse(io.BytesIO):
 
 def observation_shape(body, sid, *, quality_policy=None):
     payload = decode(body)
-    require(isinstance(payload, dict) and set(payload) <= {"data", "limit", "total", "skip"},
+    require(isinstance(payload, dict) and set(payload) <= OBSERVATION_ENVELOPE,
             "Unexpected observation envelope fields")
     rows, limit = payload.get("data"), payload.get("limit")
     require(isinstance(rows, list) and type(limit) is int and 0 < limit <= 2016 and len(rows) <= limit,
@@ -247,7 +249,7 @@ def observation_shape(body, sid, *, quality_policy=None):
         require(name not in payload or (type(payload[name]) is int and payload[name] >= 0),
                 "Restricted observation pagination metadata")
     for row in rows:
-        require(isinstance(row, dict) and set(row) <= {"_id", "datastream_id", "t", "v", "lt", "q"} and
+        require(isinstance(row, dict) and set(row) <= OBSERVATION_FIELDS and
                 row.get("datastream_id", sid) == sid, "Restricted or unselected observation metadata")
         parse_utc(row.get("t"))
         for name, value in row.items():
@@ -369,7 +371,10 @@ class Adapter:
                                 else "metadata-" + spec.selected_stream)
         cursor = self.journal.binding["witness_requests"][task]["request_id"] if witness else spec.cursor if interval_key else spec.kind
         latest = spec.kind == "latest-witness"
+        latest_diagnostic = False
         if latest:
+            from .latest_observation import DIAGNOSTIC
+            latest_diagnostic = self.journal.binding["version"] == DIAGNOSTIC
             require(self.journal.binding["mode"] == "latest_evidence_adapter", "Latest journal required")
             task, cursor = "latest-witness", self.journal.binding["request_id"]
         if diagnostic:
@@ -442,6 +447,13 @@ class Adapter:
                         value = response_shape(body, spec.selected_stream, retrieved_at=self.journal.now())
                         details.update(effective_limit=1, page_complete=True)
                         retain = True
+                    elif latest_diagnostic:
+                        from .latest_observation import diagnostic_projection
+                        value = diagnostic_projection(body, self.journal.binding,
+                                                      retrieved_at=details["retrieved_at"])
+                        sanitized = encode(value)
+                        # Receipt success describes diagnostic persistence only.
+                        # No admission/privacy/identity success or raw retention.
                     elif latest:
                         from .latest_observation import response_shape
                         value = response_shape(body, self.journal.binding, retrieved_at=self.journal.now())
@@ -464,7 +476,7 @@ class Adapter:
                     if witness:
                         raise WitnessAdmissionHold(body, self.journal.binding["witness_requests"][task], status, exc) from None
                     raise MetadataAdmissionHold(spec, body, payload, exc) from None
-                if not diagnostic:
+                if not diagnostic and not latest_diagnostic:
                     details.update(privacy="public", identity="match")
                 # Validate capacity before writing raw/sanitized objects, while
                 # still charging rejected bytes/rows through the same receipt.
@@ -486,7 +498,8 @@ class Adapter:
                     else "parse_or_privacy", privacy="hold", identity="hold")
         if caught is not None:
             details = self._classify_error(caught, details)
-        details.update(retrieved_at=format_utc(self.journal.now()),
+        details.update(retrieved_at=details["retrieved_at"] if latest_diagnostic and sanitized is not None
+                       else format_utc(self.journal.now()),
                        duration_ms=max(0, int((self.journal.monotonic() - mono) * 1000)))
         # Reserve/start have already been durable even if this receipt cannot be
         # written (crash/storage failure). Never issue an unreserved retry.

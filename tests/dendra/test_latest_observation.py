@@ -383,6 +383,264 @@ class LatestTests(unittest.TestCase):
         self.bundle["decision"]["scale"]["conversion_factor"]=1
         with self.assertRaises(Hold):self.prepare()
 
+
+class LatestDiagnosticTests(unittest.TestCase):
+    # Reuse the accepted authority and real Journal/Adapter fixture, not another
+    # fake transport or admission implementation. No inherited test duplication.
+    setUpClass = classmethod(LatestTests.setUpClass.__func__)
+    setUp = LatestTests.setUp
+    setup_journal = LatestTests.setup_journal
+    run_latest = LatestTests.run_latest
+    row = LatestTests.row
+
+    def prepare(self, sid=DEEP):
+        return latest.prepare_diagnostic(self.inv, campaign_id="latest-proof", sid=sid,
+            bundle=self.bundle, first_ref=self.first, authorization=self.authorization, now=self.clock.now())
+
+    def diagnostic(self, rows=None, **envelope):
+        return self.run_latest(response(rows, **envelope))["diagnostic"]
+
+    def projection(self, body):
+        if self.j is None: self.setup_journal()
+        return latest.diagnostic_projection(body,self.binding,retrieved_at=self.clock.now())
+
+    def test_valid_distinct_descending_structure_only(self):
+        d=self.diagnostic([self.row(),dict(t=FIRST,v=0,datastream_id=DEEP)])
+        self.assertEqual(d["diagnostic_classification"],"PASSED_STRUCTURE_ONLY")
+        self.assertTrue(d["request_identity_valid"])
+        self.assertTrue(d["descending_order_valid"])
+        self.assertFalse(d["newest_timestamp_tied"])
+        self.assertTrue(all(r["stream_matches_selected"] for r in d["rows"]))
+        for k in ("latest_available_allowed","latest_unavailable_allowed","publication_allowed"):
+            self.assertIs(d[k],False)
+
+    def test_stream_mismatch(self):
+        d=self.diagnostic([dict(t=LATEST,v=.2,datastream_id=CAMP)])
+        self.assertEqual(d["diagnostic_classification"],"REJECTED_PREDICATES")
+        self.assertFalse(d["rows"][0]["stream_matches_selected"])
+        self.assertTrue(d["rows"][0]["timestamp_not_after_retrieval"])
+
+    def test_stream_missing_and_unsupported_types(self):
+        for fields in ({}, {"datastream_id":None},{"datastream_id":[]},{"datastream_id":4}):
+            with self.subTest(fields=fields):
+                d=self.projection(response([dict(t=LATEST,v=.2,**fields)]))
+                r=d["rows"][0]
+                self.assertEqual(r["stream_field_present"],bool(fields))
+                self.assertFalse(r["stream_field_type_supported"])
+                self.assertEqual(d["diagnostic_classification"],"REJECTED_SCHEMA")
+
+    def test_pre1900_timestamp_distinguished(self):
+        d=self.diagnostic([dict(t="1899-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)])
+        r=d["rows"][0]
+        self.assertTrue(r["timestamp_parseable"])
+        self.assertFalse(r["timestamp_year_at_least_1900"])
+        self.assertTrue(r["timestamp_not_after_retrieval"])
+        self.assertEqual(d["diagnostic_classification"],"REJECTED_PREDICATES")
+
+    def test_future_timestamp_distinguished(self):
+        d=self.diagnostic([dict(t="2099-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)])
+        self.assertTrue(d["rows"][0]["timestamp_year_at_least_1900"])
+        self.assertFalse(d["rows"][0]["timestamp_not_after_retrieval"])
+
+    def test_combined_failures_remain_explicit(self):
+        d=self.diagnostic([dict(t="2099-01-01T00:00:00.000Z",v=.2,datastream_id=CAMP),
+                           dict(t="1899-01-01T00:00:00.000Z",v=.2,datastream_id=CAMP)])
+        self.assertFalse(d["rows"][0]["stream_matches_selected"])
+        self.assertFalse(d["rows"][0]["timestamp_not_after_retrieval"])
+        self.assertFalse(d["rows"][1]["timestamp_year_at_least_1900"])
+        self.assertTrue(d["descending_order_valid"])
+
+    def test_malformed_timestamp_and_type(self):
+        for fields in ({},{"t":None},{"t":[]},{"t":True},{"t":"SECRET_TIMESTAMP"},
+                       {"t":"2026-02-30T00:00:00Z"},{"t":"2026-01-01T00:00:00.1234567Z"}):
+            with self.subTest(fields=fields):
+                d=self.projection(response([dict(v=.2,datastream_id=DEEP,**fields)]))
+                self.assertFalse(d["rows"][0]["timestamp_parseable"])
+                self.assertIsNone(d["rows"][0]["timestamp_year_at_least_1900"])
+                self.assertIsNone(d["descending_order_valid"])
+                self.assertEqual(d["diagnostic_classification"],"REJECTED_SCHEMA")
+                self.assertNotIn(b"SECRET_TIMESTAMP",encode(d))
+
+    def test_tie_and_ascending_order_facts(self):
+        for rows,tied in (([self.row(),self.row()],True),
+                         ([dict(t=FIRST,v=.2,datastream_id=DEEP),self.row()],False)):
+            with self.subTest(tied=tied):
+                d=self.projection(response(rows))
+                self.assertEqual(d["newest_timestamp_tied"],tied)
+                self.assertFalse(d["descending_order_valid"])
+                self.assertFalse(d["rows"][1]["relative_order_valid"])
+
+    def test_zero_rows_never_unavailable(self):
+        d=self.diagnostic([])
+        self.assertEqual(d["row_count"],0)
+        self.assertEqual(d["diagnostic_classification"],"PASSED_STRUCTURE_ONLY")
+        self.assertFalse(d["latest_unavailable_allowed"])
+
+    def test_unknown_schema_values_quality_fail_closed_without_leaks(self):
+        bad=[response([dict(t=LATEST,v=["SECRET_VALUE"],datastream_id=DEEP)]),
+             response([dict(t=LATEST,v=.1,datastream_id=DEEP,SECRET_KEY="SECRET_COORDINATE")]),
+             response([dict(t=LATEST,v=.1,datastream_id=DEEP,q={"SECRET_Q":"SECRET_ANNOTATION"})]),
+             response([None]),response(SECRET_ENVELOPE="SECRET_VALUE"),
+             response([self.row()]*3),response(total=False),response(skip=1)]
+        for raw in bad:
+            with self.subTest(raw=raw):
+                d=self.projection(raw)
+                self.assertEqual(d["diagnostic_classification"],"REJECTED_SCHEMA")
+                self.assertNotIn(b"SECRET",encode(d))
+
+    def test_sanitized_object_no_private_content(self):
+        raw=response([dict(t=LATEST,v=.31415926,datastream_id=DEEP,
+                           q={"flag":["SECRET_FLAG"],"annotation_ids":["SECRET_ANNOTATION"]})])
+        result=self.run_latest(raw)
+        a=next(iter(self.j.snapshot()["attempts"].values()))
+        self.assertEqual(a["representation"],"sanitized")
+        self.assertEqual((a["response_bytes"],a["response_sha256"]),(len(raw),latest.sha(raw)))
+        self.assertEqual(len(a["objects"]),1)
+        obj=self.j.read_object(a["objects"][0])
+        for token in (DEEP,CAMP,LATEST,".31415926","SECRET_FLAG","SECRET_ANNOTATION",'"q":'):
+            self.assertNotIn(token,encode(result).decode())
+            self.assertNotIn(token,obj.decode())
+        self.assertFalse(result["raw_body_retained"])
+        self.assertNotEqual(obj,raw)
+
+    def test_deterministic_bound_without_truncating_rows(self):
+        raw=response([self.row(),self.row()])
+        a=self.projection(raw);b=self.projection(raw)
+        self.assertEqual(encode(a),encode(b))
+        self.assertLessEqual(len(encode(a)),latest.DIAGNOSTIC_BYTES)
+        many=self.projection(response([self.row()]*3))
+        self.assertEqual(many["row_count"],3)
+        self.assertEqual(many["rows"],[])
+        with self.assertRaises(Hold):self.projection(b" "*(8*1024**2+1))
+
+    def test_production_rejections_unchanged(self):
+        ordinary,_=latest.prepare(self.inv,campaign_id="latest-proof",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        for raw in (response([dict(t=LATEST,v=.2)]),
+                    response([dict(t="1899-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)]),
+                    response([dict(t="2099-01-01T00:00:00.000Z",v=.2,datastream_id=DEEP)])):
+            with self.subTest(raw=raw),self.assertRaisesRegex(Hold,"Latest stream/source timestamp invalid"):
+                latest.response_shape(raw,ordinary,retrieved_at=self.clock.now())
+
+    def test_diagnostic_cannot_enter_production_or_history(self):
+        self.diagnostic()
+        for action in (lambda:latest.evidence(self.j,evaluated_at=self.clock.now()),
+                       lambda:latest.project(self.j,evaluated_at=self.clock.now()),
+                       lambda:latest.response_shape(response(),self.binding,retrieved_at=self.clock.now()),
+                       lambda:self.j.start_run("history"),lambda:self.j.seal("history",0,{},[]),
+                       lambda:self.j.daily_evidence("history","2026-09-25","0"*64)):
+            with self.assertRaises((Hold,KeyError)):action()
+        self.assertFalse((self.root/self.j.prefix/"latest-evidence.json").exists())
+        self.assertFalse(any(e["kind"] in ("run","sealed","daily_evidence") for e in self.j.events))
+
+    def test_ordinary_latest_forbids_sanitized_substitution(self):
+        b,_=latest.prepare(self.inv,campaign_id="ordinary",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        with Journal(self.root,b,{},create=True,inventory=self.inv,now=self.clock.now,monotonic=self.clock.monotonic) as j:
+            adapter=latest.LatestAdapter(j);key=j.reserve("latest-witness",b["request_id"]);j.started(key)
+            details=adapter._details(latest.RequestSpec(self.inv.identity(DEEP)["station_id"],DEEP),self.clock.now(),self.clock.monotonic())
+            with self.assertRaisesRegex(Hold,"cannot retry or substitute"):
+                j.received(key,response(),source_rows=1,status=200,retain=False,sanitized_body=b"{}",details=details)
+
+    def test_projection_mutation_refused_at_receipt(self):
+        self.setup_journal();raw=response();d=self.projection(raw);d["latest_available_allowed"]=True
+        key=self.j.reserve("latest-witness",self.binding["request_id"]);self.j.started(key)
+        details=self.adapter._details(latest.RequestSpec(self.inv.identity(DEEP)["station_id"],DEEP),self.clock.now(),self.clock.monotonic())
+        with self.assertRaisesRegex(Hold,"differs from original"):
+            self.j.received(key,raw,source_rows=1,status=200,retain=False,sanitized_body=encode(d),details=details)
+
+    def test_receipt_and_object_integrity(self):
+        e=self.run_latest();a=next(iter(self.j.snapshot()["attempts"].values()))
+        self.assertEqual(e["records"]["received"],self.j.events[-1]["record_sha256"])
+        path=self.root/self.j.prefix/a["objects"][0]["path"];path.write_bytes(b"{}")
+        with self.assertRaises(Hold):latest.diagnostic_evidence(self.j,evaluated_at=self.clock.now())
+
+    def test_purpose_changes_request_and_cannot_switch_after_reservation(self):
+        self.setup_journal()
+        ordinary,_=latest.prepare(self.inv,campaign_id="latest-proof",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        self.assertNotEqual(ordinary["request_id"],self.binding["request_id"])
+        self.j.reserve("latest-witness",self.binding["request_id"])
+        self.j.binding=ordinary
+        with self.assertRaises(Hold):self.j.started(next(iter(self.j.snapshot()["attempts"])))
+        with self.assertRaises(Hold):self.adapter._permission()
+
+    def test_ambiguous_restart_rename_and_relocation_cannot_reset(self):
+        self.setup_journal();self.j.reserve("latest-witness",self.binding["request_id"]);self.j.close()
+        with Journal(self.root,self.binding,{},inventory=self.inv,now=self.clock.now,monotonic=self.clock.monotonic) as j:
+            with self.assertRaises(Hold):latest.LatestAdapter(j).run(executor=lambda *a,**k:self.fail("repeat"),wait=self.clock.advance,authorization=self.authorization)
+            self.assertEqual(j.snapshot()["counters"]["attempts"],1)
+        renamed,_=latest.prepare_diagnostic(self.inv,campaign_id="renamed",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        with self.assertRaises(Hold):Journal(self.root,renamed,{},create=True,inventory=self.inv)
+        with self.assertRaises(Hold):Journal(root("relocated-"),self.binding,{},create=True,inventory=self.inv)
+
+    def test_completed_restart_is_read_only_without_second_request(self):
+        result=self.run_latest();self.j.close()
+        with open_evidence(str(self.root),"latest-proof",self.inv) as j:
+            self.assertEqual(latest.diagnostic_evidence(j,evaluated_at=self.clock.now()),result)
+            with self.assertRaises(Hold):latest.LatestAdapter(j)
+        with Journal(self.root,self.binding,{},inventory=self.inv,now=self.clock.now,monotonic=self.clock.monotonic) as j:
+            with self.assertRaises(Hold):latest.LatestAdapter(j).run(executor=lambda *a,**k:self.fail("repeat"),wait=self.clock.advance,authorization=self.authorization)
+
+    def test_source_request_and_unknown_purpose_refused(self):
+        b,_=self.prepare()
+        for name,value in (("purpose","latest"),("version","unknown"),("request_id","0"*64)):
+            changed=copy.deepcopy(b);changed[name]=value
+            with self.subTest(name=name),self.assertRaises(Hold):latest.validate_binding(changed,{},inventory=self.inv)
+        b["collector_sources"]["core.R"]="0"*64
+        with self.assertRaises(Hold):latest.validate_binding(b,{},inventory=self.inv)
+
+    def test_http_transport_failures_remain_spent_and_omitted(self):
+        reply=fixture.Reply(b"SECRET_BODY");reply.status=503
+        with self.assertRaises(urllib.error.HTTPError):self.run_latest(executor=lambda request,timeout:reply)
+        a=next(iter(self.j.snapshot()["attempts"].values()))
+        self.assertFalse(a["body_retained"])
+        self.assertEqual(a["objects"],[])
+        with self.assertRaises(Hold):self.run_latest()
+
+    def test_unknown_row_schema_through_shared_adapter(self):
+        d=self.diagnostic([dict(t=LATEST,v=.1,datastream_id=DEEP,SECRET_KEY="SECRET_VALUE")])
+        self.assertEqual(d["diagnostic_classification"],"REJECTED_SCHEMA")
+        a=next(iter(self.j.snapshot()["attempts"].values()))
+        self.assertEqual(a["representation"],"sanitized")
+        self.assertIsNone(a["details"]["page_complete"])
+        self.assertEqual(a["details"]["privacy"],"not_evaluated")
+
+    def test_original_body_retention_denied_for_diagnostic(self):
+        self.setup_journal();key=self.j.reserve("latest-witness",self.binding["request_id"]);self.j.started(key)
+        details=self.adapter._details(latest.RequestSpec(self.inv.identity(DEEP)["station_id"],DEEP),self.clock.now(),self.clock.monotonic())
+        with self.assertRaisesRegex(Hold,"cannot retain originals"):
+            self.j.received(key,response(),source_rows=1,status=200,retain=True,details=details)
+
+    def test_valid_facts_cannot_claim_admission_in_receipt(self):
+        self.setup_journal();raw=response();d=self.projection(raw)
+        key=self.j.reserve("latest-witness",self.binding["request_id"]);self.j.started(key)
+        details=self.adapter._details(latest.RequestSpec(self.inv.identity(DEEP)["station_id"],DEEP),self.clock.now(),self.clock.monotonic())
+        details.update(privacy="public",identity="match",effective_limit=2,page_complete=True)
+        with self.assertRaisesRegex(Hold,"cannot claim admission"):
+            self.j.received(key,raw,source_rows=1,status=200,retain=False,sanitized_body=encode(d),details=details)
+
+    def test_receipt_tamper_is_not_diagnostic_evidence(self):
+        self.diagnostic();self.j.events[-1]["data"]["response_bytes"]+=1
+        with self.assertRaises(Hold):latest.diagnostic_evidence(self.j,evaluated_at=self.clock.now())
+
+    def test_ordinary_spent_root_cannot_be_reopened_as_diagnostic(self):
+        ordinary,_=latest.prepare(self.inv,campaign_id="latest-proof",sid=DEEP,bundle=self.bundle,
+            first_ref=self.first,authorization=self.authorization,now=self.clock.now())
+        with Journal(self.root,ordinary,{},create=True,inventory=self.inv,now=self.clock.now,monotonic=self.clock.monotonic) as j:
+            j.reserve("latest-witness",ordinary["request_id"])
+        diagnostic,_=self.prepare()
+        with self.assertRaises(Hold):Journal(self.root,diagnostic,{},inventory=self.inv)
+
+    def test_timestamp_boundary_and_source_precision(self):
+        for t,expected in (("1900-01-01T00:00:00.000Z",True),
+                           (self.clock.now(),True),(format_utc(parse_utc(self.clock.now())+timedelta(microseconds=1)),False)):
+            with self.subTest(t=t):
+                d=self.projection(response([dict(t=t,v=.1,datastream_id=DEEP)]))
+                self.assertEqual(d["rows"][0]["timestamp_not_after_retrieval"],expected)
+                self.assertTrue(d["rows"][0]["timestamp_year_at_least_1900"])
+
     def test_window_not_extendible_at_run(self):
         self.setup_journal()
         auth=dict(self.authorization,window_end="2026-09-27T14:00:00Z")

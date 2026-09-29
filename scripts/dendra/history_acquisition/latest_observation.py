@@ -17,12 +17,15 @@ from .browser_projection import LATEST
 from .d3_plan import BASE, IDENTITIES, validate_request
 from .eligibility import validate_decision
 from .model import Inventory, INVENTORY_SHA256, NAME, PAGE_BYTES, source_binding
-from .provider_adapter import Adapter, observation_shape
+from .provider_adapter import Adapter, observation_shape, OBSERVATION_FIELDS, OBSERVATION_ENVELOPE
 from .recovery import checkpoint, open_evidence
 from .safety import Root, decode, digest, encode, require, sha
 
 MODE = "latest_evidence_adapter"
 VERSION = "dendra-private-latest-evidence-1"
+DIAGNOSTIC = "dendra-latest-rejection-diagnostic-1"
+DIAGNOSTIC_PURPOSE = "rejection_diagnostic_only"
+DIAGNOSTIC_BYTES = 12288
 REQUEST = "dendra-latest-request-1"
 KIND = "latest-witness"
 MAX_PROOF_RECEIPT_AGE_SECONDS = 300
@@ -80,8 +83,15 @@ def prepare(inventory, *, campaign_id, sid, bundle, first_ref, authorization, no
         sources=source_binding(), checkpoint_id=checkpoint())
 
 
+def prepare_diagnostic(inventory, *, campaign_id, sid, bundle, first_ref, authorization, now):
+    """Separate immutable purpose; never reinterpret an ordinary spent request."""
+    return _prepare(inventory, campaign_id=campaign_id, sid=sid, bundle=bundle,
+        first_ref=first_ref, authorization=authorization, now=now,
+        sources=source_binding(), checkpoint_id=checkpoint(), diagnostic=True)
+
+
 def _prepare(inventory, *, campaign_id, sid, bundle, first_ref, authorization, now,
-             sources, checkpoint_id):
+             sources, checkpoint_id, diagnostic=False):
     require(type(inventory) is Inventory and isinstance(campaign_id, str) and
             NAME.fullmatch(campaign_id), "Latest campaign/inventory required")
     require(set(authorization) == {"checkpoint", "root", "approval_reference", "window_start", "window_end",
@@ -110,17 +120,23 @@ def _prepare(inventory, *, campaign_id, sid, bundle, first_ref, authorization, n
     value["request_id"] = digest(dict(request=request, checkpoint=checkpoint_id,
         collector_fingerprint=digest(sources), authority=auth, policy=POLICY,
         quality_policy=value["quality_policy"]))
+    if diagnostic:
+        value.update(version=DIAGNOSTIC, purpose=DIAGNOSTIC_PURPOSE)
+        value["request_id"] = digest(dict(request_id=value["request_id"],
+                                         version=DIAGNOSTIC, purpose=DIAGNOSTIC_PURPOSE))
     require(len(encode(value))+4096 <= PAGE_BYTES, "Latest header bound")
     return decode(encode(value)), {}
 
 
 def validate_binding(binding, tasks, *, inventory, historical=False):
     require(binding.get("mode") == MODE and tasks == {}, "Latest is not historical query coverage")
+    require(binding.get("version") in (VERSION, DIAGNOSTIC), "Unknown latest purpose/version")
     sources = binding["collector_sources"] if historical else source_binding()
     head = binding["checkpoint"] if historical else checkpoint()
     expected = _prepare(inventory, campaign_id=binding["campaign_id"], sid=binding["selected_ids"][0],
         bundle=binding["bundle"], first_ref=binding["first_ref"], authorization=binding["authorization"],
-        now=binding["prepared_at"], sources=sources, checkpoint_id=head)
+        now=binding["prepared_at"], sources=sources, checkpoint_id=head,
+        diagnostic=binding["version"] == DIAGNOSTIC)
     require((binding, tasks) == expected, "Latest binding changed")
 
 
@@ -139,6 +155,7 @@ def validate_storage(binding, fs):
 
 
 def response_shape(body, binding, *, retrieved_at):
+    require(binding["version"] == VERSION, "Diagnostic is never latest admission")
     sid = binding["selected_ids"][0]
     value = observation_shape(body, sid, quality_policy=binding["quality_policy"])
     rows = value["data"]
@@ -164,9 +181,97 @@ def response_shape(body, binding, *, retrieved_at):
     return value
 
 
-def evidence(journal, *, evaluated_at, live_proof=False):
-    """Recompute evidence from immutable originals; historical reads do not reauthorize."""
+def diagnostic_projection(body, binding, *, retrieved_at):
+    """Fixed predicate facts, never returned identifiers, timestamps or values.
+
+    The existing decoder/UTC and quality validators remain authoritative. Shape
+    checks do not coerce source fields, repair a row, or imply latest admission.
+    """
+    require(binding.get("version") == DIAGNOSTIC and binding.get("purpose") == DIAGNOSTIC_PURPOSE,
+            "Explicit latest diagnostic purpose required")
+    require(type(body) is bytes and len(body) <= POLICY["response_bytes"], "Diagnostic body bound")
+    sid = binding["selected_ids"][0]
+    request_valid = binding["request"] == RequestSpec(binding["roster"][sid]["station_id"], sid).descriptor()
+    require(request_valid, "Diagnostic request identity changed")
+    retrieval = parse_utc(retrieved_at)
+    try:
+        value = decode(body)
+    except (ValueError, TypeError, RecursionError):
+        value = None
+    obj = value if type(value) is dict else {}
+    rows = obj.get("data") if type(obj.get("data")) is list else None
+    count = len(rows) if rows is not None else None
+    schema = (type(value) is dict and set(obj) <= OBSERVATION_ENVELOPE and rows is not None and
+              type(obj.get("limit")) is int and obj["limit"] == 2 and count <= 2 and
+              all(k not in obj or (type(obj[k]) is int and obj[k] >= 0) for k in ("total", "skip")) and
+              obj.get("skip", 0) == 0 and ("total" not in obj or obj["total"] >= count))
+    facts, times = [], []
+    # Out-of-bounds arrays refuse as a whole; never truncate/coerce their rows.
+    for item in rows if rows is not None and count <= 2 else []:
+        row = item if type(item) is dict else {}
+        stream_type = type(row.get("datastream_id")) is str and len(row["datastream_id"]) <= 256
+        time_type = type(row.get("t")) is str and len(row["t"]) <= 256
+        stamp = None
+        if time_type:
+            try:
+                stamp = parse_utc(row["t"])
+            except (ValueError, TypeError, OverflowError):
+                pass  # Never emit the parser exception containing the source.
+        safe_row = type(item) is dict and set(row) <= OBSERVATION_FIELDS
+        for name, v in row.items():
+            if name == "q":
+                try:
+                    quality.validate_policy(binding["quality_policy"])
+                    quality.classify(row)
+                except (ValueError, TypeError, OverflowError, RecursionError):
+                    safe_row = False
+            elif v is not None and (type(v) not in (str, int, float, bool) or
+                                    (type(v) is str and len(v) > 256)):
+                safe_row = False
+        v = row.get("v")
+        if v is not None and not (type(v) in (int, float) and abs(v) <= 1e308 and math.isfinite(v)):
+            safe_row = False
+        # Missing/unsupported identity/time is explicit, not an accepted schema.
+        schema = bool(schema and safe_row and stream_type and time_type and stamp is not None)
+        previous = times[-1] if times else None
+        comparable = previous is not None and stamp is not None
+        facts.append(dict(row_present=type(item) is dict, stream_field_present="datastream_id" in row,
+            stream_field_type_supported=stream_type, stream_matches_selected=stream_type and row["datastream_id"] == sid,
+            timestamp_field_present="t" in row, timestamp_field_type_supported=time_type,
+            timestamp_parseable=stamp is not None,
+            timestamp_year_at_least_1900=None if stamp is None else stamp.year >= 1900,
+            timestamp_not_after_retrieval=None if stamp is None else stamp <= retrieval,
+            relative_order_valid=previous > stamp if comparable else None,
+            timestamp_tied_with_previous=previous == stamp if comparable else None))
+        times.append(stamp)
+    ordering = None if rows is None or count > 2 or any(t is None for t in times) else (
+        count < 2 or times[0] > times[1])
+    tied = facts[1]["timestamp_tied_with_previous"] if len(facts) == 2 else None
+    passed = bool(schema and ordering and all(f["stream_matches_selected"] and
+        f["timestamp_year_at_least_1900"] and f["timestamp_not_after_retrieval"] for f in facts))
+    result = dict(schema_version=DIAGNOSTIC, request_identity_valid=request_valid,
+        request_sha256=digest(binding["request"]), request_id=binding["request_id"],
+        source_fingerprint=digest(binding["collector_sources"]), checkpoint=binding["checkpoint"],
+        response_sha256=sha(body), response_bytes=len(body), retrieval_time_sha256=digest(retrieved_at),
+        row_count=count, rows=facts, schema_supported=bool(schema), descending_order_valid=ordering,
+        newest_timestamp_tied=tied, diagnostic_classification="PASSED_STRUCTURE_ONLY" if passed else
+        "REJECTED_SCHEMA" if not schema else "REJECTED_PREDICATES",
+        latest_available_allowed=False, latest_unavailable_allowed=False, publication_allowed=False)
+    require(len(encode(result)) <= DIAGNOSTIC_BYTES, "Latest diagnostic output bound")
+    return result
+
+
+def validate_diagnostic(body, sanitized, binding, *, retrieved_at):
+    require(type(sanitized) is bytes and len(sanitized) <= DIAGNOSTIC_BYTES and
+            sanitized == encode(diagnostic_projection(body, binding, retrieved_at=retrieved_at)),
+            "Latest diagnostic projection differs from original response")
+
+
+def _receipt(journal, evaluated_at, *, diagnostic=False):
+    """Shared immutable request/receipt/object provenance, with distinct purposes."""
     validate_binding(journal.binding, journal.tasks, inventory=journal.inventory, historical=journal.inspect_only)
+    require(journal.binding["version"] == (DIAGNOSTIC if diagnostic else VERSION),
+            "Diagnostic is never latest admission")
     validate_storage(journal.binding, journal.fs)
     journal.verify_records()
     b = journal.binding
@@ -178,16 +283,19 @@ def evidence(journal, *, evaluated_at, live_proof=False):
             a["task_key"] == "latest-witness" and a["interval_key"] is None and a["run"] == 0 and
             a["cursor"] == b["request_id"] and a["logical_key"] == logical and
             a["attempt_key"] == digest(dict(task="latest-witness", page=logical, attempt=1)) and
-            a["representation"] == "original" and a["body_retained"] and len(a["objects"]) == 1,
-            "Latest complete original receipt required")
+            a["representation"] == ("sanitized" if diagnostic else "original") and
+            a["body_retained"] and len(a["objects"]) == 1, "Latest purpose/receipt representation mismatch")
     records = {}
     for kind in ("reserved", "started", "received"):
         found = [r for r in journal.events if r["kind"] == kind and r["data"].get("attempt_key") == a["attempt_key"]]
         require(len(found) == 1, "Latest receipt chain closure")
         records[kind] = found[0]
     d = a["details"]
-    require(d["kind"] == KIND and d["outcome"] == "received" and d["effective_limit"] == 2 and
-            d["page_complete"] is True and d["privacy"] == "public" and d["identity"] == "match" and
+    require(d["kind"] == KIND and d["outcome"] == "received" and
+            d["effective_limit"] == (None if diagnostic else 2) and
+            d["page_complete"] is (None if diagnostic else True) and
+            d["privacy"] == ("not_evaluated" if diagnostic else "public") and
+            d["identity"] == ("not_evaluated" if diagnostic else "match") and
             d["retryable"] is False and d["retry_after_seconds"] is None and d["error_code"] is None,
             "Latest admission receipt HOLD")
     require(records["reserved"]["sequence"] < records["started"]["sequence"] < records["received"]["sequence"] and
@@ -201,6 +309,31 @@ def evidence(journal, *, evaluated_at, live_proof=False):
     authority(journal.inventory, b["selected_ids"][0], b["bundle"], b["first_ref"],
               fingerprint=digest(b["collector_sources"]), now=d["requested_at"])
     body = journal.read_object(a["objects"][0])
+    return b, a, records, d, body
+
+
+def diagnostic_evidence(journal, *, evaluated_at):
+    """Read the received-event-bound sanitized object; never project a marker."""
+    b, a, records, d, body = _receipt(journal, evaluated_at, diagnostic=True)
+    require(len(body) <= DIAGNOSTIC_BYTES, "Latest diagnostic output bound")
+    value = decode(body)
+    require(value["schema_version"] == DIAGNOSTIC and value["request_id"] == b["request_id"] and
+            value["request_sha256"] == digest(b["request"]) and value["checkpoint"] == b["checkpoint"] and
+            value["source_fingerprint"] == digest(b["collector_sources"]) and
+            value["response_sha256"] == a["response_sha256"] and value["response_bytes"] == a["response_bytes"] and
+            value["retrieval_time_sha256"] == digest(d["retrieved_at"]) and value["row_count"] == a["source_rows"] and
+            all(value[k] is False for k in ("latest_available_allowed", "latest_unavailable_allowed", "publication_allowed")),
+            "Latest diagnostic receipt/object binding")
+    return dict(diagnostic=value, journal_binding_sha256=journal.binding_sha,
+        journal_header_sha256=journal.header_sha, attempt_key=a["attempt_key"],
+        records={k:r["record_sha256"] for k,r in records.items()}, diagnostic_object=a["objects"][0],
+        raw_body_retained=False, history_coverage=False, latest_available_allowed=False,
+        latest_unavailable_allowed=False, publication_allowed=False)
+
+
+def evidence(journal, *, evaluated_at, live_proof=False):
+    """Recompute evidence from immutable originals; historical reads do not reauthorize."""
+    b, a, records, d, body = _receipt(journal, evaluated_at)
     require(sha(body) == a["response_sha256"] and len(body) == a["response_bytes"], "Latest object hash/size mismatch")
     payload = response_shape(body, b, retrieved_at=d["retrieved_at"])
     require(a["source_rows"] == len(payload["data"]), "Latest source-row accounting")
@@ -275,6 +408,7 @@ class LatestAdapter(Adapter):
 
     def _permission(self):
         b = self.journal.binding
+        self.journal.verify_records()
         require(b["collector_sources"] == source_binding() and b["checkpoint"] == checkpoint(),
                 "Latest current source changed")
         authority(self.journal.inventory, b["selected_ids"][0], b["bundle"], b["first_ref"],
@@ -313,8 +447,11 @@ class LatestAdapter(Adapter):
             sid = b["selected_ids"][0]
             self.current_spec = RequestSpec(b["roster"][sid]["station_id"], sid)
             self.exchange(self._request(self.current_spec), self.current_spec)
-            result = evidence(self.journal, evaluated_at=self.journal.now(), live_proof=True)
-            self.journal.fs.write_new(self.journal.prefix + "/latest-evidence.json", encode(result), PAGE_BYTES)
+            diagnostic = b["version"] == DIAGNOSTIC
+            result = (diagnostic_evidence(self.journal, evaluated_at=self.journal.now()) if diagnostic else
+                      evidence(self.journal, evaluated_at=self.journal.now(), live_proof=True))
+            name = "latest-diagnostic.json" if diagnostic else "latest-evidence.json"
+            self.journal.fs.write_new(self.journal.prefix + "/" + name, encode(result), PAGE_BYTES)
             return result
         finally:
             self.current_spec = self.executor = self.wait = None

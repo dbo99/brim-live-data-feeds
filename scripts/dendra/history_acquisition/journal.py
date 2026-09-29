@@ -438,8 +438,25 @@ class Journal:
             latest = self.binding["mode"] == "latest_evidence_adapter"
             validate_receipt_details(details, witness=witness, latest=latest)
             if latest:
-                require(sanitized_body is None and details["retryable"] is False and
+                from .latest_observation import DIAGNOSTIC, validate_binding, validate_diagnostic
+                require(details["retryable"] is False and
                         details["retry_after_seconds"] is None, "Latest cannot retry or substitute evidence")
+                if self.binding["version"] == DIAGNOSTIC:
+                    validate_binding(self.binding, self.tasks, inventory=self.inventory)
+                    require(not retain, "Latest diagnostic cannot retain originals")
+                    if sanitized_body is not None:
+                        require(status == 200 and details["outcome"] == "received" and
+                                details["error_code"] is None and details["effective_limit"] is None and
+                                details["page_complete"] is None and
+                                details["privacy"] == details["identity"] == "not_evaluated",
+                                "Latest diagnostic cannot claim admission")
+                        validate_diagnostic(body, sanitized_body, self.binding,
+                                            retrieved_at=details["retrieved_at"])
+                        require(source_rows == decode(sanitized_body)["row_count"], "Diagnostic row accounting")
+                    else:
+                        require(details["error_code"] is not None, "Missing latest diagnostic projection")
+                else:
+                    require(sanitized_body is None, "Latest cannot retry or substitute evidence")
             if witness and sanitized_body is not None:
                 from .witness_diagnostic import validate
                 attempt = self.snapshot()["attempts"][key]

@@ -1168,3 +1168,58 @@ A future separately approved Deep-only proof may use four prerequisite calls
 explicit review, then one descending latest call. The maximum is five calls /
 41,943,040 bytes; the latest window is at most 300 seconds. This readiness route
 does not execute those calls, accept those reviews, or grant follow-on authority.
+
+### Private latest-rejection diagnostic
+
+`latest_observation.prepare_diagnostic` binds
+`dendra-latest-rejection-diagnostic-1` and the explicit purpose
+`rejection_diagnostic_only` before reservation. It reuses the latest request,
+authority checks, separate single-use root, transport and Journal; the purpose
+changes the request identity. Ordinary latest bindings remain unchanged.
+Changing purpose after reservation, renaming a campaign, reopening a spent
+Journal or relocating its approved storage cannot reset accounting.
+
+The exact descending `limit=2` response is inspected only in memory. The
+diagnostic stores at most two fixed-schema row fact objects: field presence,
+supported type, selected-stream equality, timestamp parseability, year>=1900,
+not-after-retrieval, strict relative order and ties. Inapplicable comparisons
+are null, not invented passes. Aggregate schema/order facts and hashes bind the
+response, request, checkpoint, collector and retrieval-time reference. No raw
+returned ID, timestamp, numerical value, quality payload, annotation, coordinate,
+unknown key or parser exception text enters the diagnostic object. Unknown
+schema/types refuse; rows or malformed values are never repaired or truncated
+to pass. The canonical projection ceiling is 12,288 bytes. Response limits
+remain one attempt, 25 seconds, 8 MiB, concurrency one, spacing at least one
+second, no retry/redirect/pagination, and a window of at most 300 seconds.
+
+`PASSED_STRUCTURE_ONLY`, `REJECTED_PREDICATES` and `REJECTED_SCHEMA` are diagnostic
+classifications, never latest admission. All three carry
+`latest_available_allowed=false`, `latest_unavailable_allowed=false` and
+`publication_allowed=false`. Successful receipt persistence does not mean
+privacy/identity admission: those receipt classifications stay `not_evaluated`,
+and effective limit/page-completion admission fields stay null. Transport,
+decoding or resource failures may instead leave an omitted-body spent receipt
+without a diagnostic result. No automatic retry follows either outcome.
+
+Before writing the object, the Journal recomputes the exact safe projection
+against the original in-memory response and receipt retrieval time. The received
+event binds the sanitized object's hash/bytes plus the original response
+hash/bytes/row accounting; no independent ledger or unbound sidecar is used.
+`body_retained` in generic Journal accounting means an object exists: for this
+purpose its representation is **sanitized**, never the raw provider body.
+`diagnostic_evidence` verifies the original reservation/start/receipt/object
+chain. Production `evidence`/`project` refuse diagnostic purpose and retain the
+rule that ordinary latest may not substitute sanitized evidence. No history
+task/seal, latest marker, daily change or public projection is produced.
+
+The original omitted failed response cannot be reconstructed by this feature.
+Synthetic predicate fixtures establish readiness only. A later explicitly
+approved single live diagnostic, with fresh current-source authority where
+required, can distinguish its own response; it cannot prove the old response's
+unrecorded contents. This source change does not rebind existing authority or
+authorize a provider call.
+
+The separate future ribbon design remains governed by versioned configurable
+policy inputs. SCAN's existing 7/200 remains preserved; Dendra/common 200 versus
+300 qualifying days and 9 versus 10 reference WYs remain undecided. The ten-WY
+trace display direction is not statistical science. No threshold is changed here.
