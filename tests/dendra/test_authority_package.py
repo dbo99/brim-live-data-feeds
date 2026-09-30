@@ -1,16 +1,19 @@
 """Offline frozen-roster promotion on the actual Journal/adapter path."""
 import copy
+from contextlib import contextmanager
 from datetime import timedelta
+import math
 import os
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit,parse_qs
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"scripts"))
-from dendra.history_acquisition import authority_package as p, metadata_acquisition as m
+from dendra.history_acquisition import authority_package as p, metadata_acquisition as m, provider_adapter
 from dendra.history_acquisition import authority_witness as w, eligibility, presentation, campaign, campaign_execution, routine_update
 from dendra.history_acquisition.model import Inventory,INVENTORY_SHA256,source_binding
 from dendra.history_acquisition.provider_metadata import load_authority
@@ -21,6 +24,17 @@ from test_authority_witness import Clock,Reply,NOW,SID,OTHER
 
 FIRST = "2026-07-01T08:00:00.000Z"
 END = "2026-09-26T08:00:00.000Z"
+
+
+class PacingClock(Clock):
+    """Exact UTC microseconds; waits simulate 1us overshoot, never real sleep."""
+    def __init__(self):self.us=0;self.waits=[]
+    @property
+    def seconds(self):return self.us/1_000_000
+    def advance(self,seconds):self.us+=round(seconds*1_000_000)
+    def wait(self,seconds):
+        self.waits.append(seconds)
+        self.us+=math.ceil(seconds*1_000_000)+1
 
 
 def setUpModule():
@@ -132,6 +146,174 @@ class PackageTests(unittest.TestCase):
     def test_global_spacing_across_journals(self):
         self.run_package()
         self.assertTrue(all(b[2]-a[2]>=1 for a,b in zip(self.calls,self.calls[1:])))
+
+    @contextmanager
+    def validation_delays(self,delays):
+        validate=p.validate;self.validation_timing=[]
+        def timed(package,inventory):
+            validate(package,inventory)
+            if sys._getframe(1).f_code.co_name=='dispatch':
+                ordinal=len(self.validation_timing)+1;before=self.clock.now()
+                self.clock.advance(delays.get(ordinal,delays.get('default',0)))
+                self.validation_timing.append((ordinal,before,self.clock.now()))
+        with patch.object(p,'validate',timed):yield
+
+    def timed_package(self,delays,wait=None):
+        with self.validation_delays(delays):
+            return p.run(self.root,self.package,INV,AUTHORITY,authorization=self.approval,
+                executor=self.execute,wait=wait or self.clock.wait,now=self.clock.now,monotonic=self.clock.monotonic)
+
+    def test_validation_duration_inversion_paces_each_metadata_request(self):
+        self.clock=PacingClock();self.configure([OTHER])
+        result=self.timed_package({1:.05,2:.01,3:0,4:.002})
+        self.assertEqual([k for k,_,_ in self.calls],['vocabulary','station','list','witness'])
+        self.assertTrue(all(b[2]-a[2]>=1 for a,b in zip(self.calls,self.calls[1:])))
+        self.assertTrue(any(0 < delay < .05 for delay in self.clock.waits))
+        self.assertIn('witness',result[OTHER])
+
+    def test_long_serial_42_plus_1_validation_inversion(self):
+        # Eight stations / 23 streams, one synthetic metadata hold: the final
+        # listing is dispatch 43, after 42 successful, correctly spaced calls.
+        groups=[ids for _,ids in sorted(GROUPS.items()) if len(ids)>=3][:8]
+        self.assertEqual(len(groups),8)
+        selected=[s for i,ids in enumerate(groups) for s in ids[:2 if i==6 else 3]]
+        self.clock=PacingClock();self.configure(selected)
+        held=selected[0]
+        def overlap(kind,identity,value):
+            if kind=='list':
+                for item in value['data']:
+                    if item['_id']==held:item['datapoints_config'][1]['begins_at']=FIRST
+            return value
+        self.mutate=overlap
+        result=self.timed_package({'default':.05,43:.01})
+        expected=[]
+        for station,ids in p.station_groups(self.package).items():
+            expected += [('vocabulary',None),('station',station),('list',station)]
+            expected += [('witness',sid) for sid in ids if sid!=held]
+        self.assertEqual([(k,i) for k,i,_ in self.calls],expected)
+        self.assertEqual(len(self.calls),46);self.assertEqual(self.calls[42][0],'list')
+        self.assertEqual(len(result),23)
+        self.assertTrue(all(b[2]-a[2]>=1 for a,b in zip(self.calls,self.calls[1:])))
+        self.assertEqual({k:self.package['policy'][k] for k in ('concurrency','retries','redirects')},
+                         dict(concurrency=1,retries=0,redirects=0))
+        # Every stub entry checks durable started events; completed restart
+        # cannot dispatch again or turn the local metadata hold into a witness.
+        before=list(self.calls);self.run_package();self.assertEqual(self.calls,before)
+
+    def dispatch_probe(self,*,gap=1,timeout=25,parent_remaining=100,validation=0,wait=None):
+        """Exercise the actual nested production dispatch at precise boundaries."""
+        self.clock=PacingClock();self.clock.advance(gap);self.probe_calls=[]
+        start=parse_utc(self.clock.now())
+        def cell(value):return (lambda:value).__closure__[0]
+        code=next(c for c in p._run_locked.__code__.co_consts if isinstance(c,types.CodeType) and c.co_name=='dispatch')
+        values=dict(package=self.package,inventory=INV,last_start=parse_utc(NOW),
+            end=start+timedelta(seconds=parent_remaining),now=self.clock.now,monotonic=self.clock.monotonic,
+            wait=wait or self.clock.advance,counts={'attempts':0,'response_bytes':0},
+            executor=lambda request,timeout:self.probe_calls.append((self.clock.now(),timeout)))
+        dispatch=types.FunctionType(code,p.__dict__,closure=tuple(cell(values[k]) for k in code.co_freevars))
+        with self.validation_delays({1:validation}):dispatch(None,timeout)
+
+    def test_exact_one_second_dispatch_boundary(self):
+        self.dispatch_probe(gap=1)
+        self.assertEqual(self.probe_calls,[(format_utc(parse_utc(NOW)+timedelta(seconds=1)),25)])
+
+    def test_above_one_second_dispatch_boundary(self):
+        self.dispatch_probe(gap=1.000001)
+        self.assertEqual(len(self.probe_calls),1)
+
+    def test_genuinely_subsecond_noop_wait_refuses(self):
+        with self.assertRaisesRegex(Hold,'Package request-start spacing/window'):
+            self.dispatch_probe(gap=.999999,wait=lambda _:None)
+        self.assertEqual(self.probe_calls,[])
+
+    def test_subsecond_request_waits_to_exact_boundary(self):
+        self.dispatch_probe(gap=.75,timeout=2)
+        self.assertEqual(self.probe_calls,[(format_utc(parse_utc(NOW)+timedelta(seconds=1)),1.75)])
+
+    def test_validation_deducted_from_request_timeout(self):
+        self.dispatch_probe(validation=.25,timeout=2)
+        self.assertEqual(self.probe_calls[0][1],1.75)
+
+    def test_validation_and_wait_deducted_from_parent_remaining(self):
+        self.dispatch_probe(gap=.5,validation=.1,parent_remaining=.75)
+        self.assertEqual(self.probe_calls[0][1],.25)
+
+    def test_validation_exhausts_request_deadline(self):
+        with self.assertRaisesRegex(Hold,'Package dispatch deadline'):
+            self.dispatch_probe(validation=25)
+        self.assertEqual(self.probe_calls,[])
+
+    def test_validation_exhausts_parent_window(self):
+        with self.assertRaisesRegex(Hold,'Package dispatch deadline'):
+            self.dispatch_probe(validation=.1,parent_remaining=.1)
+        self.assertEqual(self.probe_calls,[])
+
+    def test_required_wait_cannot_fit_request_deadline(self):
+        with self.assertRaisesRegex(Hold,'Package dispatch deadline cannot fit spacing'):
+            self.dispatch_probe(gap=.5,timeout=.5)
+        self.assertEqual(self.probe_calls,[])
+
+    def test_required_wait_cannot_fit_parent_window(self):
+        with self.assertRaisesRegex(Hold,'Package dispatch deadline cannot fit spacing'):
+            self.dispatch_probe(gap=.5,parent_remaining=.5)
+        self.assertEqual(self.probe_calls,[])
+
+    def test_oversleep_rechecks_request_deadline(self):
+        with self.assertRaisesRegex(Hold,'Package dispatch deadline exhausted'):
+            self.dispatch_probe(gap=.5,timeout=.75,wait=lambda _:self.clock.advance(.75))
+        self.assertEqual(self.probe_calls,[])
+
+    def test_oversleep_rechecks_parent_window(self):
+        with self.assertRaisesRegex(Hold,'Package request-start spacing/window'):
+            self.dispatch_probe(gap=.5,parent_remaining=.75,wait=lambda _:self.clock.advance(.75))
+        self.assertEqual(self.probe_calls,[])
+
+    def child_expiry(self,adapter_type,seconds,expected_calls):
+        self.clock=PacingClock();self.configure([OTHER])
+        validate=adapter_type._validate_dispatch
+        def near_end(adapter,*args):
+            validate(adapter,*args)
+            self.assertLessEqual(adapter.remaining(),seconds)
+            # Keep the real alarm generous; fake validation, not CPU speed,
+            # crosses the remaining child budget deterministically.
+            self.clock.advance(adapter.remaining()-2)
+        with patch.object(adapter_type,'_validate_dispatch',near_end):
+            with self.assertRaisesRegex(Hold,'Budget exhausted: elapsed_ms'):
+                self.timed_package({'default':.05,expected_calls+1:2.05})
+        self.assertEqual(len(self.calls),expected_calls)
+        cid=(p.metadata_campaign_id(self.package,ROSTER[OTHER]['station_id']) if expected_calls==0
+             else p.witness_campaign_id(self.package,OTHER))
+        with self.journal(cid) as j:
+            j.verify_records();snapshot=j.snapshot()
+            self.assertEqual(snapshot['counters']['attempts'],1)
+            attempt=next(iter(snapshot['attempts'].values()))
+            # Receipt accounting is durable before the post-receipt budget
+            # guard refuses; no HTTP response or successful coverage exists.
+            self.assertEqual(attempt['state'],'received');self.assertIsNone(attempt['status'])
+            self.assertEqual(attempt['response_bytes'],0)
+
+    def test_metadata_child_150_second_exhaustion_remains_spent(self):
+        self.child_expiry(m.MetadataAdapter,150,0)
+
+    def test_witness_child_60_second_exhaustion_remains_spent(self):
+        self.child_expiry(provider_adapter.WitnessAdapter,60,3)
+
+    def test_unsent_spacing_refusal_remains_spent_on_restart(self):
+        self.clock=PacingClock();self.configure([OTHER])
+        def undersleep(seconds):
+            if seconds>=.1:self.clock.wait(seconds)
+        with self.assertRaisesRegex(Hold,'Package request-start spacing/window'):
+            self.timed_package({1:.05,2:.01},wait=undersleep)
+        cid=p.metadata_campaign_id(self.package,ROSTER[OTHER]['station_id'])
+        with self.journal(cid) as j:
+            j.verify_records();before=list(j.events);snapshot=j.snapshot()
+            self.assertEqual(snapshot['counters']['attempts'],2)
+            self.assertEqual(len(self.calls),1)
+            self.assertEqual(list(snapshot['attempts'].values())[-1]['state'],'failure')
+        with self.assertRaisesRegex(Hold,'Package spent/ambiguous service failure requires review'):
+            self.run_package()
+        self.assertEqual(len(self.calls),1)
+        with self.journal(cid) as j:self.assertEqual(j.events,before)
 
     def test_advancing_clock_child_windows_capture_once(self):
         from dendra.history_acquisition import provider_adapter

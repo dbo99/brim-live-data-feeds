@@ -284,13 +284,24 @@ def _run_locked(root, fs, package, inventory, authority, approval, executor, wai
 
     def dispatch(request,timeout):
         nonlocal last_start
+        began = monotonic()
+        deadline = min(end,parse_utc(now())+timedelta(seconds=timeout))
         validate(package,inventory)
         at = parse_utc(now())
+        # Each child request must pace against the same post-validation marker
+        # as this guard. Validation and waiting spend the incoming time budget.
+        delay = max(0,1-(at-last_start).total_seconds()) if last_start is not None else 0
+        remaining = min(timeout-(monotonic()-began),(deadline-at).total_seconds())
+        require(delay < remaining, "Package dispatch deadline cannot fit spacing")
+        if delay: wait(delay)
+        at = parse_utc(now())
         require(at < end and (last_start is None or (at-last_start).total_seconds() >= 1), "Package request-start spacing/window")
+        remaining = min(timeout-(monotonic()-began),(deadline-at).total_seconds())
+        require(remaining > 0, "Package dispatch deadline exhausted")
         require(counts["attempts"] < package["ceilings"]["http_attempts"], "Package attempt ceiling")
         counts["attempts"] += 1
         last_start = at
-        return executor(request,timeout=min(timeout,(end-at).total_seconds()))
+        return executor(request,timeout=remaining)
 
     def child_approval(j,seconds):
         start = parse_utc(now())
