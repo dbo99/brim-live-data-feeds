@@ -735,9 +735,10 @@ class CampaignAdapter(Adapter):
         validate_request(request, spec)
         attempts = [a for a in self.journal.snapshot()["attempts"].values()
                     if a.get("interval_key") == interval_key]
-        require(len(attempts) < 3 and all(a["cursor"] != spec.cursor for a in attempts),
+        require(len(attempts) < min(3, self.journal.binding["request_policy"]["http_attempts"]) and
+                all(a["cursor"] != spec.cursor for a in attempts),
                 "Campaign page ceiling or replay refused")
-        expected_cursor = task["start"]
+        expected_cursor = self.journal.binding.get("predecessor", {}).get("cursor") or task["start"]
         if attempts:
             previous = attempts[-1]
             require(previous["state"] == "received" and previous.get("status") == 200 and
@@ -787,8 +788,21 @@ class CampaignAdapter(Adapter):
         # an existing reservation can never reach this branch.
         run = state["intervals"][key]["runs"] or self.journal.start_run(key)
         successful = []
+        from .recovery import prefix_body
+        prefix = prefix_body(self.journal)
+        if prefix is not None:
+            # Archive copy, not a provider receipt or an additional spent page.
+            descriptor = self._persist(self.journal.put_object, prefix)
+            require(descriptor == self.journal.binding["predecessor"]["prefix_receipt"]["objects"][0],
+                    "Preserved prefix object differs")
+        prefix_pending = prefix is not None
         self.current_interval = key
         def open_page(request, timeout):
+            nonlocal prefix_pending
+            if prefix_pending:
+                require(request.full_url == first.url(), "Prefix replay request differs")
+                prefix_pending = False
+                return MemoryResponse(prefix)
             pairs = parse_qsl(urlsplit(request.full_url).query, keep_blank_values=True, strict_parsing=True)
             cursor = dict(pairs).get("time[$gte]")
             spec = CampaignRequestSpec(sid, task["start"], task["end"], cursor)
@@ -807,6 +821,13 @@ class CampaignAdapter(Adapter):
             state = self.journal.snapshot()
             source_rows = [row for key in successful for row in decode(self.journal.read_object(
                 state["attempts"][key]["objects"][0]))["data"]]
+            if prefix is not None:
+                source_rows = decode(prefix)["data"] + source_rows
+                receipt = self.journal.binding["predecessor"]["prefix_receipt"]
+                # Preserve the original enclosing reservation/receipt times;
+                # offline replay must not make the old page freshly retrieved.
+                envelope["pages"][0].update(requested_at_utc=receipt["reserved_at"], retrieved_at_utc=receipt["at"])
+                envelope["retrieval_first_utc"] = receipt["at"]
             rows, diagnostics = normalize_rows(source_rows, task["start"], task["end"], quality_policy=policy)
             envelope["rows"] = rows
             envelope["diagnostics"].update(diagnostics)

@@ -134,6 +134,8 @@ def _seal(journal, key, state, inventory, fingerprint):
     require(keys and len(keys) == len(set(keys)) and
             set(keys) == {k for k, a in state["attempts"].items() if a["interval_key"] == key},
             "Seal receipt closure")
+    from .recovery import admitted_attempts, PREFIX_VERSION
+    attempts = admitted_attempts(journal, attempts)
     require(envelope["query_complete"] is True and envelope["datastream_id"] == task["identity"]["stream_id"] and
             envelope["requested_interval"] == dict(start_inclusive=task["start"], end_exclusive=task["end"]) and
             envelope["page_count"] == len(attempts) == len(envelope["pages"]), "Incomplete/mismatched envelope")
@@ -141,11 +143,13 @@ def _seal(journal, key, state, inventory, fingerprint):
     source_rows = []
     bundle = journal.binding["reviewed_bundles"][task["identity"]["stream_id"]]
     for page, attempt in zip(envelope["pages"], attempts):
-        require(attempt["interval_key"] == key and attempt["run"] == seal["run"] and
+        prefix = journal.binding.get("version") == PREFIX_VERSION and attempt is attempts[0]
+        require((prefix or (attempt["interval_key"] == key and attempt["run"] == seal["run"])) and
                 attempt["state"] == "received" and attempt["status"] == 200 and len(attempt["objects"]) == 1,
                 "Held/incomplete receipt")
-        validate_decision(inventory, encode(bundle["packet"]), bundle["review"], bundle["decision"],
-                          executor_fingerprint=fingerprint, now=attempt["reserved_at"])
+        if not prefix:  # Original prefix authority was checked by admitted_attempts.
+            validate_decision(inventory, encode(bundle["packet"]), bundle["review"], bundle["decision"],
+                              executor_fingerprint=fingerprint, now=attempt["reserved_at"])
         descriptor = attempt["objects"][0]
         require(page["response_sha256"] == descriptor["sha256"] == attempt["response_sha256"] and
                 page["response_bytes"] == descriptor["bytes"] == attempt["response_bytes"], "Page/receipt hash")
@@ -264,7 +268,7 @@ def verify_sealed(sealed_root, *, manifest_sha256, inventory, acquisition_finger
             source["sources"] == binding["collector_sources"], "Acquisition checkpoint/source mismatch")
     _binding(binding, tasks, inventory, acquisition_fingerprint)
     records = []
-    with Journal(sealed_root, binding, tasks, inspect_only=True) as journal:
+    with Journal(sealed_root, binding, tasks, inspect_only=True, inventory=inventory) as journal:
         state = journal.snapshot()
         # Every byte read by the Journal must also be in the caller-pinned manifest.
         needed = {"registry/"+binding["campaign_id"]+".json", journal.prefix+"/manifest.json", journal.prefix+"/writer.lock"}
@@ -274,6 +278,9 @@ def verify_sealed(sealed_root, *, manifest_sha256, inventory, acquisition_finger
             needed.add("anchors/"+binding["campaign_id"]+f"/{event['sequence']:08d}.json")
             needed.update(journal.prefix+"/"+d["path"] for d in event["data"].get("objects", []))
         require(needed <= set(entries), "Journal object not in pinned evidence manifest")
+        if binding.get("version") == "dendra-prefix-recovery-1":
+            require(journal.prefix+"/"+binding["predecessor"]["prefix_receipt"]["objects"][0]["path"] in entries,
+                    "Preserved prefix missing from pinned evidence manifest")
         for key, task in sorted(tasks.items()):
             envelope, seal, attempts = _seal(journal, key, state, inventory, acquisition_fingerprint)
             from .observation_quality import binding as quality_binding

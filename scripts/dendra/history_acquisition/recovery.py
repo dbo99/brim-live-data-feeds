@@ -21,6 +21,20 @@ LAST_ANCHOR_SHA = "04c8f78b6373387af55a738593ec75decde3bf10293a3e330575e39c915b9
 CHARGES = dict(attempts=1, logical_requests=1, response_bytes=177290, source_rows=2016)
 LIMITS = dict(attempts=4, logical_requests=4, response_bytes=33554432,
               source_rows=8064, intervals=1, sessions=128, elapsed_ms=600000)
+PREFIX_VERSION = "dendra-prefix-recovery-1"
+# A second explicit incident, not a generic retry or campaign discovery API.
+PREFIX_INCIDENT = dict(
+    task_id="11650e37c474e083ca5ad35d454ea8d37fa42df8d06aa24ee26960066dc1b3e5",
+    campaign_id="cohort-roster-741b1122e43892aebbe456de39fd215522ef5240886d2fce285cef877e651771",
+    header_sha256="87ab2e3e88f1103be2b4c4ccb4ae48663251a33e9a38d953b93c44f8800f985a",
+    anchor_sha256="7089c04930272a6f25cc0b0bd11b741878e80178f92b55b11dcf0f1c270d75b9",
+    object_sha256="967082e2d8ea822ac47b9e874c5ff4862762f0fbc2728282198ee812bfc072f8",
+    stream_id="5ae879eafe27f43c63102e86", station_id="58e68cacdf5ce600012602c3",
+    start="2023-08-02T02:00:00.000Z", end="2023-09-01T02:00:00.000Z",
+    cursor="2023-08-16T01:50:00.000Z")
+PREFIX_CHARGES = dict(attempts=2, logical_requests=2, response_bytes=149207, source_rows=2016)
+PREFIX_LIMITS = dict(attempts=4, logical_requests=4, response_bytes=16926423,
+                     source_rows=6048, intervals=1, sessions=128, elapsed_ms=600000)
 
 
 def checkpoint():
@@ -48,6 +62,8 @@ def open_evidence(root, campaign_id, inventory):
 
 def predecessor(ref, inventory):
     """Independently recompute charges and immutable receipt/anchor identities."""
+    if ref.get("incident") == PREFIX_VERSION:
+        return prefix_predecessor(ref, inventory)
     require(set(ref) == {"root", "authorization_path", "authorization_sha256"}, "Predecessor reference fields")
     from .daily_handoff import _binding
     with open_evidence(ref["root"], CAMPAIGN_ID, inventory) as j:
@@ -96,6 +112,103 @@ def predecessor(ref, inventory):
             event_sha256=[e["record_sha256"] for e in j.events],
             task=task, configuration=configuration, configuration_sha256=old_bundle["decision"]["configuration_sha256"],
             body_retained=False, cursor=None, seal=None)
+
+
+def prefix_predecessor(ref, inventory):
+    """Validate the one pinned successful-prefix/deadline incident read-only."""
+    from .daily_handoff import _binding
+    from .eligibility import validate_decision
+    from .provider_adapter import observation_shape
+    from ..transport import format_utc
+    require(set(ref) == {"incident", "root", "authorization_path", "authorization_sha256"},
+            "Prefix predecessor reference fields")
+    pin = PREFIX_INCIDENT
+    with open_evidence(ref["root"], pin["campaign_id"], inventory) as j:
+        require(j.header_sha == pin["header_sha256"] and not j.damage and
+                j.events[-1]["record_sha256"] == pin["anchor_sha256"], "Prefix predecessor pins differ")
+        j.verify_records()
+        fingerprint = digest(j.binding["collector_sources"])
+        _binding(j.binding, j.tasks, inventory, fingerprint)
+        task = j.tasks[pin["task_id"]]
+        require(task["identity"] == inventory.identity(pin["stream_id"]) and
+                task["identity"]["station_id"] == pin["station_id"] and
+                (task["start"], task["end"]) == (pin["start"], pin["end"]) and
+                j.binding["quality_policy"] == quality.binding(), "Prefix identity/interval/policy differs")
+        state = j.snapshot()
+        attempts = [a for a in state["attempts"].values() if a["interval_key"] == pin["task_id"]]
+        require(len(attempts) == 2 and state["intervals"][pin["task_id"]]["complete"] is None and
+                state["intervals"][pin["task_id"]]["state"] == "held", "Prefix predecessor state differs")
+        first, failed = attempts
+        require(first["state"] == "received" and first["status"] == 200 and first["body_retained"] and
+                first["representation"] == "original" and len(first["objects"]) == 1 and
+                first["response_sha256"] == first["objects"][0]["sha256"] == pin["object_sha256"] and
+                first["cursor"] == task["start"] and first["run"] == failed["run"] == 1 and
+                failed["state"] == "failure" and failed["status"] is None and
+                failed["details"]["error_code"] == "deadline" and failed["objects"] == [] and
+                not failed["body_retained"] and failed["response_bytes"] == failed["source_rows"] == 0,
+                "Prefix receipt/failure differs")
+        charges = dict(attempts=len(attempts), logical_requests=len({a["logical_key"] for a in attempts}),
+            response_bytes=sum(a["response_bytes"] for a in attempts), source_rows=sum(a["source_rows"] for a in attempts))
+        require(charges == PREFIX_CHARGES, "Prefix predecessor charges differ")
+        body = j.read_object(first["objects"][0])
+        raw = observation_shape(body, pin["stream_id"], quality_policy=quality.binding())
+        require(len(raw["data"]) == raw["limit"] == first["source_rows"] == 2016 and
+                len(body) == first["response_bytes"], "Prefix page accounting differs")
+        stamps = [parse_utc(row["t"]) for row in raw["data"]]
+        require(stamps == sorted(stamps) and all(parse_utc(task["start"]) <= t < parse_utc(task["end"]) for t in stamps) and
+                format_utc(stamps[-1]) == failed["cursor"] == pin["cursor"] and
+                stamps[-1] > parse_utc(first["cursor"]), "Prefix cursor/order/bounds differ")
+        auth_path = Path(ref["authorization_path"])
+        require(auth_path.is_absolute(), "Explicit predecessor authorization path required")
+        with Root(auth_path.parent) as fs:
+            auth_body = fs.read(auth_path.name, PAGE_BYTES)
+        require(sha(auth_body) == ref["authorization_sha256"], "Predecessor authorization hash")
+        auth = decode(auth_body)
+        require(auth["schema_version"] == "dendra-campaign-dispatch-1" and
+                auth["binding_sha256"] == j.binding_sha and auth["task_root"] == ref["root"] and
+                0 < (parse_utc(auth["window_end"])-parse_utc(auth["window_start"])).total_seconds() <= 600,
+                "Prefix predecessor authorization differs")
+        bundle = j.binding["reviewed_bundles"][pin["stream_id"]]
+        for a in attempts:
+            require(parse_utc(auth["window_start"]) <= parse_utc(a["reserved_at"]) <=
+                    parse_utc(a["at"]) <= parse_utc(auth["window_end"]), "Prefix predecessor window")
+            validate_decision(inventory, encode(bundle["packet"]), bundle["review"], bundle["decision"],
+                              executor_fingerprint=fingerprint, now=a["reserved_at"])
+        receipts = [e["record_sha256"] for e in j.events if e["kind"] == "received" and
+                    e["data"]["attempt_key"] in {a["attempt_key"] for a in attempts}]
+        failures = [e["record_sha256"] for e in j.events if e["kind"] == "failure" and
+                    e["data"]["attempt_key"] == failed["attempt_key"]]
+        require(len(receipts) == 2 and len(failures) == 1, "Prefix receipt lineage")
+        ordinal = task["native_task"]["identity"]["configuration_ordinal"]
+        configuration = next(w for w in bundle["decision"]["configuration_windows"] if w["ordinal"] == ordinal)
+        return dict(task_id=pin["task_id"], campaign_id=pin["campaign_id"], header_sha256=j.header_sha,
+            binding_sha256=j.binding_sha, source_fingerprint=fingerprint, execution_version=j.binding["version"],
+            quality_policy=j.binding["quality_policy"], authorization=auth, authorization_sha256=sha(auth_body),
+            historical_attempt_limit=3, charges=charges, receipt_sha256=receipts, failure_sha256=failures[0],
+            last_anchor_sha256=j.events[-1]["record_sha256"], event_sha256=[e["record_sha256"] for e in j.events],
+            campaign_counters=state["counters"], task=task, configuration=configuration,
+            configuration_sha256=bundle["decision"]["configuration_sha256"],
+            prefix_receipt=first, body_retained=True, cursor=pin["cursor"], seal=None)
+
+
+def prefix_body(journal):
+    """Return verified old bytes; never dispatch or create a new receipt."""
+    if journal.binding.get("version") != PREFIX_VERSION:
+        return None
+    old = predecessor(journal.binding["predecessor_ref"], journal.inventory)
+    require(old == journal.binding["predecessor"], "Prefix predecessor changed")
+    with open_evidence(journal.binding["predecessor_ref"]["root"], old["campaign_id"], journal.inventory) as j:
+        return j.read_object(old["prefix_receipt"]["objects"][0])
+
+
+def admitted_attempts(journal, attempts):
+    """Read-only page closure: original receipt once, then new receipts only."""
+    if journal.binding.get("version") != PREFIX_VERSION:
+        return attempts
+    body = prefix_body(journal)
+    receipt = journal.binding["predecessor"]["prefix_receipt"]
+    require(journal.read_object(receipt["objects"][0]) == body, "Archived prefix differs")
+    return [receipt, *attempts]
 
 
 def source_start(ref, inventory, *, now, packet):
@@ -153,23 +266,26 @@ def _prepare(inventory, *, predecessor_ref, bundle, source_start_ref, authorizat
     require(parse_utc(reviewed_start["start"]) <= parse_utc(task["start"]), "Source start excludes recovery interval")
     # Stable slot identity: changing source, authority, root or window cannot
     # create a second namespace in the authorized Journal storage.
-    slot = digest(dict(version=VERSION, predecessor_header=old["header_sha256"], predecessor_task=TASK_ID))
-    key = digest(dict(recovery_slot=slot, predecessor_task=TASK_ID))
-    task = dict(task, recovery_identity=key, predecessor_task_id=TASK_ID)
-    binding = dict(version=VERSION, mode=MODE, campaign_id="recovery-"+slot,
+    version = PREFIX_VERSION if predecessor_ref.get("incident") == PREFIX_VERSION else VERSION
+    new_attempts = 2 if version == PREFIX_VERSION else 3
+    slot = digest(dict(version=version, predecessor_header=old["header_sha256"], predecessor_task=old["task_id"]))
+    key = digest(dict(recovery_slot=slot, predecessor_task=old["task_id"]))
+    task = dict(task, recovery_identity=key, predecessor_task_id=old["task_id"])
+    binding = dict(version=version, mode=MODE, campaign_id="recovery-"+slot,
         execution_version=execution_version, collector_sources=sources,
         inventory_sha256=INVENTORY_SHA256, roster=inventory.roster(), selected_ids=[sid],
         quality_policy=quality.binding(), predecessor_ref=predecessor_ref, predecessor=old,
         source_start_ref=source_start_ref, reviewed_source_start=reviewed_start,
         reviewed_bundles={sid:bundle}, authorization=authorization, planned_at=now,
-        request_policy=campaign.policy(logical_requests=3, attempts=3, total_bytes=3*8388608, wall_seconds=600),
-        budgets=dict(LIMITS))
+        request_policy=campaign.policy(logical_requests=new_attempts, attempts=new_attempts,
+            total_bytes=new_attempts*8388608, wall_seconds=600),
+        budgets=dict(PREFIX_LIMITS if version == PREFIX_VERSION else LIMITS))
     require(len(encode(binding))+4096 <= PAGE_BYTES, "Recovery binding header capacity")
     return decode(encode(binding)), {key:decode(encode(task))}
 
 
 def validate_binding(binding, tasks, *, inventory):
-    require(binding["mode"] == MODE and binding["version"] == VERSION, "Recovery version")
+    require(binding["mode"] == MODE and binding["version"] in (VERSION, PREFIX_VERSION), "Recovery version")
     expected = prepare(inventory, predecessor_ref=binding["predecessor_ref"],
         bundle=binding["reviewed_bundles"][binding["selected_ids"][0]],
         source_start_ref=binding["source_start_ref"], authorization=binding["authorization"], now=binding["planned_at"])
@@ -182,7 +298,7 @@ def validate_historical_binding(binding, tasks, *, inventory):
     Callers must also verify the immutable Journal header/anchors and seal.
     The writable Journal and authorize() still require validate_binding().
     """
-    require(binding["mode"] == MODE and binding["version"] == VERSION, "Recovery version")
+    require(binding["mode"] == MODE and binding["version"] in (VERSION, PREFIX_VERSION), "Recovery version")
     expected = _prepare(inventory, predecessor_ref=binding["predecessor_ref"],
         bundle=binding["reviewed_bundles"][binding["selected_ids"][0]],
         source_start_ref=binding["source_start_ref"], authorization=binding["authorization"],
@@ -219,10 +335,12 @@ def check_window(binding, now):
 def seal_lineage(journal, keys, envelope):
     """The only ledger is Journal.snapshot, seeded with immutable old charges."""
     state = journal.snapshot()
-    require(set(keys) == set(state["attempts"]) and 1 <= len(keys) <= 3 and
-            all(state["counters"][k] <= v for k,v in LIMITS.items()), "Recovery cumulative seal accounting")
+    prefix = journal.binding["version"] == PREFIX_VERSION
+    limits = PREFIX_LIMITS if prefix else LIMITS
+    require(set(keys) == set(state["attempts"]) and 1 <= len(keys) <= (2 if prefix else 3) and
+            all(state["counters"][k] <= v for k,v in limits.items()), "Recovery cumulative seal accounting")
     old = journal.binding["predecessor"]
-    return dict(version=VERSION, predecessor_state="PREDECESSOR_FAILED_ATTEMPT",
+    result = dict(version=journal.binding["version"], predecessor_state="PREDECESSOR_FAILED_ATTEMPT",
         predecessor_task_id=old["task_id"], predecessor_header_sha256=old["header_sha256"],
         predecessor_receipt_sha256=old["receipt_sha256"], predecessor_failure_sha256=old["failure_sha256"],
         predecessor_anchor_sha256=old["last_anchor_sha256"], predecessor_charges=old["charges"],
@@ -232,3 +350,8 @@ def seal_lineage(journal, keys, envelope):
         observation_state=envelope["quality_disposition"]["state"],
         quality_policy_sha256=journal.binding["quality_policy"]["sha256"],
         cumulative_charges={k:state["counters"][k] for k in CHARGES})
+    if prefix:
+        result.update(predecessor_state="PREDECESSOR_SUCCESSFUL_PREFIX_AND_FAILED_ATTEMPT",
+            prefix_receipt=old["prefix_receipt"], continuation_cursor=old["cursor"],
+            predecessor_campaign_counters=old["campaign_counters"])
+    return result

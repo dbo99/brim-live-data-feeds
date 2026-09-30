@@ -242,7 +242,7 @@ class Journal:
                         unknown_row_responses=0)
         if self.binding["mode"] == "task37_recovery_adapter":
             # Immutable predecessor charges seed the same ledger. They are not
-            # successful pages, current attempts, cursors or a second budget.
+            # new receipts or a second budget. Prefix reuse is separately bound.
             counters.update(self.binding["predecessor"]["charges"])
         states = {key: dict(state="unqueried", latest_attempt=None, last_successful_source_check=None,
                            latest_source_observation=None, latest_eligible_daily_date=None,
@@ -511,6 +511,8 @@ class Journal:
         require(len(set(attempt_keys)) == len(attempt_keys) and all(
             a["interval_key"] == key and a["run"] == run and a["state"] == "received" and
             a["status"] == 200 and len(a["objects"]) == 1 for a in attempts), "Seal receipt closure")
+        from .recovery import admitted_attempts
+        attempts = admitted_attempts(self, attempts)
         require(envelope["query_complete"] is True and
                 envelope["datastream_id"] == task["identity"]["stream_id"] and
                 envelope["requested_interval"] == dict(start_inclusive=task["start"], end_exclusive=task["end"])

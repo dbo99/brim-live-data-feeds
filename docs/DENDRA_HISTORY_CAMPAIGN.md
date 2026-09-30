@@ -1437,3 +1437,40 @@ increase or automatic acquisition. Routine generations are capped at 4096 views,
 32 MiB manifests and one million normalized rows per stream. Original seals are
 reverified, so large-history verification cost remains a scaling consideration;
 this gate introduces no verification cache, cleanup or performance claim.
+
+### Incident-bound successful-prefix recovery
+
+`recovery.py` additionally supports `dendra-prefix-recovery-1` for its single
+pinned successful-page/deadline incident. It reuses the existing recovery mode,
+Journal, CampaignAdapter, transport, quality policy and seal verification.
+It does not authorize arbitrary retries or resume any untouched suffix.
+The predecessor task, campaign/header/terminal anchor, exact stream/interval,
+successful object hash, two spent attempts and inclusive cursor are fixed pins.
+The predecessor authorization and receipt provenance are reverified read-only.
+
+The two historical attempts, 149,207 provider bytes and 2,016 source rows seed
+the cumulative ledger without refund. A distinct explicitly authorized root
+and window of at most 600 seconds allow at most two new requests, 16,777,216
+new bytes, four cumulative attempts, 16,926,423 cumulative bytes and 6,048
+cumulative source rows. Each new dispatch requires current-source reviewed
+metadata, native eligibility and source-start authority, plus the unchanged
+25-second/8-MiB/2,016-row request bounds, serial spacing, zero retries and zero
+redirects. A source change does not rebind old authority.
+
+The immutable admitted first-page bytes are copied byte-identically into private
+recovery storage and replayed once locally through the existing paginator.
+This replay has no provider dispatch, reservation, new receipt or extra charge.
+The original receipt's reservation/receipt times enclose its retrieval; replay
+does not refresh them. The first new request uses the preserved inclusive
+`time[$gte]` cursor. Existing normalization collapses equal boundary duplicates
+and localizes conflicting/quality-held groups. A short or empty new page may
+complete the interval; a full second new page (logical page three) holds without
+page four. A crash or failed new request remains spent and cannot silently retry.
+
+A recovered seal includes the successful prefix exactly once, new admitted pages,
+the original failure and charges as immutable lineage, and a strict complete-query
+proof. Read-only seal verification independently checks both source generations.
+The failed receipt never supplies coverage. Query completion does not imply
+continuous valid observations or daily eligibility; existing localized quality
+withholding remains unchanged. No daily/browser product or publication is
+implicit in this recovery route.
