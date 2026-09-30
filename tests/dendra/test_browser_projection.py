@@ -78,6 +78,78 @@ class ProjectionTests(unittest.TestCase):
     def test_deterministic_bytes_and_hashes(self):
         self.assertEqual(p.render(copy.deepcopy(self.inputs), copy.deepcopy(self.rows)), self.files)
 
+    def sample_case(self, **changes):
+        rows = copy.deepcopy(self.rows)
+        rows[PERCENT][0].update(changes)
+        return rows
+
+    def test_integer_expected_samples_passes(self):
+        for value in (1, 144, 144.0):
+            with self.subTest(value=value):
+                files = p.render(self.inputs, self.sample_case(expected_samples=value))
+                self.validate(self.directory(files), files)
+
+    def test_fractional_expected_samples_preserves_daily_rows(self):
+        # Match the accepted R JSON precision; the projection must not recompute it.
+        expected = float(format(86400 / 17400, ".15g"))
+        self.assertEqual(expected, 4.96551724137931)
+        rows = self.sample_case(cadence_seconds=17400, expected_samples=expected)
+        before = copy.deepcopy(rows)
+        files = p.render(self.inputs, rows)
+        self.validate(self.directory(files), files)
+        self.assertEqual(rows, before)
+        self.assertEqual(p.render(copy.deepcopy(self.inputs), copy.deepcopy(rows)), files)
+        projected = next(decode(v)["rows"] for v in files.values()
+                         if decode(v)["kind"] == "history" and decode(v)["identity"]["stream_id"] == PERCENT)
+        self.assertEqual(projected, rows[PERCENT])
+        self.assertIn(b'"expected_samples":4.96551724137931', encode(projected[0]))
+        for key in p.ROW_FIELDS - {"cadence_seconds", "expected_samples"}:
+            self.assertEqual(projected[0][key], self.rows[PERCENT][0][key])
+
+    def test_fractional_actual_counts_rejected(self):
+        for key in sorted(k for k in p.ROW_FIELDS if k.startswith("n_")):
+            with self.subTest(field=key), self.assertRaisesRegex(Hold, "Sample counts"):
+                p.render(self.inputs, self.sample_case(**{key: 1.5}))
+
+    def test_negative_actual_counts_rejected(self):
+        for key in sorted(k for k in p.ROW_FIELDS if k.startswith("n_")):
+            with self.subTest(field=key), self.assertRaisesRegex(Hold, "Sample counts"):
+                p.render(self.inputs, self.sample_case(**{key: -1}))
+
+    def test_zero_optional_actual_counts_pass(self):
+        counts = {k: 0 for k in p.ROW_FIELDS if k.startswith("n_") and k not in ("n_valid", "n_total")}
+        files = p.render(self.inputs, self.sample_case(**counts))
+        self.validate(self.directory(files), files)
+
+    def test_actual_count_type_and_positive_valid_guards_remain(self):
+        for key in sorted(k for k in p.ROW_FIELDS if k.startswith("n_")):
+            for value in (True, None, "1", float("nan"), float("inf")):
+                with self.subTest(field=key, value=value), self.assertRaisesRegex(Hold, "Sample counts"):
+                    p.render(self.inputs, self.sample_case(**{key: value}))
+        for changes in (dict(n_valid=0), dict(n_total=0)):
+            with self.subTest(changes=changes), self.assertRaisesRegex(Hold, "Sample counts"):
+                p.render(self.inputs, self.sample_case(**changes))
+
+    def test_zero_expected_samples_rejected(self):
+        for value in (0, 0.0):
+            with self.subTest(value=value), self.assertRaisesRegex(Hold, "Expected samples"):
+                p.render(self.inputs, self.sample_case(expected_samples=value))
+
+    def test_negative_expected_samples_rejected(self):
+        for value in (-1, -0.5):
+            with self.subTest(value=value), self.assertRaisesRegex(Hold, "Expected samples"):
+                p.render(self.inputs, self.sample_case(expected_samples=value))
+
+    def test_nonfinite_expected_samples_rejected(self):
+        for value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value), self.assertRaisesRegex(Hold, "Expected samples"):
+                p.render(self.inputs, self.sample_case(expected_samples=value))
+
+    def test_nonnumeric_expected_samples_rejected(self):
+        for value in (None, "4.96551724137931", "144", True, False):
+            with self.subTest(value=value), self.assertRaisesRegex(Hold, "Expected samples"):
+                p.render(self.inputs, self.sample_case(expected_samples=value))
+
     def test_exact_root_closure(self):
         root = self.directory(); result = self.validate(root)
         self.assertEqual(result["bytes"], sum(map(len, self.files.values())))

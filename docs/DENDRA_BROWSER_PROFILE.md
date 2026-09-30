@@ -214,8 +214,14 @@ representation, identity, query_complete, presentation_eligible, source_interval
 
 `representation=completed_daily`; plot/query/presentation eligibility must all be
 true. Dates are unique, sorted and completed; WY, true DOWY, WY length and
-leap-aligned water-day must agree. Count fields are nonnegative integers with
-positive n_valid. Means/cadence/fractions are finite (no numeric nulls); cadence
+leap-aligned water-day must agree. Actual observed `n_*` count fields are
+nonnegative integers with positive `n_valid`. `expected_samples` is a finite
+positive JSON number, integer or fractional; null, strings and booleans reject.
+It preserves the accepted R value `86400 / cadence_seconds` without rounding or
+integer conversion (for example, cadence 17400 yields 4.96551724137931).
+This coordinated backward-compatible widening retains `dendra-history-profile-1`;
+the descriptor shapes, paths and all other validation rules remain unchanged.
+Means/cadence/fractions are finite (no numeric nulls); cadence
 positive, fractions in [0,1]. `flags` is a string array. `mean_value=mean_percent`,
 native ×1 for Percent or ×100 for VWC (round-trip tolerance 1e-10).
 No mean is recomputed. Each `source_intervals` element has exactly `task_id`,

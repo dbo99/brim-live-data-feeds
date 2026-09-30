@@ -118,8 +118,10 @@ def validate_row(row, meta, view):
     factor = 1 if meta["identity"]["native_unit"] == "Percent" else 100
     require(0 <= row["mean_percent"] <= 100 and math.isclose(row["mean_native"]*factor, row["mean_percent"], abs_tol=1e-10) and row["mean_value"] == row["mean_percent"], "Resolved normalization")
     require(row["cadence_seconds"] > 0 and 0 <= row["coverage_fraction"] <= 1 and 0 <= row["temporal_span_fraction"] <= 1, "QC fractions")
-    counts = [k for k in ROW_FIELDS if k.startswith("n_")] + ["expected_samples"]
+    counts = [k for k in ROW_FIELDS if k.startswith("n_")]
     require(all(type(row[k]) is int and row[k] >= 0 for k in counts) and row["n_valid"] > 0 and row["n_total"] >= row["n_valid"], "Sample counts")
+    expected = row["expected_samples"]
+    require(type(expected) in (int, float) and math.isfinite(expected) and expected > 0, "Expected samples")
     require(type(row["flags"]) is list and all(type(f) is str and len(f) <= 80 for f in row["flags"]) and type(row["cadence_source"]) is str, "QC encoding")
     lo = datetime.combine(day, datetime.min.time(), PST)
     complete, contributors = _coverage(meta["intervals"], lo, lo+timedelta(days=1))

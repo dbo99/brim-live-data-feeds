@@ -1276,6 +1276,12 @@ retrieval or R science. The [versioned browser profile](DENDRA_BROWSER_PROFILE.m
 defines `manifest.json`, one hashed map index, selected stream descriptors,
 selected hover bodies and stream/WY history shards under `brim-soil-history-1` /
 `dendra-history-profile-1`. These paths have no production `docs/data` ownership.
+The browser validator accepts cadence-derived `expected_samples` as a finite
+positive JSON number, integer or fractional, preserving `86400 / cadence_seconds`
+without rounding. Actual observed `n_*` counts remain nonnegative integers with
+positive `n_valid`; null, strings and booleans are not valid expectations. This
+coordinated backward-compatible widening retains the profile version and leaves
+R daily acceptance and values unchanged.
 The real review fixture retains 15 accepted days each for Percent and VWC,
 unresolved native-only Dimensionless and an unavailable real latest-point state.
 No existing CLI, SCAN/SNOTEL source, workflow, current feed, journal or numerical

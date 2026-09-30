@@ -891,8 +891,13 @@ The additive offline review profile `dendra-history-profile-1` in the common
 `brim-soil-history-1` family freezes descriptor-supplied relative paths, exact
 generation/root-revision pins, selected station/stream history and separate
 completed-daily/latest-instantaneous shapes. Its exact schema and validation
-rules are in [the Dendra browser profile](DENDRA_BROWSER_PROFILE.md). Normal
-activation requires zero history/hover body bytes. Last-3 selects current ending
+rules are in [the Dendra browser profile](DENDRA_BROWSER_PROFILE.md).
+`expected_samples` preserves the cadence-derived `86400 / cadence_seconds` as
+a finite positive JSON number, integer or fractional; null, strings and booleans
+are invalid. Actual observed `n_*` counts remain nonnegative integers with
+positive `n_valid`. This coordinated backward-compatible type widening retains
+`dendra-history-profile-1` and does not alter accepted daily science.
+Normal activation requires zero history/hover body bytes. Last-3 selects current ending
 WY plus the preceding two; All-available is acquired accepted product-horizon
 history, not provider POR. Unresolved Dimensionless is denied numeric percent
 capabilities; reference bands remain unavailable/not_computed. The real fixture
