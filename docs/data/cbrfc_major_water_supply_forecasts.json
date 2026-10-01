@@ -2,20 +2,20 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-09-30T20:03:36Z",
+  "generated_at": "2026-10-01T20:23:49Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
   "source_summary": {
     "rfc": "CBRFC",
-    "successful_attempt_count": 1,
-    "failed_attempt_count": 2,
-    "current_count": 1,
+    "successful_attempt_count": 0,
+    "failed_attempt_count": 3,
+    "current_count": 0,
     "current_partial_count": 0,
     "source_stale_count": 0,
     "stale_last_known_good_count": 1,
-    "expired_count": 1,
-    "source_unavailable_count": 0,
+    "expired_count": 2,
+    "source_unavailable_count": 2,
     "failed_no_data_count": 0
   },
   "family_health": {
@@ -27,7 +27,7 @@
       "source_stale_count": 0,
       "stale_last_known_good_count": 0,
       "expired_count": 1,
-      "source_unavailable_count": 0,
+      "source_unavailable_count": 1,
       "failed_no_data_count": 0,
       "successful_attempt_count": 0,
       "failed_attempt_count": 1,
@@ -36,18 +36,18 @@
     },
     "water_year_unregulated_inflow_forecast": {
       "expected_structural_count": 1,
-      "expected_available_count": 1,
-      "current_count": 1,
+      "expected_available_count": 0,
+      "current_count": 0,
       "current_partial_count": 0,
       "source_stale_count": 0,
       "stale_last_known_good_count": 0,
-      "expired_count": 0,
-      "source_unavailable_count": 0,
+      "expired_count": 1,
+      "source_unavailable_count": 1,
       "failed_no_data_count": 0,
-      "successful_attempt_count": 1,
-      "failed_attempt_count": 0,
-      "health": "healthy",
-      "season_state": "active"
+      "successful_attempt_count": 0,
+      "failed_attempt_count": 1,
+      "health": "outage_using_last_known_good",
+      "season_state": "inactive"
     },
     "lake_mead_local_intervening_monthly_forecast": {
       "expected_structural_count": 1,
@@ -86,7 +86,7 @@
       "water_year": 2026,
       "forecast_type": "Unregulated",
       "status": "expired",
-      "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
+      "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts.",
       "source_url": "https://www.cbrfc.noaa.gov/wsup/graph/espgraph_hc.html?id=GLDA3&year=2026",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dbdata/station/espgraph/espgraph_data_hc.py?id=GLDA3&year=2026",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -98,14 +98,14 @@
         "official_field_prefix": "off",
         "secondary_list_status": null,
         "secondary_list_diagnostic": null,
-        "error_class": "validation_failed",
-        "error_message": "CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently.",
-        "failure_stage": "validate"
+        "error_class": "source_unavailable",
+        "error_message": "CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts.",
+        "failure_stage": "source"
       },
       "last_successful_retrieval_at": "2026-09-29T20:02:31Z",
-      "last_attempt_at": "2026-09-30T20:03:35Z",
-      "attempt_outcome": "validation_failed",
-      "failure_stage": "validate",
+      "last_attempt_at": "2026-10-01T20:23:48Z",
+      "attempt_outcome": "source_unavailable",
+      "failure_stage": "source",
       "metric_state": {
         "forecast_volume": {
           "status": "expired",
@@ -115,7 +115,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
         },
         "percent_average": {
           "status": "expired",
@@ -125,7 +125,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
         },
         "percent_median": {
           "status": "expired",
@@ -135,7 +135,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "validation_failed: CBRFC dashboard issue 2026-09-01 was newer than structured point issue 2026-07-01; neither official representation was selected silently."
+          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
         }
       },
       "value_origin": "last_known_good",
@@ -159,8 +159,8 @@
       "forecast_period": "Water Year",
       "water_year": 2026,
       "forecast_type": "Unregulated",
-      "status": "current",
-      "missing_reason": null,
+      "status": "expired",
+      "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027.",
       "source_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -172,41 +172,39 @@
         "semantic_row_label": "Water Year",
         "source_forecast_label": "Full Fcst",
         "source_percentage_label": "%Avg",
-        "primary_source_role": "server_rendered_situational_awareness_dashboard",
-        "summary_source_relationship": "same_url_as_retrieval_not_independent",
-        "observed_to_date_policy": "available_on_summary_not_published",
-        "error_class": null,
-        "error_message": null
+        "error_class": "source_unavailable",
+        "error_message": "CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027.",
+        "failure_stage": "source"
       },
       "last_successful_retrieval_at": "2026-09-30T20:03:35Z",
-      "last_attempt_at": "2026-09-30T20:03:35Z",
-      "attempt_outcome": "success",
-      "failure_stage": null,
+      "last_attempt_at": "2026-10-01T20:23:49Z",
+      "attempt_outcome": "source_unavailable",
+      "failure_stage": "source",
       "metric_state": {
         "forecast_volume": {
-          "status": "current",
-          "value_origin": "current_source",
+          "status": "expired",
+          "value_origin": "last_known_good",
           "source_issue_date": "2026-09-01",
           "valid_through": "2026-10-01T00:00:00-07:00",
-          "stale_since": null,
-          "map_eligible": true,
+          "stale_since": "2026-10-01T00:00:00-07:00",
+          "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": null
+          "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027."
         },
         "percent_average": {
-          "status": "current",
-          "value_origin": "current_source",
+          "status": "expired",
+          "value_origin": "last_known_good",
           "source_issue_date": "2026-09-01",
           "valid_through": "2026-10-01T00:00:00-07:00",
-          "stale_since": null,
-          "map_eligible": true,
+          "stale_since": "2026-10-01T00:00:00-07:00",
+          "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": null
+          "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027."
         }
       },
-      "value_origin": "current_source",
+      "value_origin": "last_known_good",
       "valid_through": "2026-10-01T00:00:00-07:00",
-      "stale_since": null
+      "stale_since": "2026-10-01T00:00:00-07:00"
     },
     {
       "forecast_key": "CBRFC:LKSA3:LOCAL_INTERVENING_MONTHLY",
@@ -282,29 +280,29 @@
           "valid_through": "2026-10-01T00:00:00-07:00",
           "metric_state": {
             "forecast_volume": {
-              "status": "stale_last_known_good",
+              "status": "expired",
               "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
-              "stale_since": "2026-09-02T18:43:39Z",
+              "stale_since": "2026-10-01T00:00:00-07:00",
               "map_eligible": false,
               "popup_eligible": true,
               "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             },
             "percent_median": {
-              "status": "stale_last_known_good",
+              "status": "expired",
               "value_origin": "last_known_good",
               "source_issue_date": "2026-08-01",
               "valid_through": "2026-10-01T00:00:00-07:00",
-              "stale_since": "2026-09-02T18:43:39Z",
+              "stale_since": "2026-10-01T00:00:00-07:00",
               "map_eligible": false,
               "popup_eligible": true,
               "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
             }
           },
-          "status": "stale_last_known_good",
+          "status": "expired",
           "value_origin": "last_known_good",
-          "stale_since": "2026-09-02T18:43:39Z",
+          "stale_since": "2026-10-01T00:00:00-07:00",
           "missing_reason": "validation_failed: CBRFC Lake Mead Local source identifier line was missing or ambiguous."
         },
         {
@@ -738,7 +736,7 @@
         "failure_stage": "validate"
       },
       "last_successful_retrieval_at": "2026-09-01T18:33:09Z",
-      "last_attempt_at": "2026-09-30T20:03:36Z",
+      "last_attempt_at": "2026-10-01T20:23:49Z",
       "attempt_outcome": "validation_failed",
       "failure_stage": "validate",
       "value_origin": "last_known_good",
