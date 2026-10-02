@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-10-01T20:23:49Z",
+  "generated_at": "2026-10-02T20:01:08Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
@@ -15,7 +15,7 @@
     "source_stale_count": 0,
     "stale_last_known_good_count": 1,
     "expired_count": 2,
-    "source_unavailable_count": 2,
+    "source_unavailable_count": 1,
     "failed_no_data_count": 0
   },
   "family_health": {
@@ -42,7 +42,7 @@
       "source_stale_count": 0,
       "stale_last_known_good_count": 0,
       "expired_count": 1,
-      "source_unavailable_count": 1,
+      "source_unavailable_count": 0,
       "failed_no_data_count": 0,
       "successful_attempt_count": 0,
       "failed_attempt_count": 1,
@@ -160,7 +160,7 @@
       "water_year": 2026,
       "forecast_type": "Unregulated",
       "status": "expired",
-      "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027.",
+      "missing_reason": "validation_failed: CBRFC water-year forecast issue date was invalid for its water year.",
       "source_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -172,14 +172,14 @@
         "semantic_row_label": "Water Year",
         "source_forecast_label": "Full Fcst",
         "source_percentage_label": "%Avg",
-        "error_class": "source_unavailable",
-        "error_message": "CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027.",
-        "failure_stage": "source"
+        "error_class": "validation_failed",
+        "error_message": "CBRFC water-year forecast issue date was invalid for its water year.",
+        "failure_stage": "validate"
       },
       "last_successful_retrieval_at": "2026-09-30T20:03:35Z",
-      "last_attempt_at": "2026-10-01T20:23:49Z",
-      "attempt_outcome": "source_unavailable",
-      "failure_stage": "source",
+      "last_attempt_at": "2026-10-02T20:01:07Z",
+      "attempt_outcome": "validation_failed",
+      "failure_stage": "validate",
       "metric_state": {
         "forecast_volume": {
           "status": "expired",
@@ -189,7 +189,7 @@
           "stale_since": "2026-10-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027."
+          "missing_reason": "validation_failed: CBRFC water-year forecast issue date was invalid for its water year."
         },
         "percent_average": {
           "status": "expired",
@@ -199,7 +199,7 @@
           "stale_since": "2026-10-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "source_unavailable: CBRFC Lake Powell situational awareness publishes water year 2026, not requested water year 2027."
+          "missing_reason": "validation_failed: CBRFC water-year forecast issue date was invalid for its water year."
         }
       },
       "value_origin": "last_known_good",
