@@ -53,10 +53,15 @@ def sources():
 
 def config(path):
     c = read(path)
+    return _config(c, sources())
+
+
+def _config(c, expected_sources):
+    """Same validation for live config and separately verified historical input."""
     require(set(c) == {"version", "inventory", "catalog", "catalog_sha256", "streams", "scope", "limits",
                       "reserve_bytes", "root", "sources", "enabled", "fixture", "reuse",
                       "attribution", "organization_labels"}, "Exact job configuration fields")
-    require(c["version"] == VERSION and c["sources"] == sources(), "Job source/checkpoint changed")
+    require(c["version"] == VERSION and c["sources"] == expected_sources, "Job source/checkpoint changed")
     require(c["scope"] == SCOPE and type(c["enabled"]) is bool, "Exact WY2026 scope/permission required")
     require(set(c["limits"]) == set(LIMITS) and all(type(c["limits"][k]) is int and
             0 < c["limits"][k] <= v for k,v in LIMITS.items()), "Whole-job ceilings")
@@ -225,7 +230,10 @@ class Job:
     def child(self, root, cid):
         return recovery.open_evidence(str(root), cid, self.inventory)
 
-    def accounting(self):
+    def accounting(self, *, evidence_sources=None):
+        if evidence_sources is not None:
+            require(self.lock is None, "Historical accounting is inspection only")
+        expected_sources = source_binding() if evidence_sources is None else evidence_sources
         counts = dict(attempts=0, metadata_attempts=0, bytes=0, sealed=0, covered_empty=0)
         first = None; last = None; unsealed = []; asset = []
         roots = [self.root/"authority"]
@@ -242,7 +250,7 @@ class Job:
             for directory in sorted(campaigns.iterdir()):
                 with self.child(root, directory.name) as j:
                     j.verify_records(); state = j.snapshot()
-                    require(j.binding["collector_sources"] == source_binding() and not state["damage"], "Child source/integrity changed")
+                    require(j.binding["collector_sources"] == expected_sources and not state["damage"], "Child source/integrity changed")
                     counts["attempts"] += state["counters"]["attempts"]
                     counts["bytes"] += state["counters"]["response_bytes"]
                     meta = j.binding["mode"] != ce.MODE
@@ -265,7 +273,9 @@ class Job:
             window = dict(first_attempt_at=format_utc(first), deadline=format_utc(first+timedelta(seconds=self.c["limits"]["seconds"])))
             if self.has("window.json"):
                 require(self.get("window.json") == window, "Original job deadline changed")
-            else: self.put("window.json", window)
+            else:
+                require(evidence_sources is None, "Historical job deadline missing; preserve state")
+                self.put("window.json", window)
         else:
             require(not self.has("window.json"), "Attempt state missing behind job deadline")
             window = None
@@ -501,12 +511,20 @@ class Job:
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['inspect','prepare','metadata','review','acquire','resume','status','stop'])
+    p.add_argument('mode',choices=['inspect','prepare','metadata','review','acquire','resume','status','stop','recover-review'])
     p.add_argument('config');p.add_argument('--review');p.add_argument('--allow-provider',action='store_true')
     p.add_argument('--offline-now')
+    p.add_argument('--output-root')
     args=p.parse_args(argv)
     job=None
     try:
+        if args.mode == 'recover-review':
+            require(args.output_root is not None and not args.allow_provider and args.offline_now is None and
+                    args.review is None, 'Offline evidence output only; no provider/review/clock override')
+            from .preparation_recovery import recover_review
+            out = recover_review(Path(args.config).absolute(), Path(args.output_root).absolute())
+            print(encode(out).decode(), end=''); return 0
+        require(args.output_root is None, 'Output root is only for offline recovery review')
         c,inv=config(Path(args.config).absolute())
         fixture=read(c['fixture']['path']) if c['fixture'] else None
         if fixture is not None:

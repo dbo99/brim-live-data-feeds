@@ -488,11 +488,15 @@ class Adapter:
             sanitized = encode(exc.diagnostic) if isinstance(exc, (MetadataAdmissionHold, WitnessAdmissionHold)) else None
             # Recognized station objects contain zero observation/list rows;
             # parsed list arrays have an exact count even on admission failure.
-            # Only the generalized metadata profile uses this structural count.
+            # A complete rejected empty witness also proves zero returned rows,
+            # without supplying the missing completeness/source-start evidence.
             counted_metadata = (status == 200 and self.journal.binding.get("version") == "dendra-roster-metadata-acquisition-1" and
                 isinstance(payload, dict) and ((spec.kind == "station" and "data" not in payload) or
                 (spec.kind == "datastream-list" and isinstance(payload.get("data"), list))))
-            if body and value is None and status == 200 and row_count == 0 and not counted_metadata:
+            from .witness_diagnostic import known_zero_rejection
+            counted_witness = (isinstance(exc, WitnessAdmissionHold) and known_zero_rejection(
+                exc.diagnostic, self.journal.binding["witness_requests"][task]))
+            if body and value is None and status == 200 and row_count == 0 and not (counted_metadata or counted_witness):
                 row_count = None
             if details["error_code"] is None:
                 transport = isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, OSError))

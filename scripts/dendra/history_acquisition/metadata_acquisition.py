@@ -76,9 +76,14 @@ def prepare(inventory, authority, *, selected_ids, campaign_id, package=None):
                 campaign_id == metadata_campaign_id(package, station_id), "Exact package station membership required")
         specs = [RosterRequestSpec("unit-vocabulary")] + [
             RosterRequestSpec(k, ids[0], station_id=station_id) for k in ("station", "datastream-list")]
+    return _binding(inventory, authority, ids, campaign_id, specs, source_binding(), package)
+
+
+def _binding(inventory, authority, ids, campaign_id, specs, sources, package):
+    """Assemble after caller validation; historical readers retain old sources."""
     n = len(specs)
     binding = dict(version=VERSION, mode=MODE, campaign_id=campaign_id,
-        inventory_sha256=INVENTORY_SHA256, collector_sources=source_binding(),
+        inventory_sha256=INVENTORY_SHA256, collector_sources=sources,
         roster=inventory.roster(), selected_ids=ids, authority=authority,
         metadata_profile=CAMPAIGN_TEMPORAL_PROFILE, request_policy=POLICY,
         requests={slot(s):s.descriptor() for s in specs},
@@ -170,6 +175,11 @@ def packet_evidence(journal, sid, *, now):
     they cannot be promoted here under a new fingerprint.
     """
     validate_binding(journal.binding,journal.tasks,inventory=journal.inventory)
+    return _packet_evidence(journal, sid, now=now, fingerprint=digest(source_binding()))
+
+
+def _packet_evidence(journal, sid, *, now, fingerprint):
+    """Shared receipt checks after current or read-only historical validation."""
     vocabulary,vp = _receipt(journal,_spec(journal.binding,"unit-vocabulary"))
     station,sp = _receipt(journal,_spec(journal.binding,"station",sid))
     packet,pp = _receipt(journal,_spec(journal.binding,"datastream-list",sid))
@@ -186,8 +196,8 @@ def packet_evidence(journal, sid, *, now):
     require(parse_utc(sp["requested_at"]) <= parse_utc(station["checked_at"]) <= parse_utc(sp["retrieved_at"]) and
             parse_utc(pp["requested_at"]) <= parse_utc(packet["checked_at"]) <= parse_utc(pp["retrieved_at"]),
             "Packet check/retrieval time binding")
-    from .authority_witness import check_metadata
-    check_metadata(journal.inventory,sid,packet,now=now)
+    from .authority_witness import _check_metadata
+    _check_metadata(journal.inventory,sid,packet,now=now,fingerprint=fingerprint)
     value = dict(schema_version=EVIDENCE,identity=journal.binding["roster"][sid],
         source_fingerprint=digest(journal.binding["collector_sources"]),journal_binding_sha256=journal.binding_sha,
         journal_header_sha256=journal.header_sha,packet=packet,packet_sha256=digest(packet),

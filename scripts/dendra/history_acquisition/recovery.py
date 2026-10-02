@@ -60,6 +60,66 @@ def open_evidence(root, campaign_id, inventory):
     return Journal(root, header["binding"], tasks, inspect_only=True, inventory=inventory)
 
 
+def rejected_empty_witness(journal, sid):
+    """Interpret a hash-bound zero-row rejection; never change Journal counters.
+
+    This read-only evidence statement is not a receipt replacement, retry,
+    admissible empty witness or authority to use the historical source for IO.
+    """
+    from . import authority_witness as w, witness_diagnostic as d
+    from .journal import Journal
+    require(type(journal) is Journal and journal.inspect_only and journal.lock is not None,
+            "Rejected witness recovery requires historical inspection")
+    journal.verify_records()
+    b = journal.binding
+    require(b.get("mode") == w.MODE and (b, journal.tasks) == w._prepare(journal.inventory,
+        campaign_id=b["campaign_id"], packets=b["metadata_packets"], as_of=b["prepared_at"],
+        sources=b["collector_sources"]), "Rejected witness historical binding changed")
+    task = "witness-" + sid
+    require(task in b["witness_requests"], "Rejected witness outside selection")
+    request = b["witness_requests"][task]
+    attempts = [a for a in journal.snapshot()["attempts"].values() if a["task_key"] == task]
+    require(len(attempts) == 1, "Rejected witness attempt closure")
+    a = attempts[0]; details = a.get("details", {})
+    logical = digest(dict(task=task, run=0, cursor=request["request_id"]))
+    require(a["state"] == "failure" and a["ordinal"] == 1 and a["status"] == 200 and
+        a["interval_key"] is None and a["run"] == 0 and a["cursor"] == request["request_id"] and
+        a["logical_key"] == logical and a["attempt_key"] == digest(dict(task=task, page=logical, attempt=1)) and
+        (a["source_rows"] is None or type(a["source_rows"]) is int and a["source_rows"] == 0) and
+        a["representation"] == "sanitized" and a["body_retained"] is True and
+        len(a["objects"]) == 1 and a.get("service_failure") is False and
+        details.get("kind") == w.KIND and details.get("outcome") == "hold" and
+        details.get("error_code") == "parse_or_privacy" and details.get("retryable") is False and
+        details.get("privacy") == details.get("identity") == "hold", "Unsupported spent witness rejection")
+    records = {}
+    for kind in ("reserved", "started", "received", "failure"):
+        found = [r for r in journal.events if r["kind"] == kind and r["data"].get("attempt_key") == a["attempt_key"]]
+        require(len(found) == 1, "Rejected witness receipt chain closure")
+        records[kind] = found[0]
+    ordered = list(records.values())
+    require([r["sequence"] for r in ordered] == sorted(r["sequence"] for r in ordered) and
+        parse_utc(records["reserved"]["at"]) <= parse_utc(records["started"]["at"]) <=
+        parse_utc(details["requested_at"]) <= parse_utc(details["retrieved_at"]) <=
+        parse_utc(records["received"]["at"]) <= parse_utc(records["failure"]["at"]) <= parse_utc(journal.now()),
+        "Rejected witness chronology")
+    value = decode(journal.read_object(a["objects"][0]))
+    require(d.known_zero_rejection(value, request) and value["body_sha256"] == a["response_sha256"] and
+        value["body_bytes"] == a["response_bytes"], "Unknown response lacks bound zero-row rejection evidence")
+    result = dict(schema_version="dendra-rejected-witness-row-interpretation-1", identity=b["roster"][sid],
+        campaign_id=b["campaign_id"], task_key=task, attempt_key=a["attempt_key"],
+        journal_header_sha256=journal.header_sha, journal_binding_sha256=journal.binding_sha,
+        collector_fingerprint=digest(b["collector_sources"]), request=request,
+        record_identities={k:r["record_sha256"] for k,r in records.items()},
+        diagnostic_object=a["objects"][0], diagnostic_sha256=value["diagnostic_sha256"],
+        original_response_sha256=a["response_sha256"], response_bytes=a["response_bytes"],
+        original_receipt_source_rows=a["source_rows"], interpreted_returned_rows=0,
+        original_unknown_row_responses=journal.snapshot()["counters"]["unknown_row_responses"],
+        accounting_source="original Journal; interpretation is evidence only", attempt_spent=True,
+        raw_body_retained=False, witness_admissible=False, reason=value["reason"]["code"],
+        source_start_authority="UNKNOWN_SOURCE_START", dispatch_ready=False, provider_retry=False)
+    return dict(result, interpretation_sha256=digest(result))
+
+
 def predecessor(ref, inventory):
     """Independently recompute charges and immutable receipt/anchor identities."""
     if ref.get("incident") == PREFIX_VERSION:

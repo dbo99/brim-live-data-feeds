@@ -143,3 +143,46 @@ def validate(body, sanitized, request, status):
     require(type(value) is dict and "reason" in value and
             encode(projection(body, request, status, value["reason"])) == sanitized,
             "Witness diagnostic body/request binding")
+
+
+def known_zero_rejection(value, request):
+    """Recognize one complete rejected shape; zero rows grant no authority.
+
+    Recovery callers must additionally verify the immutable receipt, object and
+    request binding. Unsupported/malformed projections remain unknown.
+    """
+    if (type(value) is not dict or type(request) is not dict or
+            type(request.get("request")) is not dict or type(value.get("fields")) is not dict or
+            type(value["fields"].get("skip")) is not dict):
+        return False
+    fields = {k: dict(present=False, json_type="missing") for k in TOP}
+    fields.update(data=dict(present=True, json_type="array"),
+        limit=dict(present=True, json_type="integer", value=1, value_withheld=False))
+    actual_fields = value.get("fields")
+    if type(actual_fields) is dict and actual_fields.get("skip", {}).get("present") is True:
+        fields["skip"] = dict(present=True, json_type="integer", value=0, value_withheld=False)
+    checks = dict(root_object=True, envelope_fields=True, data_present=True, data_array=True,
+        limit_integer=True, limit_one=True, rows_at_most_one=True, skip_zero=True,
+        total_present=False, total_integer=False, total_covers_rows=False, empty_unambiguous=False)
+    reason = value.get("reason", {})
+    site = reason.get("parser_site") if type(reason) is dict else None
+    return (value.get("version") == VERSION and value.get("kind") == "authority-witness" and
+        value.get("request") == request.get("request") and
+        value.get("request_id") == request.get("request_id") and
+        value.get("bound_request_sha256") == digest(request) and
+        value.get("identity") == request.get("request", {}).get("identity") and
+        value.get("http_status") == 200 and value.get("complete_body") is True and
+        type(value.get("body_bytes")) is int and 0 < value["body_bytes"] <= 8*1024**2 and
+        value.get("root_json_type") == "object" and encode(actual_fields) == encode(fields) and
+        type(value.get("returned_row_count")) is int and value["returned_row_count"] == 0 and
+        value.get("requested_limit") == 1 and value.get("rows") == [] and
+        value.get("rows_truncated") is False and value.get("omitted_top_level_field_count") == 0 and
+        encode(value.get("checks")) == encode(checks) and value.get("completeness_check") == "FAIL" and
+        value.get("selection_check") == "PASS" and
+        value.get("ordering_check") == "NOT_EVALUATED_SINGLE_ROW_REQUIRED" and
+        type(reason) is dict and set(reason) == {"code", "parser_site"} and
+        reason["code"] == "witness.completeness_selection" and type(site) is dict and
+        set(site) == {"module", "function", "line"} and site["module"] == "authority_witness" and
+        site["function"] == "response_shape" and type(site["line"]) is int and 0 < site["line"] <= 100000 and
+        all(value.get(k) is False for k in ("admitted", "source_start_reviewed", "dispatch_ready")) and
+        value.get("diagnostic_sha256") == digest({k:v for k,v in value.items() if k != "diagnostic_sha256"}))
