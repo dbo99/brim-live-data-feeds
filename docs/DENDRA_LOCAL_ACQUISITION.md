@@ -19,7 +19,8 @@ source are required before live use; a dirty or untracked implementation refuses
 live dispatch. Do not change configuration, source or authority inside a job.
 
 The supported selection is the reviewed 28-candidate CDFW cluster. Selection is
-not admission. The maximum scope is `[2025-10-01T08:00:00Z,2026-10-01T08:00:00Z)`.
+not admission. Versions 1 and 2 retain the maximum scope
+`[2025-10-01T08:00:00Z,2026-10-01T08:00:00Z)`.
 Limits may only be reduced: 1,500 total attempts, at most 64 metadata/witness
 attempts, 1 GiB response bodies, and 7,200 seconds from the first durable provider
 reservation. The parent directory must already exist under the private task
@@ -66,6 +67,56 @@ meaning `UTC t; preserve native timestamps`. Unknown depth cannot be guessed.
 Elevation is optional; a native Z is not interpreted as elevation or feet MSL.
 Review inputs are supplied by the authorized reviewer, never synthesized by the
 runner. Configuration gaps, stale reviews and incompatible archive bindings HOLD.
+
+## Exact reviewed current scopes
+
+Version `dendra-local-native-job-3` uses the same configuration fields as version 1,
+with a finite, explicitly chosen `scope` and admitted `streams`. Timestamps must
+use canonical UTC serialization (`YYYY-MM-DDTHH:MM:SS.sssZ`). Scope dates are
+preparation intent only: they grant no observation acquisition permission.
+The mechanism supports future current catch-up intervals without a water-year
+conditional. Versions 1 and 2 keep their original scope and review semantics;
+existing jobs are never migrated or expanded.
+
+Use the ordinary `inspect`, `prepare`, `metadata`, and `review` commands above.
+The original review input must bind the exact config-derived `job_id`, every
+selected stream, and the exact configured start and end in each native and
+placement review. Source-start, fresh native metadata, and explicit placement
+acceptance remain mandatory. Excluded, held, or missing entries refuse admission;
+a reviewed subset requires its own explicitly selected config and job. The runner
+never manufactures acceptance or renews original evidence timestamps.
+
+Successful review writes immutable `scope-binding.json`, pinning source identity,
+serialized config/job identity, ordered frozen station/stream identities, exact
+scope, the original review file path and byte hash, and review/catalog/plan/reuse
+hashes. Preserve that original review file at its bound path. Date-only config
+edits, roster changes, changed reviews or plans, and changed job identity fail
+closed. Planning still subtracts compatible sealed coverage and splits only the
+remaining reviewed intervals; empty, failed and unqueried retain their meanings.
+
+Validate the accepted scope offline before acquiring:
+
+```sh
+Rscript --vanilla scripts/dendra/acquire_native.R validate-scope /path/to/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R acquire /path/to/config.json --allow-provider
+Rscript --vanilla scripts/dendra/acquire_native.R status /path/to/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R resume /path/to/config.json --allow-provider
+```
+
+`validate-scope` opens an existing reviewed job, checks its bindings/currentness,
+and reports its exact interval, roster and task count without provider dispatch.
+Acquire and resume recheck the same authority, including before each history
+dispatch. Expiry can therefore stop an already-running job; it never extends the
+original reservation-based deadline. Every history request must match a bound
+plan task's stream and end, with a start inside that task for pagination. All
+existing attempt/byte budgets, serial pacing, single writer, completeness and
+spent-unsealed rules remain unchanged. These commands affect private evidence
+only; they do not schedule, publish, or fetch historical backfill automatically.
+
+`tests/dendra/test_reviewed_job_scope.py` exercises exact WY2026 compatibility,
+a fixed synthetic current interval, fresh R readback, rejected scope/roster/review
+mutations, mandatory authority, dispatch-time expiry, and unchanged resume
+accounting. Synthetic acceptance never authorizes a real current-data job.
 
 ## One catalog and durable source organization
 

@@ -26,6 +26,7 @@ from ..transport import parse_utc, format_utc
 
 VERSION = "dendra-local-native-job-1"
 IMPORT_VERSION = "dendra-local-native-job-2"
+SCOPED_VERSION = "dendra-local-native-job-3"
 REPO = Path(__file__).resolve().parents[3]
 ENTRY = REPO / "scripts/dendra/acquire_native.R"
 LIMITS = dict(attempts=1500, metadata_attempts=64, bytes=1073741824, seconds=7200)
@@ -54,9 +55,9 @@ def sources():
 
 def config(path):
     c = read(path)
-    if c.get("version") == IMPORT_VERSION:
+    if c.get("version") in (IMPORT_VERSION, SCOPED_VERSION):
         with Root(Path(path).parent) as fs:
-            require(fs.read(Path(path).name,8*BODY) == encode(c), "Canonical serialized import config required")
+            require(fs.read(Path(path).name,8*BODY) == encode(c), "Canonical serialized execution config required")
     return _config(c, sources())
 
 
@@ -67,8 +68,14 @@ def _config(c, expected_sources):
                       "attribution", "organization_labels"}
     if c.get("version") == IMPORT_VERSION: fields.add("authority_import")
     require(set(c) == fields, "Exact job configuration fields")
-    require(c["version"] in (VERSION,IMPORT_VERSION) and c["sources"] == expected_sources, "Job source/checkpoint changed")
-    require(c["scope"] == SCOPE and type(c["enabled"]) is bool, "Exact WY2026 scope/permission required")
+    require(c["version"] in (VERSION,IMPORT_VERSION,SCOPED_VERSION) and c["sources"] == expected_sources, "Job source/checkpoint changed")
+    require(type(c["enabled"]) is bool, "Explicit job permission required")
+    if c["version"] == SCOPED_VERSION:
+        scope=c["scope"]
+        require(set(scope)=={'start','end'} and all(format_utc(parse_utc(scope[k]))==scope[k] for k in scope) and
+                parse_utc(scope['start'])<parse_utc(scope['end']), "Exact canonical half-open scope required")
+    else:
+        require(c["scope"] == SCOPE, "Exact WY2026 scope/permission required")
     require(set(c["limits"]) == set(LIMITS) and all(type(c["limits"][k]) is int and
             0 < c["limits"][k] <= v for k,v in LIMITS.items()), "Whole-job ceilings")
     require(type(c["reserve_bytes"]) is int and c["reserve_bytes"] >= BODY, "Explicit storage safety reserve")
@@ -323,6 +330,20 @@ class Job:
         # Journal reservation/start are already durable. This marker is NOT a
         # second request ledger: reconstruct the first reservation after close.
         require(self.c["fixture"] is not None or self.c["enabled"], "Live job disabled")
+        if self.c['version'] == SCOPED_VERSION:
+            require(self.config_path is not None and config(self.config_path)[0] == self.c,
+                    'Runtime execution configuration changed')
+            url=urlsplit(request.full_url); q=parse_qs(url.query)
+            if url.path == '/v2/datapoints' and q.get('$limit') != ['1']:
+                self.verify_scope()
+                require(q.get('datastream_id') in [[s] for s in self.c['streams']] and
+                        len(q.get('time[$gte]',[]))==len(q.get('time[$lt]',[]))==1,
+                        'Reviewed history request identity/interval required')
+                sid=q['datastream_id'][0];lo=parse_utc(q['time[$gte]'][0]);hi=parse_utc(q['time[$lt]'][0])
+                require(any(t['stream_id']==sid and parse_utc(t['start'])<=lo<hi==parse_utc(t['end'])
+                            for t in self.get('plan.json')['tasks']), 'Dispatch outside bound plan')
+            else:
+                require(not self.has('scope-binding.json'), 'Reviewed job forbids additional metadata/witness requests')
         if self.c["version"] == IMPORT_VERSION:
             from . import evidence_import as imported
             require(self.c["enabled"] and self.config_path is not None and config(self.config_path)[0] == self.c,
@@ -405,12 +426,51 @@ class Job:
         # Validate everything before storing any accepted caller input.
         bundles={}; scopes={}
         for sid,item in r['streams'].items():
-            if item == {'disposition':'EXCLUDE'}: continue
+            if item == {'disposition':'EXCLUDE'}:
+                require(self.c['version'] != SCOPED_VERSION, 'Exact admitted roster cannot contain excluded/held streams')
+                continue
             bundle,scope=self.review_stream(sid,item); bundles[sid]=bundle;scopes[sid]=scope
         require(bundles, 'No reviewed eligible stream')
         self.put('review.json',r)
         self.replace_summary('catalog.json',self.series_catalog(r['streams']))
-        return self.make_plan(bundles,scopes)
+        result=self.make_plan(bundles,scopes)
+        if self.c['version'] == SCOPED_VERSION:
+            with Root(path.parent) as fs: body=fs.read(path.name,8*BODY)
+            require(decode(body)==r, 'Reviewed input changed during binding')
+            self.put('scope-binding.json',self.scope_binding(dict(path=str(path),sha256=sha(body))))
+        return result
+
+    def scope_binding(self, review_ref):
+        """Immutable link to the original accepted input, not a new request ledger."""
+        return dict(version=SCOPED_VERSION,job_id=digest(self.c),configuration_sha256=digest(self.c),
+            sources=self.c['sources'],scope=self.c['scope'],
+            identities=[self.inventory.identity(s) for s in self.c['streams']],
+            review_input=review_ref,review_sha256=digest(self.get('review.json')),
+            catalog_sha256=digest(self.get('catalog.json')),plan_sha256=digest(self.get('plan.json')),
+            asset_map_sha256=digest(self.get('asset-map.json')))
+
+    def verify_scope(self):
+        """Recheck scope, original acceptance and currentness before any history dispatch."""
+        require(self.config_path is not None and config(self.config_path)[0] == self.c,
+                'Bound execution configuration changed')
+        require(self.get('job.json')['configuration']==self.c and self.get('job.json')['job_id']==digest(self.c),
+                'Bound job identity changed')
+        require(self.has('scope-binding.json'), 'Exact reviewed scope binding required')
+        binding=self.get('scope-binding.json');ref=binding['review_input'];path=Path(ref['path'])
+        require(set(ref)=={'path','sha256'} and path.is_absolute(), 'Original reviewed input reference required')
+        with Root(path.parent) as fs:body=fs.read(path.name,8*BODY)
+        require(sha(body)==ref['sha256'] and decode(body)==self.get('review.json'), 'Original reviewed input/hash changed')
+        require(binding==self.scope_binding(ref), 'Reviewed scope/config/roster/plan binding changed')
+        review=self.get('review.json');plan=self.get('plan.json')
+        require(set(review)=={'job_id','streams'} and review['job_id']==digest(self.c) and
+                set(review['streams'])==set(self.c['streams']), 'Exact admitted roster/job required')
+        require(plan['job_id']==digest(self.c) and plan['review_sha256']==digest(review) and
+                self.get('plan-binding.json')==dict(sha256=digest(plan)), 'Bound plan/review changed')
+        for sid in self.c['streams']:
+            self.review_stream(sid,review['streams'][sid])
+        require(self.get('catalog.json')==self.series_catalog(review['streams']), 'Bound metadata/placement/attribution changed')
+        return dict(outcome='VALIDATED_REVIEWED_SCOPE_NO_DISPATCH',job_id=digest(self.c),
+                    scope=self.c['scope'],streams=self.c['streams'],planned_tasks=len(plan['tasks']))
 
     def review_stream(self,sid,item):
         if self.c['version'] == IMPORT_VERSION:
@@ -422,7 +482,10 @@ class Job:
             return bundle,scope
         require(set(item)=={'source_review','native_review','placement_review','scope'}, 'Explicit source/native/placement review required')
         scope=item['scope']; lo,hi=map(parse_utc,(scope['start'],scope['end']))
-        require(parse_utc(SCOPE['start']) <= lo < hi <= parse_utc(SCOPE['end']), 'Review outside approved WY2026')
+        if self.c['version'] == SCOPED_VERSION:
+            require(scope==self.c['scope'], 'Review differs from exact configured scope')
+        else:
+            require(parse_utc(SCOPE['start']) <= lo < hi <= parse_utc(SCOPE['end']), 'Review outside approved WY2026')
         root=self.root/'authority';package=read(root/'package.json');station=self.inventory.identity(sid)['station_id']
         with self.child(root,ap.metadata_campaign_id(package,station)) as mj, self.child(root,ap.witness_campaign_id(package,sid)) as wj:
             meta=ma.packet_evidence(mj,sid,now=self.clock.now());packet=meta['packet']
@@ -501,6 +564,7 @@ class Job:
 
     def acquire(self,resume=False):
         if self.c['version'] == IMPORT_VERSION: self.verify_import()
+        if self.c['version'] == SCOPED_VERSION: self.verify_scope()
         require(self.has('review.json') and self.has('plan.json'), 'Explicit valid reviewed input/plan required')
         if resume:self.acknowledge_stop()
         plan=self.get('plan.json');review=self.get('review.json')
@@ -572,7 +636,7 @@ class Job:
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['inspect','prepare','metadata','review','acquire','resume','status','stop','recover-review',
+    p.add_argument('mode',choices=['inspect','prepare','metadata','review','validate-scope','acquire','resume','status','stop','recover-review',
                                 'bind-import','validate-import','finalize-import','import-authority'])
     p.add_argument('config');p.add_argument('--review');p.add_argument('--allow-provider',action='store_true')
     p.add_argument('--offline-now')
@@ -651,6 +715,10 @@ def main(argv=None):
                     elif args.mode=='review':
                         require(args.review is not None,'Review file required');out=job.review(Path(args.review).absolute())
                     elif args.mode=='import-authority':out=job.import_authority()
+                    elif args.mode=='validate-scope':
+                        require(c['version']==SCOPED_VERSION and not args.allow_provider,
+                                'Offline reviewed-scope validation required')
+                        out=job.verify_scope()
                     elif args.mode in ('acquire','resume'):out=job.acquire(args.mode=='resume')
                     else:out=dict(outcome=('PREPARED_AWAITING_IMPORT' if c['version']==IMPORT_VERSION else
                                            'PREPARED_DISABLED') if args.mode=='prepare' else 'STATUS')
