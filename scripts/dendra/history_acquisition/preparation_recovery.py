@@ -39,13 +39,16 @@ def _files(root):
 
 def _sources(c, old):
     """Verify old source bytes against local Git objects, never rebind them."""
-    require(c["sources"]["checkpoint"] == ap.current_checkpoint() and
-        c["sources"]["collector"] == digest(old) and
-        c["sources"]["r_entrypoint_sha256"] == sha(l.ENTRY.read_bytes()), "Historical job source identity changed")
-    if old == source_binding():
+    require(c["sources"]["collector"] == digest(old), "Historical job source identity changed")
+    if old == source_binding() and c["sources"]["checkpoint"] == ap.current_checkpoint():
+        require(c["sources"]["r_entrypoint_sha256"] == sha(l.ENTRY.read_bytes()), "Historical R entrypoint changed")
         return
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
     head = c["sources"]["checkpoint"]["head"]
+    tree = subprocess.check_output(["git", "rev-parse", head+"^{tree}"], cwd=l.REPO, env=env, text=True).strip()
+    require(tree == c["sources"]["checkpoint"]["tree"], "Historical checkpoint tree changed")
+    entry = subprocess.check_output(["git", "show", head+":scripts/dendra/acquire_native.R"], cwd=l.REPO, env=env)
+    require(sha(entry) == c["sources"]["r_entrypoint_sha256"], "Historical R entrypoint differs from checkpoint")
     files = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", head, "--", "scripts/dendra"],
         cwd=l.REPO, env=env, text=True).splitlines()
     expected = {p.removeprefix("scripts/dendra/") for p in files if
@@ -106,7 +109,10 @@ def _collect(config_path, *, now):
         old = first_header["binding"]["collector_sources"]
         _sources(c, old)
         c, inv = l._config(c, c["sources"])
-        expected = ap.make(inv, selected_ids=c["streams"], checkpoint=c["sources"]["checkpoint"])
+        # Reconstruct the original package only after its historical source bytes
+        # have been verified. This is not a current-source execution package.
+        expected = ap.make(inv, selected_ids=c["streams"], checkpoint=ap.current_checkpoint())
+        expected["checkpoint"] = c["sources"]["checkpoint"]
         expected["collector_fingerprint"] = digest(old)
         expected["package_id"] = digest({k:v for k,v in expected.items() if k != "package_id"})
         require(package == expected, "Original package source/selection/limits changed")

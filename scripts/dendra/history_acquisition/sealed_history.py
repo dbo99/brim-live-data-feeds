@@ -65,6 +65,48 @@ def review_interval(task, decision):
     return windows[0]
 
 
+def referenced_archive(journal, entry, inventory):
+    """Verify an explicitly pinned, previously sealed reference without replay.
+
+    Original header/receipts/anchors/object hashes and receipt-time authority
+    remain mandatory. This reader checks the sealed envelope and page bindings;
+    it does not normalize or reevaluate every historical observation.
+    """
+    exact(entry, ENTRY_FIELDS)
+    require(journal.inspect_only and journal.header_sha == entry["header_sha256"] and
+            digest(journal.binding["collector_sources"]) == entry["source_fingerprint"],
+            "Referenced archive source/header changed")
+    journal.verify_records()
+    h._binding(journal.binding, journal.tasks, inventory, entry["source_fingerprint"])
+    task = journal.tasks[entry["task_id"]]
+    require(all(task[k] == entry[k] for k in ("identity", "start", "end")), "Referenced archive task changed")
+    state = journal.snapshot(); item = state["intervals"][entry["task_id"]]; seal = item["complete"]
+    require(seal and item["state"] in ("complete_empty", "complete_nonempty") and
+            len(seal["objects"]) == 1 and seal["objects"][0]["sha256"] == entry["archive_sha256"],
+            "Referenced archive seal/object changed")
+    events = [e for e in journal.events if e["kind"] == "sealed" and e["data"] == seal]
+    require(len(events) == 1 and events[0]["record_sha256"] == entry["seal_sha256"], "Referenced seal receipt changed")
+    env = journal.completed(entry["task_id"])
+    require(env["query_complete"] is True and env["datastream_id"] == entry["identity"]["stream_id"] and
+            env["requested_interval"] == dict(start_inclusive=entry["start"], end_exclusive=entry["end"]) and
+            env["page_count"] == len(env["pages"]) == len(seal["attempt_keys"]) and
+            env["diagnostics"]["completion_reason"] in ("empty_page", "short_page_with_effective_limit"),
+            "Referenced query closure changed")
+    from .eligibility import validate_decision
+    bundle = journal.binding["reviewed_bundles"][entry["identity"]["stream_id"]]
+    for page, key in zip(env["pages"], seal["attempt_keys"]):
+        a = state["attempts"][key]
+        require(a["state"] == "received" and a["status"] == 200 and len(a["objects"]) == 1 and
+                a["source_rows"] is not None and a["interval_key"] == entry["task_id"] and
+                page["response_sha256"] == a["response_sha256"] == a["objects"][0]["sha256"] and
+                page["response_bytes"] == a["response_bytes"] == a["objects"][0]["bytes"],
+                "Referenced page/receipt changed")
+        journal.read_object(a["objects"][0])  # Hash check only; no observation replay.
+        validate_decision(inventory, encode(bundle["packet"]), bundle["review"], bundle["decision"],
+                          executor_fingerprint=entry["source_fingerprint"], now=a["reserved_at"])
+    return env, review_interval(task, bundle["decision"])
+
+
 def read_set(path, checksum, inventory):
     """Bounded explicit manifest, exact stream horizons, no implicit gaps/sorting."""
     path = Path(path); hash_value(checksum)

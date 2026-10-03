@@ -128,3 +128,78 @@ spent crashes and errors, limits/deadline exhaustion, invalid state/review,
 concurrency/storage guards, and organization persistence/conflict/label behavior.
 Synthetic acceptance applies only to synthetic fixture records. Passing these
 tests does not admit any real candidate or authorize acquisition.
+
+## Reviewed preparation import and finalization
+
+Version `dendra-local-native-job-2` provides an offline reference route for an
+already reviewed CDFW preparation. It pins the donor config, consolidated recovery
+request, explicit final review and supported recovery interpretation. The donor
+must remain a preparation-only job. Its Journals, original producer identity,
+receipt hashes, retrieval/review timestamps, attempt spending and authorization
+windows remain unchanged. Original preparation counters are linked provenance;
+they are never transferred into or refunded by the new campaign.
+
+`bind-import` validates the original candidate closure, exact admitted subset,
+successful witnesses, source-start/native/placement decisions, attribution and
+archive map. Captured parser, science, Journal and policy source files must still
+match. Differences are restricted to the explicit import/accounting/supervisor
+assembly modules; current validators also check the original evidence. This
+compatibility assessment is recorded, including both source closures. The native
+execution assessment derives from the original review at its original evaluation
+time with the new executor fingerprint. It retains the original capture-source
+fingerprint, reviewed-at, expires-at and evidence hashes.
+
+Metadata must still satisfy its original freshness deadline, and the source and
+native reviews must apply to the exact evidence and requested interval. The
+effective expiry is the earliest original metadata/native validity limit. An
+expired preparation execution window does not refresh or expire these independent
+capture/review limits. Expired or inapplicable authority blocks import and later
+requests; the importer never renews timestamps or repeats metadata/witness calls.
+
+The canonical serialized configuration hash is the job identity. Changing
+`enabled` changes that identity. Finalize the disabled config before creating the
+job: `finalize-import --enable` writes a new enabled config and a derived transfer
+record bound to those exact bytes. It leaves the original review and disabled
+config intact. The config pins original inputs; the derived transfer pins the
+config, avoiding a circular hash dependency. No job exists until `prepare`.
+Disabled imported configs cannot initialize jobs or dispatch, even with fixtures.
+
+From the repository root, these are the supported operations with example paths
+inside an existing private task directory. Live activation and provider access
+always require separate authorization:
+
+```sh
+Rscript --vanilla scripts/dendra/acquire_native.R bind-import .l01-soil-integration/task/template.json --donor-config .l01-soil-integration/donor/config.json --request .l01-soil-integration/review/CONSOLIDATED_REVIEW_REQUEST.json --final-review .l01-soil-integration/review/FINAL_REVIEW_INPUT.json --recovery .l01-soil-integration/review/RECOVERY_INTERPRETATION.json --output-config .l01-soil-integration/task/bulk-disabled.json --job-root "$PWD/.l01-soil-integration/task/bulk-job"
+Rscript --vanilla scripts/dendra/acquire_native.R validate-import .l01-soil-integration/task/bulk-disabled.json
+Rscript --vanilla scripts/dendra/acquire_native.R finalize-import .l01-soil-integration/task/bulk-disabled.json --enable --output-config .l01-soil-integration/task/bulk-enabled.json
+Rscript --vanilla scripts/dendra/acquire_native.R prepare .l01-soil-integration/task/bulk-enabled.json
+Rscript --vanilla scripts/dendra/acquire_native.R import-authority .l01-soil-integration/task/bulk-enabled.json
+Rscript --vanilla scripts/dendra/acquire_native.R acquire .l01-soil-integration/task/bulk-enabled.json --allow-provider
+Rscript --vanilla scripts/dendra/acquire_native.R status .l01-soil-integration/task/bulk-enabled.json
+Rscript --vanilla scripts/dendra/acquire_native.R resume .l01-soil-integration/task/bulk-enabled.json --allow-provider
+```
+
+`bind-import`, `validate-import` and `finalize-import` do not initialize the job,
+start its provider clock or reserve attempts. `import-authority` installs the
+derived review and admitted plan in an already prepared job without requests.
+The runtime validates the pinned originals, derived job/review identity and
+deterministic plan on acquire/resume, rechecks stream applicability before each
+child, and checks config/review pins at dispatch. The imported route permits only
+reviewed history requests and refuses `metadata` or replacement `review` commands.
+Missing/changed evidence, a held stream, a changed plan or unknown accounting
+without the supported bound recovery diagnostic HOLDs before provider access.
+Partial import files are preserved and require review; they are not overwritten.
+
+Archive reuse verifies original manifests, record chains, seal/object/page hashes,
+query closure and receipt-time authority without replaying every historical
+observation. It retains original attribution and retrieval times. The prospective
+plan reports logical tasks separately from pages/attempts: each history child can
+spend at most three attempts, with no automatic retries under this plan. Whole-job
+caps may stop a campaign before all tasks complete. Fresh processes retain the
+new job's first-reservation deadline, counters and spent/unsealed children.
+
+`tests/dendra/test_evidence_import.py` exercises this complete R sequence with
+finite synthetic donor responses and network denial, including enabled config
+binding, nonempty/valid-empty completion, reuse, interruption, spent crashes,
+limits, writer exclusion and negative review/evidence/config cases. Test artifacts
+stay under `DENDRA_TEST_ROOT`; no real donor or archive is rewritten.

@@ -25,6 +25,7 @@ from .safety import Root, Hold, decode, digest, encode, require, sha
 from ..transport import parse_utc, format_utc
 
 VERSION = "dendra-local-native-job-1"
+IMPORT_VERSION = "dendra-local-native-job-2"
 REPO = Path(__file__).resolve().parents[3]
 ENTRY = REPO / "scripts/dendra/acquire_native.R"
 LIMITS = dict(attempts=1500, metadata_attempts=64, bytes=1073741824, seconds=7200)
@@ -53,15 +54,20 @@ def sources():
 
 def config(path):
     c = read(path)
+    if c.get("version") == IMPORT_VERSION:
+        with Root(Path(path).parent) as fs:
+            require(fs.read(Path(path).name,8*BODY) == encode(c), "Canonical serialized import config required")
     return _config(c, sources())
 
 
 def _config(c, expected_sources):
     """Same validation for live config and separately verified historical input."""
-    require(set(c) == {"version", "inventory", "catalog", "catalog_sha256", "streams", "scope", "limits",
+    fields = {"version", "inventory", "catalog", "catalog_sha256", "streams", "scope", "limits",
                       "reserve_bytes", "root", "sources", "enabled", "fixture", "reuse",
-                      "attribution", "organization_labels"}, "Exact job configuration fields")
-    require(c["version"] == VERSION and c["sources"] == expected_sources, "Job source/checkpoint changed")
+                      "attribution", "organization_labels"}
+    if c.get("version") == IMPORT_VERSION: fields.add("authority_import")
+    require(set(c) == fields, "Exact job configuration fields")
+    require(c["version"] in (VERSION,IMPORT_VERSION) and c["sources"] == expected_sources, "Job source/checkpoint changed")
     require(c["scope"] == SCOPE and type(c["enabled"]) is bool, "Exact WY2026 scope/permission required")
     require(set(c["limits"]) == set(LIMITS) and all(type(c["limits"][k]) is int and
             0 < c["limits"][k] <= v for k,v in LIMITS.items()), "Whole-job ceilings")
@@ -160,6 +166,8 @@ class Job:
         self.fs = None
         self.lock = None
         self.last_dispatch = None
+        self.transfer_cache = None
+        self.config_path = None
 
     def put(self, name, value):
         self.fs.write_new(name, encode(value), 8*BODY)
@@ -202,6 +210,8 @@ class Job:
     @contextmanager
     def open(self, create=False):
         if create:
+            require(self.c["version"] != IMPORT_VERSION or self.c["enabled"],
+                    "Finalize imported config before initialization")
             self.root.mkdir(mode=0o700, exist_ok=False)
             with Root(self.root) as fs:
                 fs.write_new("writer.lock", b"", 0)
@@ -313,6 +323,17 @@ class Job:
         # Journal reservation/start are already durable. This marker is NOT a
         # second request ledger: reconstruct the first reservation after close.
         require(self.c["fixture"] is not None or self.c["enabled"], "Live job disabled")
+        if self.c["version"] == IMPORT_VERSION:
+            from . import evidence_import as imported
+            require(self.c["enabled"] and self.config_path is not None and config(self.config_path)[0] == self.c,
+                    "Imported execution configuration changed/disabled")
+            imported.pins(self.c)
+            require(self.transfer_cache is not None and self.get('import.json') == self.transfer_cache[0] and
+                    self.get('review.json') == self.transfer_cache[0]['review'], "Runtime imported review changed")
+            q = parse_qs(urlsplit(request.full_url).query)
+            require(urlsplit(request.full_url).path == '/v2/datapoints' and '$limit' in q and
+                    q['$limit'] != ['1'] and q.get('datastream_id',[None])[0] in self.c['streams'],
+                    "Imported jobs allow history requests only")
         if not self.has('window.json'):
             # The collector has already persisted reserved/started records. A
             # crash here cannot hide that attempt: closeout/restart reconstructs
@@ -348,6 +369,7 @@ class Job:
         return anonymous_executor(end)(request,timeout=timeout)
 
     def metadata(self):
+        require(self.c['version'] != IMPORT_VERSION, "Imported job forbids repeat metadata/witness requests")
         if self.has("metadata.json"): return self.get("metadata.json")
         package = ap.make(self.inventory, selected_ids=self.c['streams'], checkpoint=self.c['sources']['checkpoint'])
         n = package['ceilings']['http_attempts']
@@ -376,6 +398,7 @@ class Job:
         return result
 
     def review(self, path):
+        require(self.c['version'] != IMPORT_VERSION, "Use import-authority for the pinned imported review")
         r=read(path); require(set(r)=={'job_id','streams'} and r['job_id']==digest(self.c) and
             set(r['streams'])==set(self.c['streams']), 'Exact review/selection binding')
         require(not self.has('review.json'), 'Review is immutable; no replacement')
@@ -390,6 +413,13 @@ class Job:
         return self.make_plan(bundles,scopes)
 
     def review_stream(self,sid,item):
+        if self.c['version'] == IMPORT_VERSION:
+            from . import evidence_import as imported
+            inputs = imported.pins(self.c)
+            bundle,scope,accepted = imported.stream(self.c,self.inventory,inputs['review_request'],inputs['final_review'],
+                                                    sid,now=self.clock.now())
+            require(item == accepted, 'Imported runtime review changed')
+            return bundle,scope
         require(set(item)=={'source_review','native_review','placement_review','scope'}, 'Explicit source/native/placement review required')
         scope=item['scope']; lo,hi=map(parse_utc,(scope['start'],scope['end']))
         require(parse_utc(SCOPE['start']) <= lo < hi <= parse_utc(SCOPE['end']), 'Review outside approved WY2026')
@@ -427,11 +457,14 @@ class Job:
                 require(j.header_sha==e['header_sha256'] and digest(j.binding['collector_sources'])==e['source_fingerprint'], 'Reuse source/header changed')
                 task=j.tasks[e['task_id']];require(all(task[k]==e[k] for k in ('identity','start','end')), 'Reuse exact identity/scope')
                 handoff._binding(j.binding,j.tasks,self.inventory,e['source_fingerprint'])
-                env,seal,_=handoff._seal(j,e['task_id'],j.snapshot(),self.inventory,e['source_fingerprint'])
-                ev=[v for v in j.events if v['kind']=='sealed' and v['data']==seal]
-                require(len(ev)==1 and ev[0]['record_sha256']==e['seal_sha256'] and seal['objects'][0]['sha256']==e['archive_sha256'], 'Reuse seal/archive binding')
-                old=j.binding['reviewed_bundles'][sid]['decision'];new=bundles[sid]['decision']
-                oldwin=sealed_history.review_interval(task,old)
+                if self.c['version'] == IMPORT_VERSION:
+                    env,oldwin=sealed_history.referenced_archive(j,e,self.inventory)
+                else:
+                    env,seal,_=handoff._seal(j,e['task_id'],j.snapshot(),self.inventory,e['source_fingerprint'])
+                    ev=[v for v in j.events if v['kind']=='sealed' and v['data']==seal]
+                    require(len(ev)==1 and ev[0]['record_sha256']==e['seal_sha256'] and seal['objects'][0]['sha256']==e['archive_sha256'], 'Reuse seal/archive binding')
+                    oldwin=sealed_history.review_interval(task,j.binding['reviewed_bundles'][sid]['decision'])
+                new=bundles[sid]['decision']
                 require(any(w['object_sha256']==oldwin['object_sha256'] and w['start']==oldwin['start'] and w['end']==oldwin['end'] for w in new['configuration_windows']), 'Reuse configuration contradiction')
                 intervals[sid].append((parse_utc(e['start']),parse_utc(e['end'])))
                 assets.append(dict(**e,original_retrieval_times=[p['retrieved_at_utc'] for p in env['pages']],
@@ -467,6 +500,7 @@ class Job:
         return dict(planned_tasks=len(planned),reused_seals=len(assets))
 
     def acquire(self,resume=False):
+        if self.c['version'] == IMPORT_VERSION: self.verify_import()
         require(self.has('review.json') and self.has('plan.json'), 'Explicit valid reviewed input/plan required')
         if resume:self.acknowledge_stop()
         plan=self.get('plan.json');review=self.get('review.json')
@@ -508,23 +542,71 @@ class Job:
                 self.put('stops/offline-boundary.json',dict(at=self.clock.now()))
         return dict(outcome='COMPLETE_FOR_DECLARED_SCOPE')
 
+    def verify_import(self):
+        from . import evidence_import as imported
+        require(self.c['enabled'], 'Imported execution config disabled')
+        validated = self.transfer_cache or imported.validate(self.c,self.inventory,now=self.clock.now())
+        self.transfer_cache = validated
+        require(self.has('import.json') and self.get('import.json') == validated[0] and
+                self.has('review.json') and self.get('review.json') == validated[0]['review'],
+                'Missing/changed imported job/review binding')
+        summary,buffers = imported.plan(self.c,self.inventory,validated)
+        require(all(self.has(n) and self.get(n) == buffers[n] for n in ('plan.json','plan-binding.json','asset-map.json')),
+                'Imported deterministic plan changed')
+        return summary
+
+    def import_authority(self):
+        from . import evidence_import as imported
+        require(self.c['version'] == IMPORT_VERSION, 'Explicit imported job required')
+        validated = self.transfer_cache or imported.validate(self.c,self.inventory,now=self.clock.now())
+        self.transfer_cache = validated
+        if self.has('import.json'): return self.verify_import()
+        require(not any(self.has(n) for n in ('review.json','plan.json','plan-binding.json','asset-map.json','history')),
+                'Partial import; preserve and review')
+        summary,buffers = imported.plan(self.c,self.inventory,validated)
+        self.put('import.json',validated[0]);self.put('review.json',validated[0]['review'])
+        self.replace_summary('catalog.json',self.series_catalog(validated[0]['review']['streams']))
+        for n in ('asset-map.json','plan.json','plan-binding.json'): self.put(n,buffers[n])
+        return dict(outcome='IMPORTED_REVIEWED_NO_REQUESTS',**summary)
+
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['inspect','prepare','metadata','review','acquire','resume','status','stop','recover-review'])
+    p.add_argument('mode',choices=['inspect','prepare','metadata','review','acquire','resume','status','stop','recover-review',
+                                'bind-import','validate-import','finalize-import','import-authority'])
     p.add_argument('config');p.add_argument('--review');p.add_argument('--allow-provider',action='store_true')
     p.add_argument('--offline-now')
     p.add_argument('--output-root')
+    p.add_argument('--donor-config');p.add_argument('--request');p.add_argument('--final-review');p.add_argument('--recovery')
+    p.add_argument('--output-config');p.add_argument('--job-root');p.add_argument('--enable',action='store_true')
     args=p.parse_args(argv)
     job=None
     try:
+        if args.mode in ('bind-import','finalize-import'):
+            from . import evidence_import as imported
+            require(not args.allow_provider and args.output_root is None and args.review is None,
+                    'Offline configuration operation only')
+            raw=read(Path(args.config).absolute());fixture=read(raw['fixture']['path']) if raw['fixture'] else None
+            clock=Clock(fixture,args.offline_now)
+            if args.mode=='bind-import':
+                require(all((args.donor_config,args.request,args.final_review,args.recovery,args.output_config,args.job_root)) and
+                        not args.enable, 'Complete explicit donor/review/output references required')
+                out=imported.bind(Path(args.config).absolute(),donor_config=args.donor_config,request=args.request,
+                    review=args.final_review,recovery_ref=args.recovery,output=Path(args.output_config).absolute(),
+                    job_root=args.job_root,now=clock.now())
+            else:
+                require(args.enable and args.output_config is not None, 'Explicit --enable and new output config required')
+                out=imported.finalize(Path(args.config).absolute(),Path(args.output_config).absolute(),now=clock.now())
+            print(encode(out).decode(),end='');return 0
+        require(not any((args.donor_config,args.request,args.final_review,args.recovery,args.output_config,args.job_root,args.enable)),
+                'Configuration binding arguments require bind-import/finalize-import')
         if args.mode == 'recover-review':
             require(args.output_root is not None and not args.allow_provider and args.offline_now is None and
                     args.review is None, 'Offline evidence output only; no provider/review/clock override')
             from .preparation_recovery import recover_review
             out = recover_review(Path(args.config).absolute(), Path(args.output_root).absolute())
             print(encode(out).decode(), end=''); return 0
-        require(args.output_root is None, 'Output root is only for offline recovery review')
+        require(args.output_root is None or args.mode=='validate-import', 'Output root is only for offline evidence export')
         c,inv=config(Path(args.config).absolute())
         fixture=read(c['fixture']['path']) if c['fixture'] else None
         if fixture is not None:
@@ -532,7 +614,9 @@ def main(argv=None):
                 if event.startswith('socket.'):raise Hold('Offline network attempt refused')
             sys.addaudithook(no_socket)
         if args.mode in ('metadata','acquire','resume'):
-            require(fixture is not None or (c['enabled'] and args.allow_provider),'Explicit enabled job and provider permission required')
+            require((c['enabled'] and (fixture is not None or args.allow_provider)) if c['version']==IMPORT_VERSION else
+                    fixture is not None or (c['enabled'] and args.allow_provider),'Explicit enabled job and provider permission required')
+            require(c['version']!=IMPORT_VERSION or args.mode!='metadata','Imported job forbids repeat metadata/witness requests')
             if fixture is None:
                 env=dict(os.environ,GIT_OPTIONAL_LOCKS='0',GIT_NO_LAZY_FETCH='1')
                 status=subprocess.check_output(['git','status','--short'],cwd=REPO,env=env,text=True).strip()
@@ -540,6 +624,19 @@ def main(argv=None):
                 subprocess.check_call(['git','ls-files','--error-unmatch','scripts/dendra/acquire_native.R',
                     'scripts/dendra/history_acquisition/local_job.py'],cwd=REPO,env=env,stdout=subprocess.DEVNULL)
         job=Job(c,inv,clock=Clock(fixture,args.offline_now),fixture=fixture)
+        job.config_path=Path(args.config).absolute()
+        if c['version']==IMPORT_VERSION and args.mode not in ('inspect','stop'):
+            from . import evidence_import as imported
+            job.transfer_cache=imported.validate(c,inv,now=job.clock.now())
+        if args.mode=='validate-import':
+            require(job.transfer_cache is not None and not args.allow_provider and args.review is None,
+                    'Offline imported configuration inspection required')
+            summary,buffers=imported.plan(c,inv,job.transfer_cache)
+            out=dict(outcome='VALIDATED_IMPORT_NO_INITIALIZATION',binding=job.transfer_cache[0],planning=summary,
+                     plan=buffers['plan.json'],asset_map=buffers['asset-map.json'],next_expiry=job.transfer_cache[0]['next_expiry'])
+            if args.output_root:
+                imported.write_new(Path(args.output_root).absolute()/'IMPORT_REVIEW_BINDING.json',out)
+            print(encode(out).decode(),end='');return 0
         if args.mode=='inspect':out=dict(outcome='INSPECTED_NO_DISPATCH',configuration=c)
         elif args.mode=='stop':
             with Root(job.root) as fs:
@@ -553,8 +650,10 @@ def main(argv=None):
                     if args.mode=='metadata':out=dict(outcome='REVIEW_REQUIRED',results=job.metadata())
                     elif args.mode=='review':
                         require(args.review is not None,'Review file required');out=job.review(Path(args.review).absolute())
+                    elif args.mode=='import-authority':out=job.import_authority()
                     elif args.mode in ('acquire','resume'):out=job.acquire(args.mode=='resume')
-                    else:out=dict(outcome='PREPARED_DISABLED' if args.mode=='prepare' else 'STATUS')
+                    else:out=dict(outcome=('PREPARED_AWAITING_IMPORT' if c['version']==IMPORT_VERSION else
+                                           'PREPARED_DISABLED') if args.mode=='prepare' else 'STATUS')
                     out['accounting']=job.accounting()
                     job.summary(out)
                 except (Hold,ValueError,KeyError,TypeError,OSError):
