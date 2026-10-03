@@ -21,9 +21,11 @@ live dispatch. Do not change configuration, source or authority inside a job.
 The supported selection is the reviewed 28-candidate CDFW cluster. Selection is
 not admission. Versions 1 and 2 retain the maximum scope
 `[2025-10-01T08:00:00Z,2026-10-01T08:00:00Z)`.
-Limits may only be reduced: 1,500 total attempts, at most 64 metadata/witness
-attempts, 1 GiB response bodies, and 7,200 seconds from the first durable provider
-reservation. The parent directory must already exist under the private task
+Whole-job limits may only be reduced: 1,500 total attempts, at most 64
+metadata/witness attempts, and 1 GiB response bodies. The original execution
+window lasts at most 7,200 seconds from the first durable provider reservation.
+Explicit continuation windows below preserve those cumulative ceilings.
+The parent directory must already exist under the private task
 evidence area. The new job destination must not exist when preparing it.
 
 The configured free-space reserve must be at least 8 MiB. Preparation checks
@@ -148,6 +150,61 @@ Versions 1/2 and shared-scope version 3 retain their exact serialized fields and
 meanings; existing jobs are never rewritten or reinterpreted. The focused scope
 tests cover three distinct historical starts, per-stream task boundaries,
 binding/expiry failures, and finite synthetic acquire/resume without refetch.
+
+## Explicit continuation execution windows
+
+For an existing version-3 or version-4 reviewed job, `continue-window` opens one
+additional execution window offline, under the existing exclusive writer lock:
+
+```sh
+Rscript --vanilla scripts/dendra/acquire_native.R continue-window /path/to/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R validate-scope /path/to/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R resume /path/to/config.json --allow-provider
+Rscript --vanilla scripts/dendra/acquire_native.R status /path/to/config.json
+```
+
+The prior window must have expired. The operation requires current original
+authority, exact immutable job/config/review/roster/scope/plan/metadata/placement
+bindings, no spent-unsealed or partially initialized children, and remaining
+unstarted tasks. Remaining attempts must cover three per remaining task; remaining
+bytes and storage must cover the next bounded child. The cumulative byte ceiling
+continues to apply and can still stop acquisition. A continuation is a time-window
+authorization, never a new scientific review, retry, budget refund or replacement
+job. At most 16 explicit continuation windows are supported; none opens implicitly.
+Versions 1/2 retain their previous semantics and do not support this operation.
+
+Each `continuation-windows/NNNN/opened.json` is created once, with its own checksum,
+previous-window hash, original artifact hashes, source provenance, cumulative
+accounting snapshot and remaining task ordinals. Its `opened_at` starts the new
+window; its deadline is that instant plus the existing configured duration
+(at most 7,200 seconds). `first_attempt_at` is initially null because opening makes
+no provider request. A separate immutable `first-attempt.json` records the first
+durable reservation, reconstructed from original Journals after a crash if needed.
+That later first attempt never extends the deadline. Original `window.json` remains
+unchanged. Status retains the original `accounting.window` and adds
+`continuation_windows` and the effective `execution_window` only for opted-in jobs.
+
+Sealed children are skipped. Every new child still uses the existing Journal,
+transport, page limits and current authority checks. Scope validation and dispatch
+check continuation history and immutable pins; expiry can stop a running window.
+An active-window ordinary resume behaves as before. A second `continue-window`
+while the latest window is active refuses, so the operator block must not reopen
+a window already prepared by the reviewer.
+
+An existing job may retain its original supervisor fingerprint after a compatible
+source update. This explicit path verifies the captured sources against local Git
+objects and permits changes only to `history_acquisition/local_job.py`; every
+captured parser, Journal, transport, science and R entrypoint byte must match.
+The opening record pins the current execution source. Original config, job ID,
+reviews, metadata, timestamps and seals are never rewritten. New child execution
+provenance derives only the executor fingerprint from that compatibility record;
+original acceptance and expiry are revalidated unchanged. Further execution-source
+changes require another explicit window after expiry. No branch/ref changes or
+network requests are performed by this compatibility check.
+
+`tests/dendra/test_continuation_windows.py` covers fresh-R continuation and
+supervisor compatibility, unchanged old seals/accounting, remaining-only execution,
+expiry, writer exclusion, budgets, spent work and altered window/authority pins.
 
 ## One catalog and durable source organization
 
