@@ -118,6 +118,37 @@ a fixed synthetic current interval, fresh R readback, rejected scope/roster/revi
 mutations, mandatory authority, dispatch-time expiry, and unchanged resume
 accounting. Synthetic acceptance never authorizes a real current-data job.
 
+## Exact per-stream reviewed scopes
+
+Version `dendra-local-native-job-4` adds the required `stream_scopes` object to
+the version-3 configuration fields. It maps every selected stream ID, and no
+others, to its exact canonical `{start,end}` half-open interval. Different
+starts and a common end are supported; different ends are also permitted.
+The existing `scope` field must equal the envelope from the earliest start to
+the latest end. That envelope is for reporting and grants no acquisition
+permission outside an individual stream's interval.
+
+Each source/native/placement review remains mandatory. Each stream's native and
+placement review scopes must equal its configured interval, and the original
+accepted input binds the complete config-derived job ID. `scope-binding.json`
+includes the exact `stream_scopes` map along with the existing identity, source,
+review, catalog, plan and reuse hashes. The planner requires the complete admitted
+map, subtracts compatible coverage per stream, and emits only tasks inside that
+stream's interval. Validation, acquire, resume and each observation dispatch
+enforce the individual bounds and original review bindings. Changing dates,
+swapping assignments, adding a held stream or widening one interval on resume
+fails closed before observation access. Expiry and the original provider window
+remain enforced during acquisition.
+
+Use the same R commands as version 3. `validate-scope` also returns the exact
+per-stream map for fresh-process readback. No automatic review or authority
+renewal is added. New metadata preparation starts that job's provider window;
+prepare a later wave offline and defer its metadata/review until it can run.
+Versions 1/2 and shared-scope version 3 retain their exact serialized fields and
+meanings; existing jobs are never rewritten or reinterpreted. The focused scope
+tests cover three distinct historical starts, per-stream task boundaries,
+binding/expiry failures, and finite synthetic acquire/resume without refetch.
+
 ## One catalog and durable source organization
 
 `catalog.json` is the one job series catalog. It begins pending and gains explicit

@@ -41,9 +41,10 @@ class ReviewedScopeTests(unittest.TestCase):
         self.review_time=format_utc(parse_utc(NOW)+timedelta(seconds=10))
         streams={};fp=digest(source_binding())
         for sid in self.c['streams']:
+            scope=l.stream_scope(self.c,sid)
             result=l.read(Path(self.c['root'])/'metadata.json')[sid];packet=result['metadata']['packet']
             nr=eligibility.propose(self.inv,encode(packet),packet_sha256=digest(packet),
-                packet_source_fingerprint=fp,executor_fingerprint=fp,**self.c['scope'])
+                packet_source_fingerprint=fp,executor_fingerprint=fp,**scope)
             nr.update(disposition='ACCEPT_NATIVE',reviewer_ref='SYNTHETIC_ONLY',reviewed_at=self.review_time,
                 expires_at=format_utc(parse_utc(NOW)+timedelta(hours=1)),acknowledgements=eligibility.ACKNOWLEDGEMENTS)
             sr=dict(rule=aw.REVIEW,disposition='ACCEPT_SOURCE_START',reviewer_ref='SYNTHETIC_ONLY',
@@ -52,9 +53,9 @@ class ReviewedScopeTests(unittest.TestCase):
                 station_metadata_sha256=packet['access_evidence']['station_metadata_sha256'],
                 configuration_evidence_sha256=digest(packet['configuration_evidence']),
                 depth_cm=self.inv.identity(sid)['depth_cm'],crs='EPSG:4326',
-                timestamp_meaning='UTC t; preserve native timestamps',scope=self.c['scope'],
+                timestamp_meaning='UTC t; preserve native timestamps',scope=scope,
                 evidence=[dict(path=str(self.dir/'fixture.json'),sha256=self.c['fixture']['sha256'])])
-            streams[sid]=dict(scope=self.c['scope'],native_review=nr,source_review=sr,placement_review=place)
+            streams[sid]=dict(scope=scope,native_review=nr,source_review=sr,placement_review=place)
         self.authority=dict(job_id=digest(self.c),streams=streams)
         self.write(self.dir/'review.json',self.authority)
 
@@ -194,6 +195,122 @@ class ReviewedScopeTests(unittest.TestCase):
         task=next(iter(prepared['tasks'].values()))
         self.assertEqual({k:task[k] for k in ('start','end')},CURRENT)
         self.assertEqual(self.r('validate-scope')['scope'],CURRENT)
+
+
+class PerStreamScopeTests(unittest.TestCase):
+    synthetic=helpers.RJobTests.synthetic
+    write=helpers.RJobTests.write
+    save=helpers.RJobTests.save
+    r=helpers.RJobTests.r
+    prepare_review=ReviewedScopeTests.prepare_review
+    ready=ReviewedScopeTests.ready
+    task_request=ReviewedScopeTests.task_request
+
+    def setUp(self):
+        helpers.RJobTests.setUp(self)
+        self.ids=[helpers.SID,helpers.SECOND,'63531a684b24f740d53623e6']
+        starts=['2021-07-09T20:20:00.000Z','2021-10-28T18:40:00.000Z','2023-06-09T20:10:00.000Z']
+        scopes={s:dict(start=t,end='2025-10-01T08:00:00.000Z') for s,t in zip(self.ids,starts)}
+        self.c.update(version=l.STREAM_SCOPED_VERSION,streams=self.ids,stream_scopes=scopes,
+                      scope=dict(start=starts[0],end=scopes[self.ids[0]]['end']))
+        self.c['attribution']={s:[] for s in self.ids}
+        self.fixture=self.synthetic(self.ids);self.fixture['now']=NOW
+        for rows in self.fixture['datastreams'].values():
+            for row in rows['data']:row['datapoints_config']=[dict(begins_at=starts[0])]
+        for sid in self.ids:self.fixture['witnesses'][sid]['data'][0]['t']=scopes[sid]['start']
+
+    def test_exact_map_planner_and_fresh_r_readback(self):
+        self.ready();out=self.r('validate-scope');root=Path(self.c['root'])
+        self.assertEqual(out['stream_scopes'],self.c['stream_scopes'])
+        self.assertEqual(self.r('inspect')['configuration']['stream_scopes'],self.c['stream_scopes'])
+        self.assertEqual(l.read(root/'scope-binding.json')['stream_scopes'],self.c['stream_scopes'])
+        tasks=l.read(root/'plan.json')['tasks'];self.assertEqual(len(tasks),129)
+        for sid,scope in self.c['stream_scopes'].items():
+            selected=[t for t in tasks if t['stream_id']==sid]
+            self.assertEqual(selected[0]['start'],scope['start']);self.assertEqual(selected[-1]['end'],scope['end'])
+            self.assertTrue(all(scope['start']<=t['start']<t['end']<=scope['end'] for t in selected))
+            self.assertTrue(all(a['end']==b['start'] for a,b in zip(selected,selected[1:])))
+            self.assertEqual(l.read(root/'catalog.json')['streams'][sid]['scope'],scope)
+
+    def test_unmatched_review_maps_rosters_held_and_hashes(self):
+        self.prepare_review();before=self.r('status')['accounting'];cases=[]
+        for start in ('2021-07-08T20:20:00.000Z','2021-07-10T20:20:00.000Z'):
+            r=copy.deepcopy(self.authority);r['streams'][self.ids[0]]['scope']['start']=start;cases.append(r)
+        r=copy.deepcopy(self.authority)
+        a,b=self.ids[:2];r['streams'][a]['scope'],r['streams'][b]['scope']=r['streams'][b]['scope'],r['streams'][a]['scope'];cases.append(r)
+        r=copy.deepcopy(self.authority);del r['streams'][a];cases.append(r)
+        r=copy.deepcopy(self.authority);r['streams']['63531a688f3bc3f3df655be6']=r['streams'][a];cases.append(r)
+        for field in ('native_review','placement_review','source_review'):
+            r=copy.deepcopy(self.authority);r['streams'][a][field]['disposition']='HOLD';cases.append(r)
+        r=copy.deepcopy(self.authority);r['streams'][a]={'disposition':'EXCLUDE'};cases.append(r)
+        for field,key in (('native_review','packet_sha256'),('source_review','evidence_sha256'),
+                          ('placement_review','configuration_evidence_sha256')):
+            r=copy.deepcopy(self.authority);r['streams'][a][field][key]='0'*64;cases.append(r)
+        for n,r in enumerate(cases):
+            with self.subTest(case=n):
+                self.write(self.dir/'review.json',r);self.r('review','--review',self.dir/'review.json',code=2)
+                self.assertFalse((Path(self.c['root'])/'review.json').exists())
+        self.r('acquire',code=2);self.assertEqual(self.r('status')['accounting'],before)
+        self.assertFalse((Path(self.c['root'])/'history').exists())
+
+    def test_config_only_change_and_resume_single_stream_widening(self):
+        self.ready();original=copy.deepcopy(self.c);before=self.r('status')['accounting'];cases=[]
+        for start in ('2021-10-27T18:40:00.000Z','2021-10-29T18:40:00.000Z'):
+            c=copy.deepcopy(original);c['stream_scopes'][self.ids[1]]['start']=start;cases.append(c)
+        c=copy.deepcopy(original);c['scope']['end']='2025-10-02T08:00:00.000Z';cases.append(c)
+        c=copy.deepcopy(original);a,b=self.ids[:2];c['stream_scopes'][a],c['stream_scopes'][b]=c['stream_scopes'][b],c['stream_scopes'][a];cases.append(c)
+        c=copy.deepcopy(original);c['streams']=c['streams'][:-1];cases.append(c)
+        c=copy.deepcopy(original);c['streams'].append('63531a688f3bc3f3df655be6');cases.append(c)
+        c=copy.deepcopy(original);del c['stream_scopes'][self.ids[1]];cases.append(c)
+        for n,c in enumerate(cases):
+            with self.subTest(case=n):
+                self.write(self.dir/'config.json',c)
+                for mode in ('validate-scope','acquire','resume'):self.r(mode,code=2)
+        self.write(self.dir/'config.json',original)
+        self.assertEqual(self.r('status')['accounting'],before)
+        self.assertFalse((Path(self.c['root'])/'history').exists())
+
+    def test_plan_bounds_dispatch_expiry_and_authority_binding(self):
+        self.ready();root=Path(self.c['root']);before=self.r('status')['accounting']
+        originals={n:(root/n).read_bytes() for n in ('plan.json','plan-binding.json','scope-binding.json')}
+        for case in ('before_stream_start','after_stream_end','held_stream','authority_map'):
+            with self.subTest(case=case):
+                plan=l.read(root/'plan.json');binding=l.read(root/'scope-binding.json')
+                task=next(t for t in plan['tasks'] if t['stream_id']==self.ids[1])
+                if case=='before_stream_start':task['start']=self.c['scope']['start']
+                elif case=='after_stream_end':task['end']='2025-10-02T08:00:00.000Z'
+                elif case=='held_stream':task['stream_id']='63531a688f3bc3f3df655be6'
+                else:binding['stream_scopes'][self.ids[1]]['start']=self.c['scope']['start']
+                self.write(root/'plan.json',plan);self.write(root/'plan-binding.json',dict(sha256=digest(plan)))
+                # Also recompute outer plan checksum to exercise the explicit
+                # per-stream bounds rather than only checksum mismatch.
+                binding['plan_sha256']=digest(plan);self.write(root/'scope-binding.json',binding)
+                for mode in ('acquire','resume'):self.r(mode,code=2)
+                for n,body in originals.items():(root/n).write_bytes(body)
+        late=format_utc(parse_utc(NOW)+timedelta(hours=1,milliseconds=1))
+        for mode in ('acquire','resume','validate-scope'):self.r(mode,'--offline-now',late,code=2)
+        job=l.Job(self.c,self.inv,fixture=self.fixture,clock=l.Clock(self.fixture,self.review_time))
+        job.config_path=self.dir/'config.json'
+        with job.open():
+            sid=self.ids[1];scope=self.c['stream_scopes'][sid]
+            for start,end in ((self.c['scope']['start'],scope['end']),
+                              (scope['start'],'2025-10-02T08:00:00.000Z')):
+                with self.assertRaises(Hold):job.dispatch(self.task_request(sid=sid,start=start,end=end),25)
+            job.clock.value=parse_utc(late)
+            with self.assertRaises(Hold):job.dispatch(self.task_request(sid=sid,**scope),25)
+        self.assertEqual(self.r('status')['accounting'],before)
+        self.assertFalse((root/'history').exists())
+
+    def test_three_stream_acquire_resume_no_repeat(self):
+        # Small complete execution complements the 129-task planning fixture.
+        for sid,scope in self.c['stream_scopes'].items():
+            scope['end']=format_utc(parse_utc(scope['start'])+timedelta(days=1))
+            self.fixture['history'][scope['start']]=dict(data=[],limit=2016)
+        self.c['scope']['end']=max(s['end'] for s in self.c['stream_scopes'].values())
+        self.ready();out=self.r('acquire');self.assertEqual(out['outcome'],'COMPLETE_FOR_DECLARED_SCOPE')
+        self.assertEqual(out['accounting']['sealed'],3);self.assertEqual(out['accounting']['attempts'],9)
+        self.assertEqual(self.r('resume')['accounting'],out['accounting'])
+        self.assertEqual(self.r('validate-scope')['stream_scopes'],self.c['stream_scopes'])
 
 
 if __name__=='__main__':unittest.main()

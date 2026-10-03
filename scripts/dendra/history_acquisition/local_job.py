@@ -27,6 +27,8 @@ from ..transport import parse_utc, format_utc
 VERSION = "dendra-local-native-job-1"
 IMPORT_VERSION = "dendra-local-native-job-2"
 SCOPED_VERSION = "dendra-local-native-job-3"
+STREAM_SCOPED_VERSION = "dendra-local-native-job-4"
+REVIEWED_VERSIONS = (SCOPED_VERSION, STREAM_SCOPED_VERSION)
 REPO = Path(__file__).resolve().parents[3]
 ENTRY = REPO / "scripts/dendra/acquire_native.R"
 LIMITS = dict(attempts=1500, metadata_attempts=64, bytes=1073741824, seconds=7200)
@@ -55,7 +57,7 @@ def sources():
 
 def config(path):
     c = read(path)
-    if c.get("version") in (IMPORT_VERSION, SCOPED_VERSION):
+    if c.get("version") in (IMPORT_VERSION, *REVIEWED_VERSIONS):
         with Root(Path(path).parent) as fs:
             require(fs.read(Path(path).name,8*BODY) == encode(c), "Canonical serialized execution config required")
     return _config(c, sources())
@@ -67,10 +69,11 @@ def _config(c, expected_sources):
                       "reserve_bytes", "root", "sources", "enabled", "fixture", "reuse",
                       "attribution", "organization_labels"}
     if c.get("version") == IMPORT_VERSION: fields.add("authority_import")
+    if c.get("version") == STREAM_SCOPED_VERSION: fields.add("stream_scopes")
     require(set(c) == fields, "Exact job configuration fields")
-    require(c["version"] in (VERSION,IMPORT_VERSION,SCOPED_VERSION) and c["sources"] == expected_sources, "Job source/checkpoint changed")
+    require(c["version"] in (VERSION,IMPORT_VERSION,*REVIEWED_VERSIONS) and c["sources"] == expected_sources, "Job source/checkpoint changed")
     require(type(c["enabled"]) is bool, "Explicit job permission required")
-    if c["version"] == SCOPED_VERSION:
+    if c["version"] in REVIEWED_VERSIONS:
         scope=c["scope"]
         require(set(scope)=={'start','end'} and all(format_utc(parse_utc(scope[k]))==scope[k] for k in scope) and
                 parse_utc(scope['start'])<parse_utc(scope['end']), "Exact canonical half-open scope required")
@@ -83,6 +86,15 @@ def _config(c, expected_sources):
     require(sha(Path(c['catalog']).read_bytes()) == c['catalog_sha256'], 'Original metadata catalog changed')
     require(isinstance(c["streams"], list) and 0 < len(c["streams"]) <= 28 and
             len(set(c["streams"])) == len(c["streams"]), "Exact unique bounded selection")
+    if c['version'] == STREAM_SCOPED_VERSION:
+        scopes=c['stream_scopes']
+        require(isinstance(scopes,dict) and set(scopes)==set(c['streams']), 'Exact per-stream scope roster required')
+        for scope in scopes.values():
+            require(isinstance(scope,dict) and set(scope)=={'start','end'} and
+                    all(format_utc(parse_utc(scope[k]))==scope[k] for k in scope) and
+                    parse_utc(scope['start'])<parse_utc(scope['end']), 'Exact canonical per-stream interval required')
+        require(c['scope']==dict(start=min(s['start'] for s in scopes.values()),
+                                end=max(s['end'] for s in scopes.values())), 'Job envelope differs from per-stream scopes')
     for sid in c["streams"]:
         ident = inv.identity(sid)
         require(sid in CDFW.get(ident["station_id"], []) and ident["native_unit"] == "Percent", "Outside CDFW selection")
@@ -100,6 +112,12 @@ def _config(c, expected_sources):
         require(set(c["fixture"]) == {"path", "sha256"} and
                 sha(Path(c["fixture"]["path"]).read_bytes()) == c["fixture"]["sha256"], "Offline fixture binding")
     return c, inv
+
+
+def stream_scope(c, sid):
+    """The reporting envelope grants no per-stream permission in version 4."""
+    require(sid in c['streams'], 'Stream outside configured roster')
+    return c['stream_scopes'][sid] if c['version']==STREAM_SCOPED_VERSION else c['scope']
 
 
 def pointer(document, value):
@@ -194,7 +212,7 @@ class Job:
         for sid in self.c['streams']:
             identity=self.inventory.identity(sid)
             review=(reviews or {}).get(sid,{})
-            scope=review.get('scope',self.c['scope'])
+            scope=review.get('scope',stream_scope(self.c,sid))
             configuration=review.get('native_review',{}).get('configuration_evidence_sha256')
             series_key=digest(dict(identity=identity,scope=scope,configuration=configuration))
             rows[sid]=dict(series_key=series_key,identity=identity,scope=scope,
@@ -330,7 +348,7 @@ class Job:
         # Journal reservation/start are already durable. This marker is NOT a
         # second request ledger: reconstruct the first reservation after close.
         require(self.c["fixture"] is not None or self.c["enabled"], "Live job disabled")
-        if self.c['version'] == SCOPED_VERSION:
+        if self.c['version'] in REVIEWED_VERSIONS:
             require(self.config_path is not None and config(self.config_path)[0] == self.c,
                     'Runtime execution configuration changed')
             url=urlsplit(request.full_url); q=parse_qs(url.query)
@@ -340,6 +358,10 @@ class Job:
                         len(q.get('time[$gte]',[]))==len(q.get('time[$lt]',[]))==1,
                         'Reviewed history request identity/interval required')
                 sid=q['datastream_id'][0];lo=parse_utc(q['time[$gte]'][0]);hi=parse_utc(q['time[$lt]'][0])
+                if self.c['version']==STREAM_SCOPED_VERSION:
+                    scope=stream_scope(self.c,sid)
+                    require(parse_utc(scope['start'])<=lo<hi<=parse_utc(scope['end']),
+                            'Dispatch outside exact per-stream scope')
                 require(any(t['stream_id']==sid and parse_utc(t['start'])<=lo<hi==parse_utc(t['end'])
                             for t in self.get('plan.json')['tasks']), 'Dispatch outside bound plan')
             else:
@@ -427,14 +449,14 @@ class Job:
         bundles={}; scopes={}
         for sid,item in r['streams'].items():
             if item == {'disposition':'EXCLUDE'}:
-                require(self.c['version'] != SCOPED_VERSION, 'Exact admitted roster cannot contain excluded/held streams')
+                require(self.c['version'] not in REVIEWED_VERSIONS, 'Exact admitted roster cannot contain excluded/held streams')
                 continue
             bundle,scope=self.review_stream(sid,item); bundles[sid]=bundle;scopes[sid]=scope
         require(bundles, 'No reviewed eligible stream')
         self.put('review.json',r)
         self.replace_summary('catalog.json',self.series_catalog(r['streams']))
         result=self.make_plan(bundles,scopes)
-        if self.c['version'] == SCOPED_VERSION:
+        if self.c['version'] in REVIEWED_VERSIONS:
             with Root(path.parent) as fs: body=fs.read(path.name,8*BODY)
             require(decode(body)==r, 'Reviewed input changed during binding')
             self.put('scope-binding.json',self.scope_binding(dict(path=str(path),sha256=sha(body))))
@@ -442,12 +464,14 @@ class Job:
 
     def scope_binding(self, review_ref):
         """Immutable link to the original accepted input, not a new request ledger."""
-        return dict(version=SCOPED_VERSION,job_id=digest(self.c),configuration_sha256=digest(self.c),
+        binding=dict(version=self.c['version'],job_id=digest(self.c),configuration_sha256=digest(self.c),
             sources=self.c['sources'],scope=self.c['scope'],
             identities=[self.inventory.identity(s) for s in self.c['streams']],
             review_input=review_ref,review_sha256=digest(self.get('review.json')),
             catalog_sha256=digest(self.get('catalog.json')),plan_sha256=digest(self.get('plan.json')),
             asset_map_sha256=digest(self.get('asset-map.json')))
+        if self.c['version']==STREAM_SCOPED_VERSION: binding['stream_scopes']=self.c['stream_scopes']
+        return binding
 
     def verify_scope(self):
         """Recheck scope, original acceptance and currentness before any history dispatch."""
@@ -468,9 +492,18 @@ class Job:
                 self.get('plan-binding.json')==dict(sha256=digest(plan)), 'Bound plan/review changed')
         for sid in self.c['streams']:
             self.review_stream(sid,review['streams'][sid])
+        if self.c['version']==STREAM_SCOPED_VERSION:
+            for task in plan['tasks']:
+                scope=stream_scope(self.c,task['stream_id'])
+                require(parse_utc(scope['start'])<=parse_utc(task['start'])<parse_utc(task['end'])<=parse_utc(scope['end']),
+                        'Bound task outside exact per-stream scope')
+                require(task['series_metadata_reference']==dict(path='catalog.json',stream_id=task['stream_id']),
+                        'Bound task metadata identity changed')
         require(self.get('catalog.json')==self.series_catalog(review['streams']), 'Bound metadata/placement/attribution changed')
-        return dict(outcome='VALIDATED_REVIEWED_SCOPE_NO_DISPATCH',job_id=digest(self.c),
+        result=dict(outcome='VALIDATED_REVIEWED_SCOPE_NO_DISPATCH',job_id=digest(self.c),
                     scope=self.c['scope'],streams=self.c['streams'],planned_tasks=len(plan['tasks']))
+        if self.c['version']==STREAM_SCOPED_VERSION: result['stream_scopes']=self.c['stream_scopes']
+        return result
 
     def review_stream(self,sid,item):
         if self.c['version'] == IMPORT_VERSION:
@@ -482,8 +515,8 @@ class Job:
             return bundle,scope
         require(set(item)=={'source_review','native_review','placement_review','scope'}, 'Explicit source/native/placement review required')
         scope=item['scope']; lo,hi=map(parse_utc,(scope['start'],scope['end']))
-        if self.c['version'] == SCOPED_VERSION:
-            require(scope==self.c['scope'], 'Review differs from exact configured scope')
+        if self.c['version'] in REVIEWED_VERSIONS:
+            require(scope==stream_scope(self.c,sid), 'Review differs from exact configured scope')
         else:
             require(parse_utc(SCOPE['start']) <= lo < hi <= parse_utc(SCOPE['end']), 'Review outside approved WY2026')
         root=self.root/'authority';package=read(root/'package.json');station=self.inventory.identity(sid)['station_id']
@@ -536,6 +569,9 @@ class Job:
         return intervals,assets
 
     def make_plan(self,bundles,scopes):
+        if self.c['version']==STREAM_SCOPED_VERSION:
+            require(set(bundles)==set(self.c['streams']) and scopes==self.c['stream_scopes'],
+                    'Planner requires exact admitted per-stream scopes')
         reused,assets=self.reused(bundles);planned=[]
         for sid in self.c['streams']:
             if sid not in bundles:continue
@@ -564,7 +600,7 @@ class Job:
 
     def acquire(self,resume=False):
         if self.c['version'] == IMPORT_VERSION: self.verify_import()
-        if self.c['version'] == SCOPED_VERSION: self.verify_scope()
+        if self.c['version'] in REVIEWED_VERSIONS: self.verify_scope()
         require(self.has('review.json') and self.has('plan.json'), 'Explicit valid reviewed input/plan required')
         if resume:self.acknowledge_stop()
         plan=self.get('plan.json');review=self.get('review.json')
@@ -716,7 +752,7 @@ def main(argv=None):
                         require(args.review is not None,'Review file required');out=job.review(Path(args.review).absolute())
                     elif args.mode=='import-authority':out=job.import_authority()
                     elif args.mode=='validate-scope':
-                        require(c['version']==SCOPED_VERSION and not args.allow_provider,
+                        require(c['version'] in REVIEWED_VERSIONS and not args.allow_provider,
                                 'Offline reviewed-scope validation required')
                         out=job.verify_scope()
                     elif args.mode in ('acquire','resume'):out=job.acquire(args.mode=='resume')
