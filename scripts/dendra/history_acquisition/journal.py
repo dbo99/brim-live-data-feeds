@@ -43,8 +43,11 @@ class Journal:
         try:
             require(not (inspect_only and create), "Inspection cannot initialize state")
             if inspect_only:
-                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter"),
+                require(binding["mode"] in ("offline_only", "d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter", "program_native_archive_adapter"),
                         "Unsupported historical journal format")
+            elif binding["mode"] == "program_native_archive_adapter":
+                from .native_program import validate_binding
+                validate_binding(binding, tasks, inventory=inventory)
             elif binding["mode"] == "latest_evidence_adapter":
                 from .latest_observation import validate_binding, validate_storage
                 validate_binding(binding, tasks, inventory=inventory)
@@ -70,7 +73,7 @@ class Journal:
                 validate_binding(binding, tasks)
             if not inspect_only:
                 require(binding["collector_sources"] == source_binding(), "Collector source binding changed")
-            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter"):
+            if not inspect_only and binding["mode"] not in ("campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter", "program_native_archive_adapter"):
                 require(all(k == digest(t) and t["campaign_sha256"] == digest(binding) and
                         t["identity"] == binding["roster"].get(t["identity"]["stream_id"]) and
                         t["identity"]["stream_id"] in binding["selected_ids"]
@@ -332,7 +335,7 @@ class Journal:
     def start_run(self, key, *, recheck=False):
         require(key in self.tasks, "Unplanned interval")
         state = self.snapshot()["intervals"][key]
-        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter"):
+        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter", "program_native_archive_adapter"):
             require(not recheck and not state["complete"], "Campaign seals are immutable; use fresh authorized state")
             require(not any(a["interval_key"] == key for a in self.snapshot()["attempts"].values()),
                     "Unsealed spent attempt requires operator review; retries are zero")
@@ -386,7 +389,7 @@ class Journal:
             require(not starts or (parse_utc(self.now()) - parse_utc(starts[-1]["at"])).total_seconds() >= 1,
                     "Witness request-start spacing")
             require(len(self.events) + 6 <= MAX_PLAN, "Journal capacity before witness dispatch")
-        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter"):
+        if self.binding["mode"] in ("campaign_reviewed_adapter", "task37_recovery_adapter", "program_native_archive_adapter"):
             require(interval_key is not None and not prior, "Campaign permits observations only and zero retries")
             require(not any(a.get("status") == 429 or a.get("service_failure") or
                         a.get("details", {}).get("error_code") in ("transport", "deadline")
@@ -467,7 +470,7 @@ class Journal:
             if self.binding["mode"] == "temporal_metadata_adapter":
                 require(not retain and details["kind"] in ("unit-vocabulary", "station", "datastream-list"),
                         "Temporal metadata receipts retain sanitized objects only")
-            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter"),
+            require(self.binding["mode"] in ("d3_explicit_adapter", "campaign_reviewed_adapter", "task37_recovery_adapter", "authority_witness_adapter", "temporal_metadata_adapter", "history_diagnostic_adapter", "latest_evidence_adapter", "program_native_archive_adapter"),
                     "Provider receipt extension only")
             require(sanitized_body is None or (not retain and
                     self.snapshot()["attempts"][key]["interval_key"] is None and
@@ -500,6 +503,9 @@ class Journal:
 
     def seal(self, key, run, envelope, attempt_keys):
         """Only a complete single-run source envelope may advance coverage."""
+        if self.binding["mode"] == "program_native_archive_adapter":
+            from .native_program import seal
+            return seal(self, key, run, envelope, attempt_keys)
         require(self.binding["mode"] != "history_diagnostic_adapter", "Diagnostic sealing forbidden")
         if self.binding["mode"] == "task37_recovery_adapter":
             from .recovery import authorize
@@ -585,6 +591,8 @@ class Journal:
         return None
 
     def daily_evidence(self, key, date, evidence_sha256):
+        require(self.binding['mode'] != 'program_native_archive_adapter',
+                'Native-only archive cannot receive accepted daily evidence; separate reviewed promotion required')
         from datetime import date as civil_date
         from .model import HASH
         require(civil_date.fromisoformat(date).isoformat() == date, "Civil date required")

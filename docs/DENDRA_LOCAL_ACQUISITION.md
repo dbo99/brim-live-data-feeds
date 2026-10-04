@@ -7,6 +7,11 @@ evidence only. It does not produce daily science, browser feeds, or publication.
 The acquisition and scientific rules in [DENDRA_HISTORY_CAMPAIGN.md](DENDRA_HISTORY_CAMPAIGN.md)
 remain controlling. Public contracts, scheduled feeds and historical launchers are unchanged.
 
+Dendra tasks that interpret native objects, assemble histories, generate
+normalized/native-resolution tables or daily products, migrate archives, or
+prepare consumer fixtures must read and comply with the
+[Dendra data storage and time-series assembly contract](DENDRA_DATA_STORAGE_AND_TIMESERIES_CONTRACT.md).
+
 ## Configuration and source gate
 
 Use one explicit, private configuration for one job. Version
@@ -368,3 +373,81 @@ finite synthetic donor responses and network denial, including enabled config
 binding, nonempty/valid-empty completion, reuse, interruption, spent crashes,
 limits, writer exclusion and negative review/evidence/config cases. Test artifacts
 stay under `DENDRA_TEST_ROOT`; no real donor or archive is rewritten.
+
+## Exact-family native archives and metadata quarantine
+
+Version `dendra-local-native-job-5` adds an explicit family, station roster,
+stream roster and per-stream interval binding. It does not change versions 1–4.
+It accepts a checksum-bound private metadata catalog whose original provider
+records establish exact stream/station/organization identity, public access,
+soil-moisture measurement, native unit identity and a bounded query start.
+An earliest provider configuration date is labelled as a query bound; it is not
+proof of an observed period-of-record start. Retained first-observation witnesses
+must join the exact stream, station and native unit. Sample cadence must resolve
+to that stream's provider field before it can determine task sizes.
+
+Scientific acceptance and permission to preserve native observations are separate.
+`SCIENCE_READY` requires a retained accepted exact-stream review. Unresolved
+geometry, interpretation or configuration instead produces
+`NATIVE_ONLY_UNRESOLVED_METADATA`; acquisition never supplies missing scientific
+facts. Quarantine keeps `depth_cm` null, with original provider depth claims and
+other join keys retained separately in the catalog and raw metadata. Excluded,
+private/hidden or otherwise unqueryable records cannot enter the execution roster.
+
+Both science-ready and quarantined acquisitions use the distinct
+`dendra-native-only-envelope-1` format with `product_eligible=false`. These native
+objects retain original row values, units through the exact metadata reference,
+timestamp strings, nulls, duplicates and supported provider quality fields. They
+are not accepted daily or latest observations. Existing daily handoff, sealed
+history, latest and browser export validators reject this format; the Journal
+also refuses accepted daily-evidence entries. There is no promotion command.
+Any later interpreted product requires a separate reviewed mapping and supported
+product adapter. Display names, model numbers and neighboring streams cannot
+supply depth. No Parquet, daily table, public feed or consumer fixture is produced.
+
+The config pins metadata, science/acquisition states, exact intervals, original
+reuse references and executor source. `asset-map.json` and per-seal metadata
+references resolve streams without filename parsing. Reuse checks original
+Journal manifests, task identities/intervals, receipts, seals and object hashes;
+complete-valid-empty coverage is reusable. Failed, spent-unsealed and unqueried
+intervals remain distinct. Old assets and accounting are never moved or rewritten.
+Adding source modules changes the collector fingerprint: old jobs remain available
+for read-only inspection, but their live continuation requires its existing
+source-compatibility checks and is not implied by version-5 support.
+
+Each job has at most 28 streams and 400 logical tasks, with three attempts per
+task, no automatic retries, at most 1,500 cumulative attempts and 1 GiB cumulative
+response bodies. Each child retains the existing 8 MiB object limit and 300-second
+budget. Task intervals are at most 30 days and 4,030 source-cadence periods. Use
+12,600-second execution windows for large waves. Preparation opens no window;
+the first durable reservation starts it. A new child is deferred when less than
+301 seconds remain. An expired clean window can be continued explicitly, up to
+16 times, without renewing metadata, refunding attempts or changing old windows.
+There must be executable remaining tasks and cumulative capacity. Fully accounted
+terminal access responses can hold one stream; ambiguous or spent incomplete
+responses stop the job for review. Stop signals are checked between children.
+
+Use the same ordinary R supervisor with an exact version-5 config:
+
+```sh
+Rscript --vanilla scripts/dendra/acquire_native.R inspect .l01-soil-integration/task/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R prepare .l01-soil-integration/task/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R validate-scope .l01-soil-integration/task/config.json
+Rscript --vanilla scripts/dendra/acquire_native.R acquire .l01-soil-integration/task/config.json --allow-provider
+Rscript --vanilla scripts/dendra/acquire_native.R status .l01-soil-integration/task/config.json
+```
+
+`resume --allow-provider` acknowledges a stop and continues only unattempted tasks
+within the current window. After a clean expired window, use `continue-window`,
+then `resume --allow-provider` and `status`. Config bytes cannot change after
+initialization. A disabled proposal must be finalized and source-bound before
+creating the execution job; an existing job cannot be enabled by editing its
+config. Live acquisition and continuation require a clean committed checkout
+and explicit operator authorization. Metadata snapshot age does not create or
+renew scientific authority in this native-only version. It grants no automatic
+scientific admission, metadata refresh or older-job authority renewal.
+
+`tests/dendra/test_native_program.py` covers mixed states, exact bindings,
+quarantine/product rejection, raw-value preservation, empty coverage, crash/stop
+recovery, continuation, accounting isolation and fresh R-process readback with
+synthetic responses and network denial.

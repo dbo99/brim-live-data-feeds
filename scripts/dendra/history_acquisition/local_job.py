@@ -158,7 +158,7 @@ def _config(c, expected_sources):
 
 def execution_window_seconds(c):
     """Opt-in duration; omitted fields preserve every legacy time limit."""
-    return c.get('execution_window_seconds', c['limits']['seconds'])
+    return c['execution_window_seconds'] if 'execution_window_seconds' in c else c['limits']['seconds']
 
 
 def stream_scope(c, sid):
@@ -889,6 +889,11 @@ def main(argv=None):
     args=p.parse_args(argv)
     job=None
     try:
+        if read(Path(args.config).absolute()).get('version') == 'dendra-local-native-job-5':
+            from . import native_program
+            out = native_program.main(args)
+            print(encode(out).decode(), end='')
+            return 0
         if args.mode in ('bind-import','finalize-import'):
             from . import evidence_import as imported
             require(not args.allow_provider and args.output_root is None and args.review is None,

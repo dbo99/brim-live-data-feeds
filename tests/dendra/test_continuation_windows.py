@@ -142,7 +142,8 @@ class ContinuationWindowTests(unittest.TestCase):
 
     def test_prior_committed_supervisor_same_job_fresh_r_continuation(self):
         # Build synthetic capture using the genuine predecessor fingerprint.
-        # Only its local_job.py bytes differ; no checkout file is replaced.
+        # No checkout file is replaced. The positive historical-checkpoint
+        # case exists only when every other collector file matches HEAD.
         path=l.REPO/'scripts/dendra/history_acquisition/local_job.py'
         old=subprocess.check_output(['git','show','HEAD:scripts/dendra/history_acquisition/local_job.py'],cwd=l.REPO)
         real_read=Path.read_bytes
@@ -156,8 +157,25 @@ class ContinuationWindowTests(unittest.TestCase):
         with patch.object(Path,'read_bytes',capture_bytes):
             self.setUp();self.r=in_process;self.ready()
         del self.r
-        self.assertNotEqual(self.c['sources']['collector'],l.sources()['collector'])
-        oldbytes=self.preserved();self.expired();out=self.r('continue-window')
+        if self.c['sources']['collector']==l.sources()['collector']:
+            self.skipTest('No supervisor-only source change exists at this checkpoint')
+        oldbytes=self.preserved();self.expired()
+        committed_paths=subprocess.check_output(['git','ls-tree','-r','--name-only','HEAD','--',
+            'scripts/dendra'],cwd=l.REPO,text=True).splitlines()
+        committed={p.removeprefix('scripts/dendra/') for p in committed_paths if
+            p.startswith('scripts/dendra/history_acquisition/') and p.endswith('.py') or
+            p in ('scripts/dendra/transport.py','scripts/dendra/core.R')}
+        current=l.source_binding()
+        closure_matches=(set(current)==committed and all(
+            k=='history_acquisition/local_job.py' or sha(subprocess.check_output(
+                ['git','show','HEAD:scripts/dendra/'+k],cwd=l.REPO))==v for k,v in current.items()))
+        if not closure_matches:
+            out=self.r('continue-window',code=2)
+            self.assertIn('Historical collector',out['reason'])
+            self.assertFalse((self.root/'continuation-windows').exists())
+            self.assertEqual(self.preserved(),oldbytes)
+            return
+        out=self.r('continue-window')
         self.assertEqual(out['window']['job_id'],digest(self.c))
         self.assertEqual(self.preserved(),oldbytes)
         self.r('validate-scope');done=self.r('resume')
