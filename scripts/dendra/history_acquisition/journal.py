@@ -394,7 +394,13 @@ class Journal:
             require(not any(a.get("status") == 429 or a.get("service_failure") or
                         a.get("details", {}).get("error_code") in ("transport", "deadline")
                         for a in attempts.values()), "Campaign paused after service/transport failure")
-            require(len([a for a in attempts.values() if a["interval_key"] == interval_key]) < 3,
+            ceiling = 3
+            if self.binding["mode"] == "program_native_archive_adapter" and "pagination_recovery" in self.binding:
+                from .native_program import validate_recovery_binding
+                validate_recovery_binding(self.binding, self.tasks)
+                ceiling = self.binding["budgets"]["attempts"]
+                require(type(ceiling) is int and 1 <= ceiling <= 32, "Bounded reviewed recovery page ceiling")
+            require(len([a for a in attempts.values() if a["interval_key"] == interval_key]) < ceiling,
                     "Campaign page ceiling")
             # Reserve sufficient ledger capacity for started, received, failure/hold
             # or seal; never dispatch with an already exhausted event ledger.

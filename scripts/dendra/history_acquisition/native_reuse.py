@@ -140,6 +140,91 @@ def _completed(journal, key, state):
     return envelope, seal, receipts
 
 
+def observed_density(row, ref):
+    """A minimum positive observed spacing from exact immutable native receipts.
+
+    Failed intervals can supply actual timestamp evidence, never reusable
+    coverage. A current sample_interval field is deliberately not consulted.
+    """
+    require(set(ref)=={'root','campaign_id','task_id','header_sha256','source_fingerprint','last_anchor_sha256'},
+            'Exact observed-density Journal reference required')
+    with recovery.open_evidence(ref['root'],ref['campaign_id'],None) as j:
+        j.verify_records();s=j.snapshot()
+        require(not s['damage'] and j.header_sha==ref['header_sha256'] and
+                digest(j.binding['collector_sources'])==ref['source_fingerprint'] and
+                j.events[-1]['record_sha256']==ref['last_anchor_sha256'] and ref['task_id'] in j.tasks,
+                'Observed-density source/header/anchor changed')
+        task=j.tasks[ref['task_id']];identity=task['identity']
+        require(identity['stream_id']==row['stream_id'] and identity['station_id']==row['station_id'] and
+                identity['native_unit']==row['native_unit'], 'Observed-density exact-stream identity mismatch')
+        spacing=None;count=0
+        for a in s['attempts'].values():
+            if a['interval_key']!=ref['task_id'] or a['state']!='received' or a['status']!=200:continue
+            require(len(a['objects'])==1,'Observed-density receipt body required')
+            body=j.read_object(a['objects'][0])
+            require(sha(body)==a['response_sha256'] and len(body)==a['response_bytes'],
+                    'Observed-density receipt hash/bytes changed')
+            raw=observation_shape(body,row['stream_id'],quality_policy=j.binding.get('quality_policy'))
+            require(a['source_rows']==len(raw['data']),'Observed-density row accounting changed')
+            previous=None
+            for item in raw['data']:
+                stamp=parse_utc(item['t'])
+                require(parse_utc(a['cursor'])<=stamp<parse_utc(task['end']) and
+                        (previous is None or previous<=stamp),'Observed-density time order/bounds')
+                if previous is not None and stamp>previous:
+                    seconds=(stamp-previous).total_seconds();count+=1
+                    spacing=min(spacing,seconds) if spacing is not None else seconds
+                previous=stamp
+        return dict(seconds=spacing,positive_intervals=count)
+
+
+def historical_density(row, evidence, cutoff):
+    """Historical epochs, retained spacing, exact historical record, or unknown.
+
+    Source records must explicitly bind this stream, interval and milliseconds.
+    Locators are JSON pointers into preserved original documents; no edited
+    metadata or nominal current cadence can masquerade as historical evidence.
+    Denser observed evidence always tightens a source assertion.
+    """
+    require(set(evidence)=={'epochs','observations','historical_records'} and
+            all(isinstance(v,list) and len(v)<=10000 for v in evidence.values()),
+            'Bounded historical-density evidence required')
+    begin,end=parse_utc(row['query_start']),parse_utc(cutoff)
+    def records(items):
+        spans=[]
+        for ref in items:
+            require(set(ref)=={'document','stream_pointer','start_pointer','end_pointer','milliseconds_pointer'},
+                    'Explicit historical source field locators required')
+            doc=ns.reference(ref['document'])
+            def pointer(p):
+                require(isinstance(p,str) and p.startswith('/'),'Historical source JSON pointer')
+                value=doc
+                for component in p[1:].split('/'):
+                    component=component.replace('~1','/').replace('~0','~')
+                    value=value[int(component)] if isinstance(value,list) else value[component]
+                return value
+            require(pointer(ref['stream_pointer'])==row['stream_id'],'Historical source belongs to another stream')
+            a,b=parse_utc(pointer(ref['start_pointer'])),parse_utc(pointer(ref['end_pointer']))
+            ms=pointer(ref['milliseconds_pointer'])
+            require(a<b and type(ms) in (int,float) and 0<ms<float('inf'),'Invalid historical source epoch')
+            spans.append((a,b,ms/1000))
+        cursor=begin;values=[]
+        for a,b,seconds in sorted(spans):
+            if b<=begin or a>=end:continue
+            if a>cursor:return None
+            cursor=max(cursor,b);values.append(seconds)
+        return min(values) if values and cursor>=end else None
+    epoch=records(evidence['epochs'])
+    observed=[observed_density(row,r) for r in evidence['observations']]
+    observed=[r['seconds'] for r in observed if r['positive_intervals']>=2 and r['seconds'] is not None]
+    other=records(evidence['historical_records'])
+    choices=[v for v in [epoch, min(observed) if observed else None, other] if v is not None]
+    if not choices:return None
+    return dict(seconds=min(choices),basis='HISTORICAL_CONFIGURATION_EPOCHS' if epoch is not None else
+                'VERIFIED_EXACT_STREAM_OBSERVATIONS' if observed else 'EXACT_HISTORICAL_RECORD',
+                evidence_sha256=digest(evidence),maximum_unseen_density_proven=False)
+
+
 def validate(references, snapshot):
     """Verify exact selected references without writing any historical file."""
     require(isinstance(references, list) and len(references) <= 10000,

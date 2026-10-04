@@ -292,11 +292,11 @@ class NativeProgramTests(unittest.TestCase):
     def test_planner_chooses_tighter_bound_and_preserves_gaps(self):
         row=dict(query_start=START,cadence_seconds=3600,science_status='NATIVE_ONLY_UNRESOLVED_DEPTH')
         end=format_utc(parse_utc(START)+timedelta(days=366))
-        plan=n.plan_intervals(row,[dict(start=START,end=end)])
+        plan=n.plan_intervals(row,[dict(start=START,end=end)],dict(seconds=3600))
         self.assertEqual(len(plan),3)
         self.assertEqual((parse_utc(plan[0]['end'])-parse_utc(START)).total_seconds(),4030*3600)
         row['cadence_seconds']=86400
-        plan=n.plan_intervals(row,[dict(start=START,end=end)])
+        plan=n.plan_intervals(row,[dict(start=START,end=end)],dict(seconds=86400))
         self.assertEqual(len(plan),2)
         scopes=[dict(start=START,end=MID),dict(start=END,end=format_utc(parse_utc(END)+timedelta(days=2)))]
         self.assertEqual(n.plan_intervals(row,scopes),scopes)
@@ -308,7 +308,7 @@ class NativeProgramTests(unittest.TestCase):
         self.assertEqual(n.chunk_seconds(s.rows[SIDS[1]]),30*86400)
         self.c['stream_scopes'][SIDS[1]][0]['end']=format_utc(parse_utc(MID)+timedelta(days=30,seconds=1));self.save_config()
         with self.assertRaises(Hold):n.config(self.path)
-        with self.assertRaises(Hold):n.chunk_seconds(dict(science_status='SCIENCE_READY',cadence_seconds=None))
+        self.assertEqual(n.chunk_seconds(dict(science_status='SCIENCE_READY',cadence_seconds=None)),30*86400)
 
     def test_cadence_absence_cannot_hide_reported_value_or_science_promotion(self):
         self.cadence_config(None,sid=SIDS[0])
@@ -415,6 +415,227 @@ class NativeProgramTests(unittest.TestCase):
                 self.assertGreaterEqual(metrics[key],0)
             self.assertGreater(metrics['seal_semantic_cache_hits'],0)
         with self.job().open() as j:self.assertEqual(j.status()['throughput'],metrics)
+
+
+class PaginationRecoveryTests(NativeProgramTests):
+    # Inherit the fixture helpers, not a second copy of the compatibility suite.
+    def make_failed(self, count=14000, recovery_attempts=6, byte_limit=512*1024**2):
+        self.cadence_config(3600000)
+        rows=self.page_fixture(count)
+        f=ns.reference(self.c['fixture'])
+        f['history'][START]=dict(data=[dict(t=START,v=1,datastream_id=SIDS[0])],limit=2016)
+        self.c['fixture']=self.write('complete-fixture.json',f)
+        self.c['streams']=SIDS
+        self.c['science_states']={r['stream_id']:r['science_status'] for r in ns.reference(self.c['snapshot'])['records']}
+        self.c['stream_scopes'][SIDS[0]]=[dict(start=START,end=MID)]
+        self.c['limits']=dict(attempts=32,bytes=byte_limit);self.save_config()
+        with self.no_network(),self.job().open(create=True) as j:
+            with self.assertRaisesRegex(Hold,n.RECOVERY_REASON):j.acquire()
+            self.before=j.accounting()
+        self.frozen=n.original_files(Path(self.c['root']))
+        self.config_bytes=self.path.read_bytes()
+        self.request=n.make_recovery_request(self.path,max_attempts=recovery_attempts)
+        self.request_path=Path(self.write('recovery-request.json',self.request)['path'])
+        return rows
+
+    def runner(self, now=None):
+        clock=l.Clock(ns.reference(self.c['fixture']),now)
+        return n.PaginationRecovery(self.path,self.request_path,clock=clock)
+
+    def test_recovery_continues_exact_cursor_preserves_charges_seals_and_source_bytes(self):
+        rows=self.make_failed();r=self.runner();calls=[]
+        original=r.dispatch
+        def record(request,timeout):
+            calls.append(dict(n.parse_qsl(n.urlsplit(request.full_url).query))['time[$gte]'])
+            return original(request,timeout)
+        r.dispatch=record
+        with self.no_network(),r.locked():
+            r.prepare();result=r.acquire()
+            self.assertEqual(result['accounting']['attempts'],self.before['attempts']+4)
+            self.assertEqual(result['accounting']['sealed'],2)
+            self.assertGreater(result['accounting']['bytes'],self.before['bytes'])
+            self.assertFalse(result['original_scope_complete'])
+            self.assertEqual(calls[0],rows[6045]['t'])
+            self.assertEqual(calls,[rows[i]['t'] for i in (6045,8060,10075,12090)])
+            self.assertEqual(r.acquire(),result);self.assertEqual(len(calls),4)
+        self.assertEqual(n.original_files(Path(self.c['root'])),self.frozen)
+        self.assertEqual(self.path.read_bytes(),self.config_bytes)
+        b,t=r.binding()
+        with Journal(r.output/'history',b,t,inspect_only=True) as j:
+            key=next(iter(t));env=j.completed(key)
+            self.assertEqual(env['rows'],rows)
+            self.assertEqual(len(env['duplicate_copies']),6)
+            self.assertEqual(env['raw_source_row_count'],14006)
+            self.assertFalse(env['product_eligible'])
+            self.assertEqual(env['prefix']['task_id'],self.request['prefix']['task_id'])
+            from dendra.history_acquisition.native_reuse import _completed
+            self.assertEqual(_completed(j,key,j.snapshot())[0],env)
+        with self.job().open() as old:
+            with self.assertRaisesRegex(Hold,'superseded'):old.acquire()
+        run=subprocess.run(['Rscript','--vanilla',str(l.ENTRY),'status',str(self.path),'--recovery',str(self.request_path)],
+                           capture_output=True,text=True,env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'))
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        self.assertEqual(json.loads(run.stdout),result)
+
+    def test_recovery_prefix_tamper_rejected_without_writes(self):
+        self.make_failed()
+        prefix=self.request['prefix'];obj=prefix['pages'][1]['object']
+        p=Path(prefix['root'])/'campaigns'/prefix['campaign_id']/obj['path']
+        p.write_bytes(p.read_bytes()+b' ')
+        with self.assertRaises(Hold):self.runner()
+        self.assertFalse((Path(self.c['root'])/n.RECOVERY_DIRECTORY).exists())
+
+    def test_recovery_exhaustion_preserves_all_charges_and_forbids_replay(self):
+        self.make_failed(recovery_attempts=2);r=self.runner()
+        with self.no_network(),r.locked():
+            r.prepare()
+            with self.assertRaises(Hold):r.acquire()
+            state=r.status();self.assertEqual(state['recovery_attempts'],2)
+            self.assertEqual(state['accounting']['attempts'],6)
+            self.assertIsNone(state['recovered_task'])
+            with self.assertRaisesRegex(Hold,'cannot replay'):r.acquire()
+            self.assertEqual(r.status(),state)
+
+    def test_recovery_window_and_append_only_transition(self):
+        self.make_failed();r=self.runner('2026-10-05T16:20:20.000Z')
+        old=(Path(self.c['root'])/'window.json').read_bytes()
+        with self.no_network(),r.locked():
+            result=r.prepare();self.assertEqual(result['window']['kind'],'BOUNDED_RECOVERY_WINDOW')
+            self.assertEqual((parse_utc(result['window']['deadline'])-parse_utc(result['window']['opened_at'])).total_seconds(),12600)
+            with self.assertRaisesRegex(Hold,'Never recreate'):r.prepare()
+            r.clock.value=parse_utc(result['window']['deadline'])
+            with self.assertRaisesRegex(Hold,'window'):r.acquire()
+            self.assertEqual(r.status()['recovery_attempts'],0)
+        self.assertEqual((Path(self.c['root'])/'window.json').read_bytes(),old)
+
+    def test_recovery_cannot_precede_original_receipts(self):
+        self.make_failed();r=self.runner()
+        self.assertGreaterEqual(parse_utc(r.clock.now()),parse_utc(r.old['last_original_event_at']))
+        r.clock.now=lambda:format_utc(parse_utc(r.old['last_original_event_at'])-timedelta(seconds=1))
+        with r.locked():
+            with self.assertRaisesRegex(Hold,'precedes'):r.prepare()
+        self.assertFalse(r.output.exists())
+
+    def test_recovery_request_whole_job_limits_and_forged_binding(self):
+        self.make_failed()
+        for mutate in (lambda x:x['limits'].update(attempts=33,bytes=33*l.BODY),
+                       lambda x:x['accounting_before'].update(attempts=0),
+                       lambda x:x['prefix'].update(cursor=MID),
+                       lambda x:x['execution_sources'].update(collector='0'*64)):
+            request=copy.deepcopy(self.request);mutate(request);self.request_path.write_bytes(encode(request))
+            with self.assertRaises(Hold):self.runner()
+        self.request_path.write_bytes(encode(self.request))
+        with self.assertRaisesRegex(Hold,'capacity'):n.make_recovery_request(self.path,max_attempts=32)
+
+    def test_recovery_stop_no_dispatch(self):
+        self.make_failed();r=self.runner()
+        with self.no_network(),r.locked():
+            r.prepare();r.stop()
+            with self.assertRaisesRegex(Hold,'stopped'):r.acquire()
+            self.assertEqual(r.status()['recovery_attempts'],0)
+
+    def test_recovery_byte_capacity_and_transition_tamper(self):
+        self.make_failed(byte_limit=64*1024**2)
+        with self.assertRaisesRegex(Hold,'capacity'):n.make_recovery_request(self.path,max_attempts=8)
+        r=self.runner()
+        with r.locked():r.prepare()
+        p=r.output/'transition.json';transition=l.read(p)
+        transition['window']['deadline']='2027-01-01T00:00:00.000Z';p.write_bytes(encode(transition))
+        with self.assertRaisesRegex(Hold,'transition changed'):r.status()
+
+    def test_explicit_source_transition_preserves_original_config_and_accounting(self):
+        self.make_failed()
+        captured=dict(files=n.source_binding(),sources=copy.deepcopy(self.c['sources']))
+        repaired=copy.deepcopy(self.c['sources'])
+        repaired['checkpoint']=dict(head='f'*40,tree='e'*40)
+        with patch.object(l,'sources',return_value=repaired),patch.object(n,'committed_source_files',return_value=encode(captured)):
+            request=n.make_recovery_request(self.path,max_attempts=6)
+            self.request_path.write_bytes(encode(request));r=self.runner()
+            with r.locked():r.prepare()
+            transition=r.transition()
+            self.assertNotEqual(transition['original_sources'],transition['execution_sources'])
+            self.assertEqual(transition['original_sources'],captured['sources'])
+            self.assertEqual(transition['execution_sources'],repaired)
+            self.assertEqual(transition['accounting_before']['attempts'],4)
+            self.assertEqual(self.path.read_bytes(),self.config_bytes)
+            self.assertEqual(n.original_files(Path(self.c['root'])),self.frozen)
+
+    def test_explicit_historical_epochs_and_unknown_fallback(self):
+        from dendra.history_acquisition.native_reuse import historical_density
+        row=dict(stream_id=SIDS[0],query_start=START,cadence_seconds=3600)
+        document=self.write('epochs.json',dict(stream=SIDS[0],start=START,end=END,milliseconds=600000))
+        ref=dict(document=document,stream_pointer='/stream',start_pointer='/start',end_pointer='/end',milliseconds_pointer='/milliseconds')
+        ev=dict(epochs=[ref],observations=[],historical_records=[])
+        self.assertEqual(historical_density(row,ev,END)['seconds'],600)
+        self.assertIsNone(historical_density(row,ev,'2026-10-04T08:00:00.000Z'))
+        ev=dict(epochs=[],observations=[],historical_records=[ref])
+        self.assertEqual(historical_density(row,ev,END)['basis'],'EXACT_HISTORICAL_RECORD')
+        self.assertEqual(n.chunk_seconds(row),30*86400)
+
+    def test_replacement_plan_cannot_initialize_before_conditional_recovery(self):
+        self.make_failed()
+        empty=dict(epochs=[],observations=[],historical_records=[])
+        planning=self.write('planning.json',dict(version='dendra-historical-density-1',
+            streams={sid:empty for sid in SIDS},decisions={sid:None for sid in SIDS},
+            conditional_recoveries=[dict(config=self.request['config'],request=dict(
+                path=str(self.request_path),sha256=sha(self.request_path.read_bytes())))]))
+        c=copy.deepcopy(self.c);c.update(planning=planning,root=str(self.root/'replacement-unstarted'))
+        p=Path(self.write('replacement.json',c)['path'])
+        n.config(p)
+        with self.assertRaises((Hold,OSError)):n.config(p,verify_reuse=True)
+        self.assertFalse(Path(c['root']).exists())
+        r=self.runner()
+        with self.no_network(),r.locked():r.prepare();r.acquire()
+        n.config(p,verify_reuse=True)
+        self.assertFalse(Path(c['root']).exists())
+
+    @unittest.skipUnless(os.environ.get('DENDRA_OLD_COMPLETED_CONFIG'),'Optional preserved completed v5 job')
+    def test_original_completed_v5_readback_across_source_transition(self):
+        path=Path(os.environ['DENDRA_OLD_COMPLETED_CONFIG']);root=Path(l.read(path)['root'])
+        before=n.original_files(root)
+        state=n.original_state(path,require_prefix=False)
+        self.assertEqual(state['counts']['sealed'],len(state['tasks']))
+        self.assertIsNone(state['prefix'])
+        self.assertEqual(n.original_files(root),before)
+
+    def test_historical_density_observed_spacing_overrides_current_nominal(self):
+        self.make_failed()
+        from dendra.history_acquisition.native_reuse import historical_density
+        row=ns.Snapshot(self.c['snapshot']).rows[SIDS[1]]
+        p=self.request['prefix'];ref={k:p[k] for k in ('root','campaign_id','task_id','header_sha256','source_fingerprint','last_anchor_sha256')}
+        ev=dict(epochs=[],observations=[ref],historical_records=[])
+        density=historical_density(row,ev,'2028-10-01T08:00:00.000Z')
+        self.assertEqual(density['seconds'],1)
+        self.assertEqual(n.chunk_seconds(row,density),4030)
+        self.assertEqual(n.chunk_seconds(row),30*86400)
+        self.assertIsNone(historical_density(row,dict(epochs=[],observations=[],historical_records=[]),END))
+        plan=n.plan_intervals(row,[dict(start=MID,end=END)],density)
+        self.assertTrue(all((parse_utc(t['end'])-parse_utc(t['start'])).total_seconds()<=4030 for t in plan))
+        bad=copy.deepcopy(ev);bad['observations'][0]['task_id']='0'*64
+        with self.assertRaises(Hold):historical_density(row,bad,END)
+
+    @unittest.skipUnless(os.environ.get('DENDRA_FAILURE_EVIDENCE'),'Optional preserved production evidence')
+    def test_exact_saved_carrizo_failures_and_600_second_planning(self):
+        from dendra.history_acquisition.native_reuse import historical_density
+        base=Path(os.environ['DENDRA_FAILURE_EVIDENCE']).resolve()
+        for lane in 'AB':
+            child=base/f'lane-{lane}-wave-001/history/3';saved=l.read(child/'prepared.json')
+            with Journal(child,saved['binding'],saved['tasks'],inspect_only=True) as j:
+                key=next(iter(j.tasks));p=n.prefix_evidence(j,key)
+                self.assertEqual(p['attempts'],3);self.assertEqual(len(p['rows']),6048)
+                self.assertEqual(n.pagination_failure(j,key)['code'],n.RECOVERY_REASON)
+                p['root']=str(child)
+                ref={k:p[k] for k in ('root','campaign_id','task_id','header_sha256','source_fingerprint','last_anchor_sha256')}
+                row=dict(j.tasks[key]['identity'],query_start=j.tasks[key]['start'],cadence_seconds=3600)
+            density=historical_density(row,dict(epochs=[],observations=[ref],historical_records=[]),p['task']['end'])
+            self.assertEqual(density['seconds'],600)
+            self.assertEqual(n.chunk_seconds(row,density),4030*600)
+
+
+# unittest would otherwise run inherited tests twice under the helper subclass.
+for _name in list(NativeProgramTests.__dict__):
+    if _name.startswith('test_') and _name not in PaginationRecoveryTests.__dict__:
+        setattr(PaginationRecoveryTests,_name,None)
 
 
 if __name__=='__main__':unittest.main()
