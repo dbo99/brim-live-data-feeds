@@ -23,7 +23,9 @@ not admission. Versions 1 and 2 retain the maximum scope
 `[2025-10-01T08:00:00Z,2026-10-01T08:00:00Z)`.
 Whole-job limits may only be reduced: 1,500 total attempts, at most 64
 metadata/witness attempts, and 1 GiB response bodies. The original execution
-window lasts at most 7,200 seconds from the first durable provider reservation.
+window defaults to 7,200 seconds from the first durable provider reservation.
+Existing reduced `limits.seconds` values remain stricter. New reviewed version-3
+or version-4 jobs can explicitly select the bounded duration described below.
 Explicit continuation windows below preserve those cumulative ceilings.
 The parent directory must already exist under the private task
 evidence area. The new job destination must not exist when preparing it.
@@ -151,6 +153,29 @@ meanings; existing jobs are never rewritten or reinterpreted. The focused scope
 tests cover three distinct historical starts, per-stream task boundaries,
 binding/expiry failures, and finite synthetic acquire/resume without refetch.
 
+## Bound execution-window duration
+
+For a new version-3 or version-4 reviewed job, the optional top-level
+`execution_window_seconds` field accepts integer seconds from 7,200 through
+12,600 (3.5 hours). Set it to `12600` for a larger local historical acquisition.
+With this field present, the legacy `limits.seconds` must remain `7200` to avoid
+conflicting duration settings. Without the field, `limits.seconds` retains its
+exact previous meaning: 7,200 seconds by default, or a configured stricter limit.
+Versions 1/2 retain their existing fields and duration semantics.
+
+The explicit duration is part of the canonical config, job identity and reviewed
+scope binding. Choose it before initialization; editing it after preparation
+fails the same-job binding. It cannot lengthen an existing window or change any
+counter, authority timestamp, scope, or attempt/byte ceiling. The first durable
+provider reservation starts the original window, including metadata preparation.
+Metadata package and individual request/child timeouts retain their own stricter
+bounds. Authority expiry is still enforced during acquisition.
+
+Original-window reconstruction and explicit continuation windows both use the
+job's bound duration. Old jobs and stored windows are never rewritten. The
+fresh-R fixtures in `tests/dendra/test_execution_window_duration.py` cover
+default/extended windows, continuation, source/config integrity and invalid limits.
+
 ## Explicit continuation execution windows
 
 For an existing version-3 or version-4 reviewed job, `continue-window` opens one
@@ -177,7 +202,8 @@ Each `continuation-windows/NNNN/opened.json` is created once, with its own check
 previous-window hash, original artifact hashes, source provenance, cumulative
 accounting snapshot and remaining task ordinals. Its `opened_at` starts the new
 window; its deadline is that instant plus the existing configured duration
-(at most 7,200 seconds). `first_attempt_at` is initially null because opening makes
+(7,200 seconds by default; at most 12,600 for an explicit reviewed job).
+`first_attempt_at` is initially null because opening makes
 no provider request. A separate immutable `first-attempt.json` records the first
 durable reservation, reconstructed from original Journals after a crash if needed.
 That later first attempt never extends the deadline. Original `window.json` remains

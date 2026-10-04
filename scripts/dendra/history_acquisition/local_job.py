@@ -35,6 +35,7 @@ MAX_CONTINUATION_WINDOWS = 16
 REPO = Path(__file__).resolve().parents[3]
 ENTRY = REPO / "scripts/dendra/acquire_native.R"
 LIMITS = dict(attempts=1500, metadata_attempts=64, bytes=1073741824, seconds=7200)
+MAX_EXECUTION_WINDOW_SECONDS = 12600
 CDFW = {
     "635319fcb055ac5348842453": "63531a67a9b61453fa1ca4ed 63531a68a9b6141b4b1ca4ef 63531a684b24f740d53623e6 63531a688f3bc3f3df655be6 63531a684bc26eea5ce90e24 63531a695d431185dee54556".split(),
     "60f8c62d40a87301e3f50614": "6106a59fa8f01166960a5b6c 6106a5a011a7e0c02186a5a0 6106a5a039e80fde713aec8e 6106a5a0afcb8b440547c450 6106a5a02a1c986d61641ddd 6106a5a1fec94c52a5c59270".split(),
@@ -104,6 +105,8 @@ def _config(c, expected_sources):
                       "attribution", "organization_labels"}
     if c.get("version") == IMPORT_VERSION: fields.add("authority_import")
     if c.get("version") == STREAM_SCOPED_VERSION: fields.add("stream_scopes")
+    if c.get("version") in REVIEWED_VERSIONS and 'execution_window_seconds' in c:
+        fields.add('execution_window_seconds')
     require(set(c) == fields, "Exact job configuration fields")
     require(c["version"] in (VERSION,IMPORT_VERSION,*REVIEWED_VERSIONS) and c["sources"] == expected_sources, "Job source/checkpoint changed")
     require(type(c["enabled"]) is bool, "Explicit job permission required")
@@ -115,6 +118,11 @@ def _config(c, expected_sources):
         require(c["scope"] == SCOPE, "Exact WY2026 scope/permission required")
     require(set(c["limits"]) == set(LIMITS) and all(type(c["limits"][k]) is int and
             0 < c["limits"][k] <= v for k,v in LIMITS.items()), "Whole-job ceilings")
+    if 'execution_window_seconds' in c:
+        require(type(c['execution_window_seconds']) is int and
+                LIMITS['seconds'] <= c['execution_window_seconds'] <= MAX_EXECUTION_WINDOW_SECONDS and
+                c['limits']['seconds'] == LIMITS['seconds'],
+                'Explicit execution window must be 7200..12600 seconds with the default legacy time limit')
     require(type(c["reserve_bytes"]) is int and c["reserve_bytes"] >= BODY, "Explicit storage safety reserve")
     inv = Inventory.load(c["inventory"], INVENTORY_SHA256)
     require(sha(Path(c['catalog']).read_bytes()) == c['catalog_sha256'], 'Original metadata catalog changed')
@@ -146,6 +154,11 @@ def _config(c, expected_sources):
         require(set(c["fixture"]) == {"path", "sha256"} and
                 sha(Path(c["fixture"]["path"]).read_bytes()) == c["fixture"]["sha256"], "Offline fixture binding")
     return c, inv
+
+
+def execution_window_seconds(c):
+    """Opt-in duration; omitted fields preserve every legacy time limit."""
+    return c.get('execution_window_seconds', c['limits']['seconds'])
 
 
 def stream_scope(c, sid):
@@ -323,7 +336,7 @@ class Job:
                     'Continuation identity/pins/window history changed')
             opened,deadline=map(parse_utc,(r['opened_at'],r['deadline']))
             require(parse_utc(prior['deadline'])<=opened and
-                    deadline==opened+timedelta(seconds=self.c['limits']['seconds']), 'Continuation window timestamps changed')
+                    deadline==opened+timedelta(seconds=execution_window_seconds(self.c)), 'Continuation window timestamps changed')
             compat=r['sources'];original=compat['capture_sources'];execution=compat['execution_sources']
             require(set(compat)=={'capture_sources','execution_sources','execution_checkpoint'} and
                     digest(original)==self.c['sources']['collector'] and set(original)==set(execution) and
@@ -384,7 +397,7 @@ class Job:
             pins={n:sha(self.fs.read(n,8*BODY)) for n in
                   ('job.json','review.json','catalog.json','plan.json','plan-binding.json','asset-map.json','scope-binding.json','window.json')},
             previous_sha256=digest(prior),opened_at=at,first_attempt_at=None,
-            deadline=format_utc(parse_utc(at)+timedelta(seconds=self.c['limits']['seconds'])),
+            deadline=format_utc(parse_utc(at)+timedelta(seconds=execution_window_seconds(self.c))),
             sources=continuation_sources(self.c),accounting_before={k:v for k,v in a.items() if k not in ('continuation_windows','execution_window')},
             remaining_tasks=remaining)
         r['record_sha256']=digest(r)
@@ -436,7 +449,7 @@ class Job:
                                 series_metadata_reference=dict(path='catalog.json',stream_id=j.tasks[key]['identity']['stream_id'])))
                         elif any(a["interval_key"] == key for a in state["attempts"].values()): unsealed.append(key)
         if first is not None:
-            window = dict(first_attempt_at=format_utc(first), deadline=format_utc(first+timedelta(seconds=self.c["limits"]["seconds"])))
+            window = dict(first_attempt_at=format_utc(first), deadline=format_utc(first+timedelta(seconds=execution_window_seconds(self.c))))
             if self.has("window.json"):
                 require(self.get("window.json") == window, "Original job deadline changed")
             else:
@@ -537,7 +550,7 @@ class Job:
                         if e['kind']=='reserved':records.append(parse_utc(e['at']))
             require(records,'Durable reservation must precede job dispatch')
             first=min(records)
-            self.put('window.json',dict(first_attempt_at=format_utc(first),deadline=format_utc(first+timedelta(seconds=self.c['limits']['seconds']))))
+            self.put('window.json',dict(first_attempt_at=format_utc(first),deadline=format_utc(first+timedelta(seconds=execution_window_seconds(self.c)))))
         window=self.execution_window()
         if self.has('continuation-windows') and not self.has(f"continuation-windows/{window['ordinal']:04d}/first-attempt.json"):
             # The current child holds its writer lock. Read its durable
@@ -589,7 +602,7 @@ class Job:
         if not root.exists(): root.mkdir(mode=0o700)
         if (root/'authorization.json').exists(): authorization=read(root/'authorization.json')
         else:
-            start=self.clock.now(); end=parse_utc(start)+timedelta(seconds=min(package['ceilings']['wall_seconds'],self.c['limits']['seconds']))
+            start=self.clock.now(); end=parse_utc(start)+timedelta(seconds=min(package['ceilings']['wall_seconds'],execution_window_seconds(self.c)))
             if self.has('window.json'): end=min(end,parse_utc(self.get('window.json')['deadline']))
             authorization=dict(package_id=package['package_id'],approval_reference='Explicit local operator metadata command',window_start=start,window_end=format_utc(end))
         try:
