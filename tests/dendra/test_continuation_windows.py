@@ -141,13 +141,17 @@ class ContinuationWindowTests(unittest.TestCase):
         self.assertFalse((Path(self.c['root'])/'continuation-windows').exists())
 
     def test_prior_committed_supervisor_same_job_fresh_r_continuation(self):
-        # Build synthetic capture using the genuine predecessor fingerprint.
-        # No checkout file is replaced. The positive historical-checkpoint
-        # case exists only when every other collector file matches HEAD.
-        path=l.REPO/'scripts/dendra/history_acquisition/local_job.py'
-        old=subprocess.check_output(['git','show','HEAD:scripts/dendra/history_acquisition/local_job.py'],cwd=l.REPO)
+        # Capture the complete genuine committed source closure, so a policy
+        # change outside local_job exercises rejection rather than skipping.
+        # No checkout file is replaced. Supervisor-only changes still exercise
+        # the positive historical-checkpoint case below.
+        names=subprocess.check_output(['git','ls-tree','-r','--name-only','HEAD','--',
+            'scripts/dendra'],cwd=l.REPO,text=True).splitlines()
+        old={l.REPO/p:subprocess.check_output(['git','show','HEAD:'+p],cwd=l.REPO)
+             for p in names if (p.startswith('scripts/dendra/history_acquisition/') and p.endswith('.py'))
+             or p in ('scripts/dendra/transport.py','scripts/dendra/core.R')}
         real_read=Path.read_bytes
-        def capture_bytes(p):return old if p==path else real_read(p)
+        def capture_bytes(p):return old[p] if p in old else real_read(p)
         def in_process(mode,*args,code=0):
             argv=[mode,str(self.dir/'config.json'),*map(str,args)]
             if hasattr(self,'review_time'):argv+=['--offline-now',self.review_time]
@@ -171,7 +175,9 @@ class ContinuationWindowTests(unittest.TestCase):
                 ['git','show','HEAD:scripts/dendra/'+k],cwd=l.REPO))==v for k,v in current.items()))
         if not closure_matches:
             out=self.r('continue-window',code=2)
-            self.assertIn('Historical collector',out['reason'])
+            self.assertTrue(any(text in out['reason'] for text in (
+                'Historical collector', 'Continuation requires identical parser/Journal/transport/science/R sources')),
+                out['reason'])
             self.assertFalse((self.root/'continuation-windows').exists())
             self.assertEqual(self.preserved(),oldbytes)
             return

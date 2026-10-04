@@ -418,7 +418,17 @@ source-compatibility checks and is not implied by version-5 support.
 Each job has at most 28 streams and 400 logical tasks, with three attempts per
 task, no automatic retries, at most 1,500 cumulative attempts and 1 GiB cumulative
 response bodies. Each child retains the existing 8 MiB object limit and 300-second
-budget. Task intervals are at most 30 days and 4,030 source-cadence periods. Use
+budget. For an exact positive source cadence, `native_program.plan_intervals`
+uses the tighter of 365 days and 4,030 source-cadence periods. It splits only
+already-reviewed missing intervals; it neither fills gaps nor discovers starts.
+For native quarantine with an absent/null provider sample interval, it uses a
+30-day time cap without assigning a cadence or estimating an observation count.
+The exact original metadata must establish that absence. Invalid or contradictory
+cadence values still HOLD. Both routes retain three-page completeness: a full
+third page, nonadvancing cursor or incomplete response preserves all charges and
+HOLDs the task; it is never sealed, automatically split, refunded or recreated.
+Such spent intervals require separate recovery review, not an ordinary resume.
+Use
 12,600-second execution windows for large waves. Preparation opens no window;
 the first durable reservation starts it. A new child is deferred when less than
 301 seconds remain. An expired clean window can be continued explicitly, up to
@@ -451,3 +461,32 @@ scientific admission, metadata refresh or older-job authority renewal.
 quarantine/product rejection, raw-value preservation, empty coverage, crash/stop
 recovery, continuation, accounting isolation and fresh R-process readback with
 synthetic responses and network denial.
+
+### Local validation and throughput diagnostics
+
+Every accounting pass still reconstructs attempt/byte totals from the original
+Journal and checks manifests, event/anchor closure and every object SHA-256.
+Within one process, a verified header/event-chain token can avoid repeating the
+same sealed-envelope semantic reconstruction. Changed evidence cannot use that
+token. Fresh processes and `accounting(full=True)` reconstruct all seals.
+Metadata JSON validation facts are bounded in memory and keyed by reverified
+content hashes; decoded objects are fresh, so callers cannot mutate a cached
+catalog. No file-stat-only cache or authoritative counter index is used.
+
+Acquisition status preserves a `throughput` diagnostic for the last acquire
+process even after a fresh status read. It records wall/CPU time, executor calls,
+provider connection/header/body I/O duration and per-response samples, adapter
+JSON/shape parse time, requested and actual pacing time, validation, accounting,
+Journal/seal time and semantic cache hit counts. Timings do not authorize traffic
+or replace durable receipts. Accounting includes readback/parse work, and seal
+time includes seal validation; these inclusive categories must not all be added
+together. Provider I/O excludes measured dispatch validation and pacing, but
+includes client connection/HTTP overhead. Paginator parsing outside the adapter
+remains in the unclassified wall-time remainder. HTTP/pages, bytes, errors,
+pagination and valid-empty results are independently resolved from Journals.
+
+Independent roots isolate locks, Journals and budgets, but have no shared provider
+limiter or shared failure stop. Production concurrency remains one. Any separately
+approved short two-job benchmark must use disjoint exact stream/interval scopes,
+small cumulative limits and explicit operator coordination to stop both jobs on
+throttling/service failure. It grants no automatic production parallelism.

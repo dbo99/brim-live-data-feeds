@@ -3,6 +3,8 @@
 The program catalog is private reviewed input. Original public provider records
 independently establish the query identity; display names cannot supply geometry.
 """
+from collections import OrderedDict
+import json
 import math
 import re
 from pathlib import Path
@@ -18,6 +20,23 @@ STATES = {"SCIENCE_READY", "NATIVE_ONLY_UNRESOLVED_DEPTH",
           "NATIVE_ONLY_UNRESOLVED_UNIT", "NATIVE_ONLY_CONFIGURATION_AMBIGUITY",
           "NATIVE_ONLY_MULTIPLE_UNRESOLVED", "EXCLUDED_NOT_TARGET_SOIL_MOISTURE"}
 BOUND = 64 * 1024**2
+_CHECKED_JSON = OrderedDict()
+
+
+def checked_decode(body, checksum):
+    """Skip repeated strict JSON hooks only for identical, rehashed bytes.
+
+    Cache validation facts, never mutable decoded objects or filesystem stats.
+    Every caller still reads the file and verifies SHA-256. Each result is fresh.
+    """
+    if checksum in _CHECKED_JSON:
+        _CHECKED_JSON.move_to_end(checksum)
+        return json.loads(body)
+    value = decode(body)
+    _CHECKED_JSON[checksum] = True
+    if len(_CHECKED_JSON) > 128:
+        _CHECKED_JSON.popitem(last=False)
+    return value
 
 
 def reference(ref, cache=None):
@@ -32,7 +51,7 @@ def reference(ref, cache=None):
     with Root(path.parent) as fs:
         body = fs.read(path.name, BOUND)
     require(sha(body) == ref['sha256'], "Metadata/archive reference hash changed")
-    value = decode(body)
+    value = checked_decode(body, ref['sha256'])
     if cache is not None:
         cache[key] = value
     return value
@@ -232,6 +251,12 @@ class Snapshot:
         require(same_source_field(r['cadence_reference'], r['metadata_reference'],
                                   '/general_config_resolved/sample_interval'),
                 'Cadence must reference this exact stream source field')
+        cadence = raw.get('general_config_resolved', {}).get('sample_interval')
+        if cadence is None:
+            require(r.get('cadence_ms') is None and r.get('cadence_seconds') is None and
+                    r['science_status'] != 'SCIENCE_READY',
+                    'Cadence-free acquisition requires unresolved native quarantine')
+            return r
         cadence = record(r['cadence_reference'], self._references)
         require(type(cadence) in (int, float) and math.isfinite(cadence) and cadence > 0 and
                 r.get('cadence_ms') == cadence and r['cadence_seconds'] == cadence/1000,

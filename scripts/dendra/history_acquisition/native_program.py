@@ -5,11 +5,13 @@ Version 1--4 jobs and their scientific admission rules are not reinterpreted.
 """
 from contextlib import contextmanager
 from datetime import timedelta
+from functools import wraps
 import fcntl
 import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import urllib.error
 from urllib.parse import parse_qsl, urlsplit
 
@@ -28,6 +30,102 @@ MAX_TASKS = 400
 FIELDS = {'version', 'family', 'snapshot', 'streams', 'station_ids', 'stream_scopes',
           'science_states', 'reuse', 'sources', 'limits', 'execution_window_seconds',
           'reserve_bytes', 'root', 'enabled', 'fixture'}
+
+
+def chunk_seconds(row):
+    """A query-size policy, never a fabricated cadence or observed POR claim."""
+    cadence = row.get('cadence_seconds')
+    if cadence is None:
+        require(row['science_status'] != 'SCIENCE_READY', 'Cadence-free quarantine only')
+        return 30 * 86400
+    require(type(cadence) in (int, float) and 0 < cadence < float('inf'),
+            'Invalid source cadence')
+    return min(365 * 86400, 4030 * cadence)
+
+
+def plan_intervals(row, intervals):
+    """Split already reviewed/subtracted intervals; never discover or fill gaps."""
+    result = []
+    prior = None
+    for scope in intervals:
+        start, end = ns.interval(scope)
+        require(parse_utc(row['query_start']) <= start and (prior is None or prior <= start),
+                'Invalid/overlapping planner input')
+        while start < end:
+            stop = min(end, start + timedelta(seconds=chunk_seconds(row)))
+            require(start < stop, 'Nonadvancing bounded chunk')
+            result.append(dict(start=format_utc(start), end=format_utc(stop)))
+            start = stop
+        prior = end
+    return result
+
+
+class Metrics:
+    """Invocation diagnostics only; never authority or attempt accounting."""
+    def __init__(self):
+        self.values = {}
+        self.started = time.perf_counter()
+        self.cpu_started = time.process_time()
+
+    def add(self, name, value):
+        self.values[name] = self.values.get(name, 0) + value
+
+    @contextmanager
+    def measure(self, name):
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.add(name, time.perf_counter() - start)
+
+    def report(self):
+        return dict(schema='dendra-native-throughput-1', scope='this_acquire_process',
+                    wall_seconds=time.perf_counter()-self.started,
+                    cpu_seconds=time.process_time()-self.cpu_started, **self.values)
+
+
+def measured(name):
+    def decorate(method):
+        @wraps(method)
+        def call(self, *args, **kwargs):
+            with self.metrics.measure(name):
+                return method(self, *args, **kwargs)
+        return call
+    return decorate
+
+
+class TimedResponse:
+    """Delegate response behavior; measure provider body I/O, not JSON parsing."""
+    def __init__(self, response, metrics, header_seconds):
+        self.response, self.metrics = response, metrics
+        self.provider_seconds = header_seconds
+
+    def __getattr__(self, name):
+        return getattr(self.response, name)
+
+    def __enter__(self):
+        self.io(self.response.__enter__)
+        return self
+
+    def __exit__(self, *args):
+        try:
+            return self.io(self.response.__exit__, *args)
+        finally:
+            samples = self.metrics.values.setdefault('provider_request_seconds', [])
+            if len(samples) < 1500:
+                samples.append(self.provider_seconds)
+
+    def read(self, *args):
+        return self.io(self.response.read, *args)
+
+    def io(self, operation, *args):
+        start = time.perf_counter()
+        try:
+            return operation(*args)
+        finally:
+            seconds = time.perf_counter()-start
+            self.provider_seconds += seconds
+            self.metrics.add('provider_io_seconds', seconds)
 
 
 def config(path, *, verify_reuse=False):
@@ -65,11 +163,9 @@ def config(path, *, verify_reuse=False):
         for scope in scopes:
             a, b = ns.interval(scope)
             require(parse_utc(r['query_start']) <= a and (prior is None or prior <= a) and
-                    b <= parse_utc(snapshot.document['fixed_cutoff']) and (b-a).total_seconds() <= 30*86400,
+                    b <= parse_utc(snapshot.document['fixed_cutoff']) and
+                    (b-a).total_seconds() <= chunk_seconds(r),
                     'Task outside exact query bound/cutoff or overlapping interval')
-            cadence = r.get('cadence_seconds')
-            require(type(cadence) in (int, float) and cadence > 0 and
-                    (b-a).total_seconds() <= 4030*cadence, 'Unknown/dense cadence requires bounded replan')
             tasks.append(dict(stream_id=sid, **scope))
             prior = b
     require(c['station_ids'] == sorted({snapshot.rows[s]['station_id'] for s in c['streams']}),
@@ -94,7 +190,7 @@ def config(path, *, verify_reuse=False):
     return c, snapshot, tasks
 
 
-def task_binding(config_path, c, snapshot, task):
+def task_binding(config_path, c, snapshot, task, *, collector_sources=None):
     sid = task['stream_id']
     initial = CampaignRequestSpec(sid, task['start'], task['end'], task['start'])
     item = dict(identity=snapshot.identity(sid), start=task['start'], end=task['end'],
@@ -103,7 +199,8 @@ def task_binding(config_path, c, snapshot, task):
     policy = dict(logical_requests=3, http_attempts=3, total_bytes=3*legacy.BODY,
                   wall_seconds=300)
     b = dict(version=VERSION, mode=MODE, campaign_id='native-'+key,
-             collector_sources=source_binding(), config_ref=dict(path=str(config_path),
+             collector_sources=source_binding() if collector_sources is None else collector_sources,
+             config_ref=dict(path=str(config_path),
              sha256=sha(Path(config_path).read_bytes())), configuration_sha256=digest(c),
              task=task, roster={sid:snapshot.identity(sid)}, selected_ids=[sid],
              quality_policy=quality_binding(), request_policy=policy,
@@ -188,20 +285,48 @@ def seal(journal, key, run, envelope, attempts):
 
 
 class NativeAdapter(CampaignAdapter):
-    def __init__(self, journal):
+    def __init__(self, journal, metrics=None):
+        self.metrics = metrics if metrics is not None else Metrics()
         require(journal.binding['mode'] == MODE and not journal.inspect_only and
                 journal.lock is not None and not journal.damage, 'Writable native Journal required')
-        validate_binding(journal.binding, journal.tasks)
+        with self.metrics.measure('validation_seconds'):
+            validate_binding(journal.binding, journal.tasks)
         self._initialize(journal, None)
         self.last_dispatch_mono = None
 
     def _page_permission(self, spec, interval_key):
-        authorize(self.journal, interval_key)
+        with self.metrics.measure('validation_seconds'):
+            authorize(self.journal, interval_key)
 
     def _execute(self, request, *, timeout, interval_key):
-        authorize(self.journal, interval_key)
+        with self.metrics.measure('validation_seconds'):
+            authorize(self.journal, interval_key)
         self.last_dispatch_mono = self.journal.monotonic()
-        return self.executor(request, timeout=timeout)
+        local_before = sum(self.metrics.values.get(k, 0) for k in ('validation_seconds', 'pacing_seconds'))
+        start = time.perf_counter()
+        self.metrics.add('executor_calls', 1)
+        try:
+            try:
+                response = self.executor(request, timeout=timeout)
+            except urllib.error.HTTPError as exc:
+                response = exc
+        finally:
+            local_after = sum(self.metrics.values.get(k, 0) for k in ('validation_seconds', 'pacing_seconds'))
+            seconds = max(0, time.perf_counter()-start-local_after+local_before)
+            self.metrics.add('provider_io_seconds', seconds)
+        return TimedResponse(response, self.metrics, seconds)
+
+    @measured('parse_seconds')
+    def _decode_response(self, body):
+        return super()._decode_response(body)
+
+    @measured('parse_seconds')
+    def _observation_response(self, body, stream_id):
+        return super()._observation_response(body, stream_id)
+
+    @measured('journal_and_seal_seconds')
+    def _persist(self, operation, *args, **kwargs):
+        return super()._persist(operation, *args, **kwargs)
 
     def observations(self, key, *, recheck=False):
         require(key in self.journal.tasks and not recheck, 'Exact immutable native task required')
@@ -210,7 +335,9 @@ class NativeAdapter(CampaignAdapter):
             return dict(cache_hit=True, envelope=saved)
         require(self.active and not any(a['interval_key']==key for a in
                 self.journal.snapshot()['attempts'].values()), 'Spent native task cannot replay')
-        self._traffic_guard(); authorize(self.journal, key)
+        self._traffic_guard()
+        with self.metrics.measure('validation_seconds'):
+            authorize(self.journal, key)
         task = self.journal.tasks[key]; sid = task['identity']['stream_id']
         run = self.journal.snapshot()['intervals'][key]['runs'] or self.journal.start_run(key)
         successful = []; self.current_interval = key
@@ -240,6 +367,13 @@ class ProgramJob(legacy.Job):
         super().__init__(c, snapshot, clock=clock, fixture=fixture)
         self.tasks = tasks
         self.config_path = Path(config_path)
+        self.metrics = Metrics()
+        # Clock is owned by this job. Include both adapter and cross-child waits.
+        self._clock_wait = self.clock.wait
+        self.clock.wait = self.wait
+        self.acquiring = False
+        # Only small semantic verification tokens, not decoded rows or counters.
+        self.verified_seals = set()
 
     def pins(self):
         return dict(configuration_sha256=digest(self.c), snapshot=self.c['snapshot'],
@@ -279,6 +413,7 @@ class ProgramJob(legacy.Job):
             finally:
                 self.lock=None; self.fs=None; os.close(fd)
 
+    @measured('validation_seconds')
     def verify_scope(self):
         c, unused, tasks = config(self.config_path)
         require(c==self.c and tasks==self.tasks and self.get('job.json')==
@@ -312,14 +447,19 @@ class ProgramJob(legacy.Job):
             records.append(r);prior=r
         return records
 
-    def accounting(self):
+    @measured('accounting_seconds')
+    def accounting(self, *, full=False):
         counts=dict(attempts=0,metadata_attempts=0,bytes=0,sealed=0,covered_empty=0)
         spent=[];assets=[];first=None;last=None;stream_holds=[];global_holds=[];reservations=[]
         roots=sorted((self.root/'history').iterdir()) if self.has('history') else []
         require(all(p.name.isdecimal() and 0<=int(p.name)<len(self.tasks) for p in roots),'Foreign native child')
+        # Source bytes are hashed once per complete accounting pass, not once
+        # per child. Every pass still rebuilds counters from original events.
+        current_sources = source_binding()
         for root in roots:
             saved=legacy.read(root/'prepared.json');b=saved['binding'];tasks=saved['tasks']
-            require((b,tasks)==task_binding(self.config_path,self.c,self.inventory,self.tasks[int(root.name)]),
+            require((b,tasks)==task_binding(self.config_path,self.c,self.inventory,self.tasks[int(root.name)],
+                                            collector_sources=current_sources),
                     'Native child differs from bound plan')
             with self.child(root,b['campaign_id']) as j:
                 j.verify_records();state=j.snapshot();require(not state['damage'],'Damaged native accounting')
@@ -330,12 +470,25 @@ class ProgramJob(legacy.Job):
                 for key,v in state['intervals'].items():
                     attempts=[a for a in state['attempts'].values() if a['interval_key']==key]
                     if v['complete']:
-                        env=j.completed(key);complete=v['complete']
-                        require(env==raw_envelope(j,key,complete['run'],complete['attempt_keys']) and
-                                complete['state']==('complete_nonempty' if env['rows'] else 'complete_empty') and
-                                complete['acquisition_status']==env['acquisition_status'] and
-                                complete['product_eligible'] is False,
-                                'Native sealed envelope differs from original receipts')
+                        complete=v['complete']
+                        token=(str(root), j.header_sha, digest(j.events))
+                        # Journal open rehashes ALL original objects, including
+                        # the sealed envelope. verify_records checks physical
+                        # receipts/anchors and closure before any cache hit.
+                        # A changed chain forces full semantic reconstruction.
+                        if full or token not in self.verified_seals:
+                            env=j.completed(key)
+                            require(env==raw_envelope(j,key,complete['run'],complete['attempt_keys']) and
+                                    complete['state']==('complete_nonempty' if env['rows'] else 'complete_empty') and
+                                    complete['acquisition_status']==env['acquisition_status'] and
+                                    complete['product_eligible'] is False,
+                                    'Native sealed envelope differs from original receipts')
+                            if token not in self.verified_seals and len(self.verified_seals) >= MAX_TASKS:
+                                self.verified_seals.clear()
+                            self.verified_seals.add(token)
+                            self.metrics.add('seal_semantic_validations', 1)
+                        else:
+                            self.metrics.add('seal_semantic_cache_hits', 1)
                         counts['sealed']+=1;counts['covered_empty']+=v['state']=='complete_empty'
                         assets.append(dict(root=str(root),campaign_id=b['campaign_id'],task_id=key,seal=v['complete'],
                                            series_metadata_reference=dict(path='catalog.json',stream_id=tasks[key]['identity']['stream_id'])))
@@ -426,6 +579,7 @@ class ProgramJob(legacy.Job):
                 t['stream_id'] not in accounting['held_streams']]
 
     def acquire(self):
+        self.acquiring = True
         self.verify_scope();a=self.accounting()
         require(not a['global_holds'],'Spent/ambiguous native task requires review')
         for n in self.unattempted(a):
@@ -451,21 +605,32 @@ class ProgramJob(legacy.Job):
             try:
                 with Journal(root,binding,tasks,create=create,inventory=self.inventory,
                              now=self.clock.now,monotonic=self.clock.monotonic) as j:
-                    NativeAdapter(j).run(executor=self.dispatch,wait=self.clock.wait,window_end=format_utc(end))
+                    NativeAdapter(j,self.metrics).run(executor=self.dispatch,wait=self.wait,window_end=format_utc(end))
             except (Hold, FetchError, urllib.error.HTTPError):
                 a=self.accounting()
                 if a['global_holds'] or t['stream_id'] not in a['held_streams']:
                     raise
             finally:
-                a=self.accounting();self.status()
+                a=self.accounting();self.status(accounting=a)
             require(not a['global_holds'],'Native acquisition held; preserve charged evidence')
         return self.status()
 
-    def status(self):
-        a=self.accounting();out=dict(outcome='COMPLETE_FOR_DECLARED_SCOPE' if a['sealed']==len(self.tasks)
+    def wait(self, seconds):
+        self.metrics.add('configured_sleep_seconds', seconds)
+        with self.metrics.measure('pacing_seconds'):
+            self._clock_wait(seconds)
+
+    def status(self, *, accounting=None):
+        a=self.accounting() if accounting is None else accounting
+        out=dict(outcome='COMPLETE_FOR_DECLARED_SCOPE' if a['sealed']==len(self.tasks)
             else 'HOLD' if a['spent_unsealed'] else 'PREPARED_DISABLED' if not self.c['enabled'] else 'READY_OR_PARTIAL',
             job_id=digest(self.c),planned_tasks=len(self.tasks),remaining_tasks=len(self.tasks)-a['sealed'],
             accounting=a,product_eligible=False)
+        prior = self.get('status.json') if self.has('status.json') else {}
+        if self.acquiring:
+            out['throughput'] = self.metrics.report()
+        elif 'throughput' in prior:
+            out['throughput'] = prior['throughput']
         self.summary(out);return out
 
 

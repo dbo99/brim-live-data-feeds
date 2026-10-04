@@ -323,6 +323,13 @@ class Adapter:
             self.halted = True
             raise Hold("Local receipt persistence failed; no HTTP retry") from exc
 
+    def _decode_response(self, body):
+        return decode(body)
+
+    def _observation_response(self, body, stream_id):
+        return observation_shape(body, stream_id,
+                                 quality_policy=self.journal.binding.get("quality_policy"))
+
     def _parse_metadata(self, spec, body):
         if spec.kind == "unit-vocabulary":
             return parse_vocabulary(body, self.authority)
@@ -428,7 +435,7 @@ class Adapter:
                     raise urllib.error.HTTPError(spec.url(), status, "D3 HTTP status", {}, None)
                 row_count = None
                 try:
-                    payload = decode(body)
+                    payload = self._decode_response(body)
                     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
                         row_count = len(payload["data"])
                     elif spec.kind in ("station", "unit-vocabulary"):
@@ -461,8 +468,7 @@ class Adapter:
                         details.update(effective_limit=2, page_complete=True)
                         retain = True
                     elif spec.kind == "observations":
-                        value = observation_shape(body, spec.selected_stream,
-                            quality_policy=self.journal.binding.get("quality_policy"))
+                        value = self._observation_response(body, spec.selected_stream)
                         details.update(effective_limit=value["limit"], page_complete=len(value["data"]) < value["limit"])
                         retain = True
                     else:

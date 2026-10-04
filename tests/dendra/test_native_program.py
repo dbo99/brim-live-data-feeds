@@ -246,5 +246,175 @@ class NativeProgramTests(unittest.TestCase):
         p=Path(self.snapshot['path']);p.write_bytes(p.read_bytes()+b' ')
         with self.assertRaisesRegex(Hold,'hash changed'):self.job()
 
+    def cadence_config(self, milliseconds, *, sid=SIDS[1]):
+        raw=ns.reference(self.snapshot)['records'][0]['metadata_reference']
+        body=ns.reference(raw)
+        for row in body['data']:
+            if milliseconds is None:row['general_config_resolved'].pop('sample_interval')
+            else:row['general_config_resolved']['sample_interval']=milliseconds
+        new=self.write('cadence-raw.json',body)
+        d=ns.reference(self.snapshot);d['fixed_cutoff']='2028-10-01T08:00:00.000Z'
+        for row in d['records']:
+            row['cadence_ms']=milliseconds
+            row['cadence_seconds']=None if milliseconds is None else milliseconds/1000
+            for field in ('metadata_reference','query_start_reference','cadence_reference'):
+                row[field]=dict(new,json_pointer=row[field]['json_pointer'])
+        self.c['snapshot']=self.write('cadence-snapshot.json',d)
+        self.c['streams']=[sid];self.c['science_states']={sid:next(r['science_status'] for r in d['records'] if r['stream_id']==sid)}
+        self.c['stream_scopes']={sid:[dict(start=MID,end=END)]};self.save_config()
+        return d
+
+    def page_fixture(self, count):
+        rows=[dict(t=format_utc(parse_utc(MID)+timedelta(seconds=i)),v=None if i==0 else 0,
+                   datastream_id=SIDS[1]) for i in range(count)]
+        history={}
+        for offset in range(0,count,2015):
+            page=rows[offset:offset+2016]
+            history[rows[offset]['t']]=dict(data=page,limit=2016)
+            if len(page)<2016:break
+        self.c['fixture']=self.write('paged.json',dict(now=NOW,history=history));self.save_config()
+        return rows
+
+    def test_365_day_and_nominal_sample_bound_interaction(self):
+        self.cadence_config(86400000)
+        stop=format_utc(parse_utc(MID)+timedelta(days=365))
+        self.c['stream_scopes'][SIDS[1]]=[dict(start=MID,end=stop)];self.save_config()
+        self.assertEqual(len(n.config(self.path)[2]),1)
+        self.c['stream_scopes'][SIDS[1]][0]['end']=format_utc(parse_utc(stop)+timedelta(seconds=1));self.save_config()
+        with self.assertRaises(Hold):n.config(self.path)
+        self.cadence_config(3600000)
+        stop=format_utc(parse_utc(MID)+timedelta(hours=4030))
+        self.c['stream_scopes'][SIDS[1]]=[dict(start=MID,end=stop)];self.save_config()
+        n.config(self.path)
+        self.c['stream_scopes'][SIDS[1]][0]['end']=format_utc(parse_utc(stop)+timedelta(seconds=1));self.save_config()
+        with self.assertRaises(Hold):n.config(self.path)
+
+    def test_planner_chooses_tighter_bound_and_preserves_gaps(self):
+        row=dict(query_start=START,cadence_seconds=3600,science_status='NATIVE_ONLY_UNRESOLVED_DEPTH')
+        end=format_utc(parse_utc(START)+timedelta(days=366))
+        plan=n.plan_intervals(row,[dict(start=START,end=end)])
+        self.assertEqual(len(plan),3)
+        self.assertEqual((parse_utc(plan[0]['end'])-parse_utc(START)).total_seconds(),4030*3600)
+        row['cadence_seconds']=86400
+        plan=n.plan_intervals(row,[dict(start=START,end=end)])
+        self.assertEqual(len(plan),2)
+        scopes=[dict(start=START,end=MID),dict(start=END,end=format_utc(parse_utc(END)+timedelta(days=2)))]
+        self.assertEqual(n.plan_intervals(row,scopes),scopes)
+        with self.assertRaises(Hold):n.plan_intervals(row,[dict(start=START,end=END),dict(start=MID,end=END)])
+
+    def test_cadence_free_exact_quarantine_and_thirty_day_cap(self):
+        self.cadence_config(None)
+        c,s,t=n.config(self.path);self.assertIsNone(s.rows[SIDS[1]]['cadence_seconds'])
+        self.assertEqual(n.chunk_seconds(s.rows[SIDS[1]]),30*86400)
+        self.c['stream_scopes'][SIDS[1]][0]['end']=format_utc(parse_utc(MID)+timedelta(days=30,seconds=1));self.save_config()
+        with self.assertRaises(Hold):n.config(self.path)
+        with self.assertRaises(Hold):n.chunk_seconds(dict(science_status='SCIENCE_READY',cadence_seconds=None))
+
+    def test_cadence_absence_cannot_hide_reported_value_or_science_promotion(self):
+        self.cadence_config(None,sid=SIDS[0])
+        with self.assertRaisesRegex(Hold,'quarantine'):n.config(self.path)
+        self.cadence_config(600000)
+        d=ns.reference(self.c['snapshot']);d['records'][1]['cadence_seconds']=None;d['records'][1]['cadence_ms']=None
+        self.c['snapshot']=self.write('false-absence.json',d);self.save_config()
+        with self.assertRaises(Hold):n.config(self.path)
+        for bad in (0,-1,float('inf'),True):
+            with self.assertRaises(Hold):n.chunk_seconds(dict(cadence_seconds=bad))
+
+    def test_cadence_free_complete_pages_preserve_native_rows_and_resume(self):
+        self.cadence_config(None);rows=self.page_fixture(4030)
+        with self.no_network(),self.job().open(create=True) as j:
+            result=j.acquire();a=result['accounting']
+            self.assertEqual((a['attempts'],a['sealed'],a['spent_unsealed']),(2,1,[]))
+            asset=a['assets'][0]
+            with j.child(asset['root'],asset['campaign_id']) as child:
+                env=child.completed(asset['task_id'])
+                self.assertEqual(env['rows'],rows[:2016]+rows[2015:])
+                self.assertIsNone(env['identity']['depth_cm']);self.assertEqual(env['identity']['native_unit'],'Dimensionless')
+                self.assertFalse(env['product_eligible'])
+                with self.assertRaises(Hold):child.daily_evidence(asset['task_id'],'2026-10-02','0'*64)
+            self.assertEqual(j.acquire()['accounting'],a)
+
+    def test_cadence_free_full_third_page_preserves_spending_and_holds(self):
+        self.cadence_config(None);self.page_fixture(6046)
+        with self.no_network(),self.job().open(create=True) as j:
+            with self.assertRaises(Exception):j.acquire()
+            a=j.accounting();self.assertEqual(a['attempts'],3);self.assertEqual(a['sealed'],0)
+            self.assertTrue(a['spent_unsealed']);self.assertGreater(a['bytes'],0)
+            with self.assertRaises(Hold):j.acquire()
+            self.assertEqual(j.accounting(),a)
+
+    def test_cadence_free_empty_and_attempt_reserve(self):
+        self.cadence_config(None)
+        self.c['limits']['attempts']=2;self.save_config()
+        with self.assertRaises(Hold):n.config(self.path)
+        self.c['limits']['attempts']=3;self.save_config()
+        with self.no_network(),self.job().open(create=True) as j:
+            a=j.acquire()['accounting'];self.assertEqual((a['sealed'],a['covered_empty'],a['attempts']),(1,1,1))
+
+    def test_native_byte_reserve_holds_before_spending_or_window(self):
+        self.cadence_config(None)
+        self.c['limits']['bytes']=3*l.BODY-1;self.save_config()
+        with self.no_network(),self.job().open(create=True) as j:
+            with self.assertRaisesRegex(Hold,'budget'):j.acquire()
+            a=j.accounting();self.assertEqual((a['attempts'],a['bytes']),(0,0))
+            self.assertIsNone(j.execution_window());self.assertFalse((j.root/'history').exists())
+
+    def test_cached_accounting_equals_full_and_fresh_readback(self):
+        with self.no_network(),self.job().open(create=True) as j:
+            a=j.acquire()['accounting']
+            with patch.object(n,'MAX_TASKS',2), patch.object(n,'raw_envelope',wraps=n.raw_envelope) as replay:
+                self.assertEqual(j.accounting(),a);self.assertEqual(replay.call_count,0)
+                self.assertEqual(j.accounting(full=True),a);self.assertEqual(replay.call_count,2)
+                self.assertEqual(j.accounting(),a);self.assertEqual(replay.call_count,2)
+        with self.job().open() as fresh:
+            with patch.object(n,'raw_envelope',wraps=n.raw_envelope) as replay:
+                self.assertEqual(fresh.accounting(),a);self.assertEqual(replay.call_count,2)
+
+    def test_cached_accounting_still_rehashes_every_body_and_seal(self):
+        with self.no_network(),self.job().open(create=True) as j:
+            a=j.acquire()['accounting'];asset=a['assets'][0]
+            files=list((Path(asset['root'])/'campaigns'/asset['campaign_id']/'objects').glob('*.bin'))
+            for p in files:
+                old=p.read_bytes();p.write_bytes(old+b' ')
+                try:
+                    with self.assertRaises(Hold):j.accounting()
+                finally:p.write_bytes(old)
+            self.assertEqual(j.accounting(),a)
+
+    def test_cached_accounting_still_checks_anchor_config_source_and_totals(self):
+        with self.no_network(),self.job().open(create=True) as j:
+            a=j.acquire()['accounting'];asset=a['assets'][0]
+            p=next((Path(asset['root'])/'anchors'/asset['campaign_id']).glob('*.json'));old=p.read_bytes();p.write_bytes(old+b' ')
+            try:
+                with self.assertRaises(Hold):j.accounting()
+            finally:p.write_bytes(old)
+            with patch.object(n,'source_binding',return_value={}):
+                with self.assertRaises(Hold):j.accounting()
+            original=self.path.read_bytes();self.path.write_bytes(original+b' ')
+            try:
+                with self.assertRaises(Hold):j.accounting()
+            finally:self.path.write_bytes(original)
+            old=j.get('status.json');bad=copy.deepcopy(old);bad['accounting']['attempts']+=1;j.summary(bad)
+            try:
+                with self.assertRaises(Hold):j.accounting()
+            finally:j.summary(old)
+
+    def test_verified_json_cache_has_no_mutable_alias_and_rechecks_hash(self):
+        first=ns.reference(self.snapshot);first['records'].clear()
+        self.assertEqual(len(ns.reference(self.snapshot)['records']),2)
+        p=Path(self.snapshot['path']);p.write_bytes(p.read_bytes()+b' ')
+        with self.assertRaises(Hold):ns.reference(self.snapshot)
+        with self.assertRaises(Hold):ns.checked_decode(b'{"x":1,"x":2}',sha(b'{"x":1,"x":2}'))
+
+    def test_throughput_metrics_preserved_by_fresh_status(self):
+        with self.no_network(),self.job().open(create=True) as j:
+            result=j.acquire();metrics=result['throughput']
+            self.assertEqual(metrics['executor_calls'],2)
+            self.assertEqual(len(metrics['provider_request_seconds']),2)
+            for key in ('provider_io_seconds','parse_seconds','journal_and_seal_seconds','validation_seconds','accounting_seconds'):
+                self.assertGreaterEqual(metrics[key],0)
+            self.assertGreater(metrics['seal_semantic_cache_hits'],0)
+        with self.job().open() as j:self.assertEqual(j.status()['throughput'],metrics)
+
 
 if __name__=='__main__':unittest.main()
