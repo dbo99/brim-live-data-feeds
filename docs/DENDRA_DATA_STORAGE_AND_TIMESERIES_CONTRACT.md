@@ -22,6 +22,54 @@ That representation is not by itself sufficient for durable human understanding.
 
 This contract prevents semantic loss even when all native bytes still exist.
 
+### Historical website bulk-export route
+
+`dendra-historical-bulk-readytouse-1` applies only to historical Dendra website
+bulk exports. Exact CSV hash/column identity, the existing corroborated/exact
+datastream-mapping threshold, target VWC, resolved unit/scale, applicable reviewed
+accepted or corroborated fixed UTC-08 timestamps, explicit provider `ReadytoUse`
+purpose, and no affirmative source/configuration conflict admit a nonempty trace
+to the unchanged BRIM daily range/cadence/coverage screen. Unknown depth alone
+does not block admission; it remains null, and conflicting depth remains explicit.
+
+`PROVIDER_READY_TO_USE` is source-processing eligibility, not observation QA.
+Unavailable original API `q` stays `UNAVAILABLE`; a trace with retained API
+evidence for only some intervals is `PARTIALLY_KNOWN`. Neither means q=good.
+Catalogs, QA and private provenance retain the source route, purpose, admission
+basis, API-quality availability and daily dispositions independently. Known API
+quality vetoes and applicable approved source exclusion/quality-claim intervals
+remain effective. Original values and range diagnostics remain preserved, with
+no clipping, interpolation, forward-fill, unit reinterpretation or depth guessing.
+
+Raw, StatusInformation, unknown/conflicting purpose, unresolved units, ambiguous
+identity, unresolved time and explicit source/configuration conflicts remain held.
+All-null selections remain cataloged without fabricated observations. Bulk source
+gaps do not claim valid-empty API queries or complete acquired POR. Completed-day
+science, exact stream isolation, conversions and calendar semantics are unchanged.
+
+The local bulk adapter retains candidate-2 consumer record fields/schema; its
+existing `source_quality_status` string can explicitly state
+`PROVIDER_READY_TO_USE`, with an unavailable/partially-known API-quality reason.
+Actual matched API days retain their existing `RESOLVED_CLEAR`/quarantine/hold
+semantics. Prior accepted, withheld and missing R2 rows remain exact; only days
+previously unresolved solely for missing historical-bulk/API quality evidence
+may be re-screened. Observation-set differences and other blockers remain held.
+
+Adapter row limits are resource safeguards, not scientific eligibility. Historical
+bulk series above the ordinary 1,500,000-row whole-series bound use two bounded
+passes over complete fixed UTC-08 days. The first preserves the core's normalized
+within-day interval mode; the second uses that frozen context and carries the
+previous observed day's cadence through the unchanged core. Transport batches
+contain at most 65,536 rows, complete days at most 1,500,000 raw rows, and cadence
+summaries at most 65,536 interval bins. The offline input guard is 50,000,000 rows
+per series. A capacity/order failure stops the candidate; it never clips,
+downsamples, fills gaps or changes a daily screen.
+
+This route does not weaken API/native acquisition, incremental API updates or
+live API quality contracts. Those routes continue to preserve and use actual
+provider quality/status evidence under their existing policies. The bulk policy
+does not authorize acquisition, backfill, live activation or publication.
+
 ## 2. Four-layer authority model
 
 Dendra data are interpreted through four distinct layers. Do not collapse their roles.

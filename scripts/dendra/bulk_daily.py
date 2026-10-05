@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Offline R2 daily adapter over immutable R1 Parquet and retained API evidence.
+"""Offline historical website-bulk adapter over immutable R1 Parquet.
 
-No provider client, acquisition command, or publisher. Missing CSV quality flags
-are NOT treated as proof of absent API flags. Accepted daily values require a
-complete matched retained API day, the existing quality policy, and core.R's
-screen. Other dates/families remain explicit local holds. No native rewriting.
+ReadytoUse admits an otherwise resolved historical bulk source to unchanged R
+daily screens. Unavailable API q stays unknown. Actual API quality decisions,
+known vetoes and protected R2 days retain their stronger evidence semantics.
+No provider client, acquisition command, publisher or native rewriting.
 """
 import argparse
 import collections
@@ -29,9 +29,20 @@ from dendra.history_acquisition import observation_quality as quality
 from dendra.history_acquisition.safety import digest
 from dendra.history_acquisition.recovery import open_evidence
 
-VERSION = "dendra-bulk-daily-2"
+VERSION = "dendra-bulk-daily-3"
+BULK_POLICY = "dendra-historical-bulk-readytouse-1"
+BULK_ROUTE = "DENDRA_WEBSITE_HISTORICAL_BULK_EXPORT"
+BULK_BASIS = "PROVIDER_READY_TO_USE"
+TIME_STATES = {"ACCEPTED_FIXED_UTC_MINUS_08", "CORROBORATED_FIXED_UTC_MINUS_08"}
+QUALITY_ONLY_HOLDS = {"NO_COMPLETE_RETAINED_API_DAY", "NO_RETAINED_API_QUALITY_EVIDENCE",
+                      "NO_MATCHED_API_QUALITY_EVIDENCE"}
 TARGETS = set(bulk.CLASSES[:2])
 MAX_SERIES_ROWS = 1500000
+# Capacity guards, not source/scientific eligibility. Larger streams use bounded
+# complete-day passes in R; a breached guard fails the candidate without clipping.
+MAX_NATIVE_ROWS = 50000000
+ADAPTER_BOUNDS = dict(whole_rows=MAX_SERIES_ROWS, batch_rows=65536,
+                      day_rows=MAX_SERIES_ROWS, interval_bins=65536)
 PST = timezone(timedelta(hours=-8))
 
 
@@ -41,6 +52,116 @@ def read_json(path, expected=None, limit=64*1024*1024):
     body = path.read_bytes()
     if expected: bulk.require(hashlib.sha256(body).hexdigest() == expected, "Evidence checksum differs: " + str(path))
     return json.loads(body)
+
+
+def load_bulk_metadata(path, checksum, catalog):
+    """Resolve exact retained provider fields; names and values never infer purpose."""
+    mapping = read_json(path, checksum)
+    registry = mapping["evidence_registry_private"]
+    documents = {key: read_json(v["internal_private_path"], v["sha256"])
+                 for key, v in registry.items()}
+    def resolve(locator):
+        obj = documents[locator["evidence_key"]]
+        for part in locator["json_pointer"].strip("/").split("/"):
+            obj = obj[int(part)] if isinstance(obj, list) else obj[part]
+        return obj
+    annotations = {}
+    for key, doc in documents.items():
+        for i, obj in enumerate(doc.get("data", []) if isinstance(doc, dict) else []):
+            if isinstance(obj, dict) and "title" in obj:
+                annotations[obj["_id"]] = (obj, dict(evidence_key=key, json_pointer=f"/data/{i}"))
+    slots = {(r["basename"], int(r["column_ordinal_1_based"])): r for r in mapping["rows"]}
+    result = {}
+    for row in catalog:
+        slot = slots[(Path(row["relative_asset_path"]).name, int(row["column_ordinal_1_based"]))]
+        bulk.require(slot["original_header"] == row["original_header"], "Metadata/export header differs")
+        candidates = slot["candidate_metadata"]
+        claims = []; suitable = True; vetoes = []; annotation_refs = []; locators = []
+        for candidate in candidates:
+            raw = resolve(candidate["metadata_locator"])
+            bulk.require(raw["_id"] == candidate["stream_id"] and
+                         raw["terms"] == candidate["source_parameter_terms"], "Provider metadata differs")
+            claims.append(raw.get("terms", {}).get("dq", {}).get("Purpose"))
+            locators.append(candidate["metadata_locator"])
+            suitable &= (raw.get("is_enabled") is True and raw.get("state") == "ready" and
+                         raw.get("source_type") == "sensor" and not candidate["configuration_action_evidence"])
+            if len(candidates) == 1:
+                bulk.require(raw["_id"] == row["proposed_stream_id"] and
+                             raw["station_id"] == row["proposed_station_id"] and
+                             raw["terms"].get("dt", {}).get("Unit") == row["native_unit"] and
+                             raw["terms"] == json.loads(row["source_parameter_terms"]),
+                             "Exact proposed station/stream/unit metadata differs")
+                for aid in candidate["source_annotation_ids"]:
+                    annotation, locator = annotations[aid]
+                    actions = annotation.get("actions") or []
+                    # Explicit exclusion or a quality claim is a veto, not calibration.
+                    veto = any(a.get("exclude") is True or bool(a.get("flag")) or bool(a.get("attrib"))
+                               for a in actions)
+                    active = annotation.get("is_enabled") is True and annotation.get("state") == "approved"
+                    intervals = annotation.get("intervals") or []
+                    annotation_refs.append(dict(id=aid, locator=locator, state=annotation.get("state"),
+                                                active_quality_veto=active and veto, intervals=intervals))
+                    if active and veto:
+                        for interval in intervals:
+                            vetoes.append((utc(interval["begins_at"]) if interval.get("begins_at") else
+                                           datetime.min.replace(tzinfo=timezone.utc),
+                                           utc(interval["ends_before"]) if interval.get("ends_before") else
+                                           datetime.max.replace(tzinfo=timezone.utc)))
+        result[row["export_local_series_key"]] = dict(
+            provider_purpose=claims[0] if claims and len(set(claims)) == 1 else "CONFLICTING",
+            identity_ready=len(candidates) == 1 and slot["proposed_stream_id"] == row["proposed_stream_id"],
+            source_suitable=suitable, metadata_locators=locators, annotation_references=annotation_refs,
+            veto_intervals=vetoes)
+    bulk.require(len(result) == len(catalog), "Incomplete bulk metadata closure")
+    return result
+
+
+def historical_bulk_admission(row, timestamp_status, source, route=BULK_ROUTE):
+    """Source admission only; no depth predicate and no claim about observation q."""
+    holds = []
+    if route != BULK_ROUTE: holds.append("NOT_HISTORICAL_WEBSITE_BULK_ROUTE")
+    recipe="csv-sha256:"+row["file_sha256"]+":column:"+str(row["column_ordinal_1_based"])
+    if row["export_local_series_key"] != recipe: holds.append("EXPORT_LOCAL_IDENTITY_UNRESOLVED")
+    if (not source["identity_ready"] or row["mapping_state"] not in
+            {"CORROBORATED_PROPOSAL", "EXACT_REVIEWED_CAMP_FIXTURE"}): holds.append("IDENTITY_UNRESOLVED")
+    if source["provider_purpose"] != "ReadytoUse": holds.append("PROVIDER_PURPOSE_NOT_READYTOUSE")
+    resolved_unit=(row["product_class"]==bulk.CLASSES[0] and row["native_unit"]=="Percent" and
+                   float(row["conversion_multiplier"] or 0)==1) or (
+                   row["product_class"]==bulk.CLASSES[1] and row["native_unit"]=="VolumetricWaterContent" and
+                   float(row["conversion_multiplier"] or 0)==100)
+    if not resolved_unit: holds.append("UNIT_OR_TARGET_UNRESOLVED")
+    if timestamp_status not in TIME_STATES: holds.append("TIMESTAMP_UNRESOLVED")
+    if not source["source_suitable"]: holds.append("SOURCE_CONFIGURATION_UNSUITABLE")
+    if row.get("duplicate_of"): holds.append("DUPLICATE_EXPORT_ALIAS")
+    if not int(row["observation_count"]): holds.append("ALL_NULL_TARGET_NO_OBSERVATIONS")
+    return dict(admitted=not holds, holds=holds, historical_source_route=route,
+                provider_purpose=source["provider_purpose"], quality_admission_basis=BULK_BASIS,
+                observation_api_q="UNAVAILABLE", policy=BULK_POLICY)
+
+
+def apply_reviewed_bulk_time(times, review_path, checksum, catalog):
+    """Apply the closed Pepperwood finding only to its exact original export hash."""
+    review = read_json(review_path, checksum)
+    bulk.require(review["result"] == "PEPPERWOOD_TIMESTAMP_CORROBORATED" and
+                 review["timestamp_decision"]["classification"] == "CORROBORATED_FIXED_UTC_MINUS_08",
+                 "Unreviewed bulk timestamp finding")
+    for pin in review["checked_source_pins"]:
+        bulk.require(bulk.sha(Path(pin["path"])) == pin["sha256"], "Timestamp review input changed")
+    original = review["pepperwood_export"]
+    selected = [r for r in catalog if r["file_sha256"] == original["sha256"]]
+    bulk.require(len(selected) == original["unique_resolved_unit_vwc_traces"] == 61 and
+                 all(Path(r["relative_asset_path"]).name == original["basename"] for r in selected),
+                 "Timestamp review/export identity differs")
+    for row in selected:
+        times["files"][row["relative_asset_path"]].update(
+            status="CORROBORATED_FIXED_UTC_MINUS_08", accepted_family=False,
+            basis="Exact hash-bound reviewed Pepperwood shared-file clock; corroborated, not accepted")
+    family = selected[0]["proposed_organization"]
+    times["families"][family] = dict(status="CORROBORATED_FIXED_UTC_MINUS_08",
+        sampled_streams=[], basis="Separate reviewed exact-export finding; no other export inherits")
+    times["bulk_timestamp_review"] = dict(path=str(review_path), sha256=checksum,
+        export_sha256=original["sha256"], qualification=review["timestamp_decision"])
+    return times
 
 
 def utc(value):
@@ -273,39 +394,118 @@ def quality_decision(day, native, api, intervals):
     return dict(state="RESOLVED_CLEAR",reason="EXACT_DAY_MATCH_NO_PROVIDER_QUALITY_VETO",query_complete=True)
 
 
+def bulk_quality_decision(day, native, api, intervals, source_veto=False, prior=None):
+    """Separate bulk admission from unchanged actual API decisions and known vetoes."""
+    decision = quality_decision(day, native, api, intervals)
+    if prior is not None:
+        if prior["daily_status"] != "UNRESOLVED_SEMANTICS":
+            bulk.require((decision["state"], decision["reason"], decision["query_complete"]) ==
+                         (prior["source_quality_status"], prior["source_quality_reason"], prior["query_complete"]),
+                         "Protected R2 source-quality decision changed")
+            return decision
+        if prior["source_quality_reason"] not in QUALITY_ONLY_HOLDS:
+            return decision  # Observation-set differences and other blockers are not released.
+    if decision["state"] == "QUARANTINED": return decision
+    if api and (api["nonnumeric"] or api["conflicts"]): return decision
+    if decision["state"] == "RESOLVED_CLEAR": return decision
+    if decision["reason"] not in QUALITY_ONLY_HOLDS: return decision
+    if source_veto:
+        return dict(state="QUARANTINED", reason="RETAINED_SOURCE_QUALITY_VETO",
+                    query_complete=decision["query_complete"])
+    return dict(state=BULK_BASIS, reason="API_Q_PARTIALLY_KNOWN_BULK_READYTOUSE" if api else
+                "API_Q_UNAVAILABLE_BULK_READYTOUSE", query_complete=False)
+
+
+def compare_r2_science(new, prior):
+    """Exact protected-row regression; only quality-only unresolved days may transition."""
+    old = {r["date"]: r for r in prior}; current = {r["date"]: r for r in new}
+    bulk.require(old.keys() == current.keys(), "R2 daily date extent changed")
+    protected = unchanged = 0; transitions = collections.Counter()
+    for day, before in old.items():
+        after = current[day]
+        if before == after:
+            unchanged += 1
+        else:
+            bulk.require(before["daily_status"] == "UNRESOLVED_SEMANTICS" and
+                         before["source_quality_reason"] in QUALITY_ONLY_HOLDS and
+                         after["daily_status"] in {"ACCEPTED", "WITHHELD_BY_EXISTING_SCREEN"},
+                         "R2 protected value/status/diagnostics changed: " + day)
+            transitions[before["daily_status"] + "->" + after["daily_status"]] += 1
+        protected += before["daily_status"] != "UNRESOLVED_SEMANTICS"
+    return dict(rows=len(prior), protected_rows=protected, protected_rows_unchanged=protected,
+                unchanged_rows=unchanged, intended_transitions=dict(transitions), regressions=0)
+
+
 def calendar_count(row, end):
     if not row["first_observed_timestamp_raw"]:return 0
     a=date.fromisoformat(row["first_observed_timestamp_raw"][:10]);b=min(date.fromisoformat(row["last_observed_timestamp_raw"][:10])+timedelta(days=1),end)
     return max(0,(b-a).days)
 
 
-def build_series(helper,library,out,row,refs,as_of):
+def build_series(helper,library,out,row,refs,as_of,source=None,prior_rows=None):
+    tick=time.monotonic()
     end=min(date.fromisoformat(row["last_observed_timestamp_raw"][:10])+timedelta(days=1),utc(as_of).astimezone(PST).date())
     start=date.fromisoformat(row["first_observed_timestamp_raw"][:10])
-    bulk.require(int(row["observation_count"])<=MAX_SERIES_ROWS,"Explicit per-series R row bound exceeded")
+    bulk.require(int(row["observation_count"])<=MAX_NATIVE_ROWS,"Explicit native input capacity exceeded")
+    bulk.require(source is not None or int(row["observation_count"])<=MAX_SERIES_ROWS,
+                 "Large-series path requires historical bulk admission")
     with tempfile.TemporaryDirectory(prefix="series-",dir=out/"scratch") as tmp:
         scratch=Path(tmp);api,proof=api_day_index(row,refs,scratch);intervals=interval_union(refs)
-        hashes={};counts=collections.Counter();n=0
+        hashes={};counts=collections.Counter();n=0;source_veto_days=set()
+        ordered=hashlib.sha256();previous_stamp=None;previous_record=0
+        first_stamp=last_stamp=None
         csvpath=scratch/"science.csv"
         with csvpath.open("w",newline="") as f:
             w=csv.writer(f);w.writerow(["datastream_id","t","v","value_status","duplicate_conflict","alternative_out_of_range"])
             for x in native_rows(helper,library/row["native_asset"]):
                 stamp=x["source_timestamp_naive"];day=stamp[:10];v=float(x["exported_value"]);n+=1
+                record=int(x["source_csv_record_1_based"])
+                bulk.require((previous_stamp is None or stamp>=previous_stamp) and record>previous_record,
+                             "Native source order differs")
+                previous_stamp,previous_record=stamp,record
+                first_stamp=first_stamp or stamp;last_stamp=stamp
+                ordered.update(canonical_pair(stamp,v))
                 hashes.setdefault(day,hashlib.sha256()).update(canonical_pair(stamp,v));counts[day]+=1
                 t=(datetime.fromisoformat(stamp)+timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if source and source["veto_intervals"]:
+                    at=utc(t)
+                    if any(lo<=at<hi for lo,hi in source["veto_intervals"]):source_veto_days.add(day)
                 w.writerow([row["proposed_stream_id"],t,x["exported_value"],"number",False,False])
         bulk.require(n==int(row["observation_count"]),"R1 native row count changed")
-        decisions={};day=start
+        decisions={};day=start;prior={r["date"]:r for r in prior_rows or []}
         while day<end:
             d=day.isoformat();native=dict(rows=counts[d],sha256=hashes[d].hexdigest()) if d in hashes else None
-            decisions[d]=quality_decision(d,native,api.get(d),intervals);day+=timedelta(days=1)
+            decisions[d]=(bulk_quality_decision(d,native,api.get(d),intervals,d in source_veto_days,prior.get(d))
+                          if source else quality_decision(d,native,api.get(d),intervals))
+            day+=timedelta(days=1)
         cfg=out/"evidence"/(row["asset_id"]+".input.json")
-        bulk.write_json(cfg,dict(version="dendra-bulk-daily-input-2",core_sha256=bulk.sha(SCRIPTS/"dendra/core.R"),
+        config=dict(version="dendra-bulk-daily-input-3" if source else "dendra-bulk-daily-input-2",core_sha256=bulk.sha(SCRIPTS/"dendra/core.R"),
             csv=str(csvpath),csv_sha256=bulk.sha(csvpath),stream_id=row["proposed_stream_id"],native_unit=row["native_unit"],
-            multiplier=float(row["conversion_multiplier"]),start=start.isoformat(),end=end.isoformat(),as_of=as_of,quality_days=decisions))
+            multiplier=float(row["conversion_multiplier"]),start=start.isoformat(),end=end.isoformat(),as_of=as_of,quality_days=decisions)
+        if source:
+            config.update(historical_bulk_policy=BULK_POLICY,historical_source_route=BULK_ROUTE,
+                          quality_admission_basis=BULK_BASIS)
+            config.update(native_rows=n,adapter_bounds=ADAPTER_BOUNDS)
+            proof.update(historical_bulk_policy=BULK_POLICY,historical_source_route=BULK_ROUTE,
+                provider_purpose=source["provider_purpose"],quality_admission_basis=BULK_BASIS,
+                provider_metadata_locators=source["metadata_locators"],
+                source_annotation_references=source["annotation_references"],
+                source_veto_observation_days=sorted(source_veto_days),
+                observation_api_q="PARTIALLY_KNOWN" if refs else "UNAVAILABLE",
+                day_quality_basis_counts=dict(collections.Counter(d["state"] for d in decisions.values())),
+                known_API_quality_policy=quality.binding())
+        bulk.write_json(cfg,config)
         science_path=out/"science"/(row["asset_id"]+".json")
         bulk.run(["Rscript","--vanilla",SCRIPTS/"dendra/bulk_daily.R",cfg,science_path])
         science=read_json(science_path)
+        proof["resource_accounting"]=dict(native_rows=n,ordered_timestamp_value_sha256=ordered.hexdigest(),
+            first_source_timestamp_naive=first_stamp,last_source_timestamp_naive=last_stamp,
+            native_day_rows=dict(counts),adapter_bounds=ADAPTER_BOUNDS,maximum_native_rows=MAX_NATIVE_ROWS,
+            R=science.get("resource_accounting"),wall_seconds=time.monotonic()-tick,
+            parent_peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            children_peak_rss_bytes=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+        if prior_rows is not None:
+            proof["r2_regression"]=compare_r2_science(science["rows"],prior_rows)
         bulk.write_json(out/"evidence"/(row["asset_id"]+".proof.json"),proof)
     return science
 
@@ -321,7 +521,8 @@ def validate_daily(rows,sid):
                      r["water_day_aligned"]==(aligned-date(1999,10,1)).days+1,"Daily calendar mismatch")
         accepted=r["daily_status"]=="ACCEPTED"
         bulk.require((r["daily_mean_vwc_percent"] is not None)==accepted,"Held/missing day has accepted value")
-        if accepted:bulk.require(r["n_valid"]>0 and r["plot_eligible"] and r["source_quality_status"]=="RESOLVED_CLEAR","Invalid daily acceptance")
+        if accepted:bulk.require(r["n_valid"]>0 and r["plot_eligible"] and
+                                r["source_quality_status"] in {"RESOLVED_CLEAR",BULK_BASIS},"Invalid daily acceptance")
 
 
 def contract_columns(row):
@@ -351,13 +552,15 @@ def daily_table(helper,path,rows):
     bulk.require(json.loads(bulk.run([helper,'readback',path.with_suffix('.parquet')]).stdout)['rows']==len(rows),'Daily Parquet readback differs')
 
 
-def consumer_fixture(products,out):
+def consumer_fixture(products,out,unknown_key=None,fixture_name="00G_CANDIDATE_FIXTURE.json"):
     choices={}
     for kind in ("known_percent","known_fraction","unknown_depth"):
         for row,daily in products:
             good=[r for r in daily if r["daily_status"]=="ACCEPTED"]
             depth=row["depth_cm"]
             ok=(kind=="known_percent" and depth and row["product_class"]==bulk.CLASSES[0]) or (kind=="known_fraction" and depth and row["product_class"]==bulk.CLASSES[1]) or (kind=="unknown_depth" and not depth)
+            if kind=="unknown_depth" and unknown_key is not None:
+                ok=ok and row["export_local_series_key"]==unknown_key
             if ok and good:
                 choices[kind]=dict(station=row["proposed_station"],station_id=row["proposed_station_id"],
                     stream_id=row["proposed_stream_id"],export_local_series_key=row["export_local_series_key"],
@@ -373,7 +576,7 @@ def consumer_fixture(products,out):
                 date_field="date",value_field="daily_mean_vwc_percent",depth_nullable=True,
                 daily_states=["ACCEPTED","WITHHELD_BY_EXISTING_SCREEN","MISSING","UNRESOLVED_SEMANTICS"],
                 policy="dendra-daily-1.0.0-frozen-cadence",examples=choices)
-    bulk.write_json(out/"00G_CANDIDATE_FIXTURE.json",schema)
+    bulk.write_json(out/fixture_name,schema)
     # An exact, closed schema for the small producer proposal; no app installation.
     record={k:dict(type="integer") for k in (
         "water_year dowy water_day water_year_days water_day_aligned n_valid n_total n_null n_invalid n_missing "
@@ -408,7 +611,27 @@ def consumer_fixture(products,out):
     return schema
 
 
-def build(library,coverage,output,as_of,prior_daily):
+def read_daily_csv(path, schema):
+    """Typed readback under the preserved candidate-2 record contract."""
+    properties=schema["properties"]["examples"]["properties"]["unknown_depth"]["properties"]["records"]["items"]["properties"]
+    with Path(path).open(newline="") as f:rows=list(csv.DictReader(f))
+    for row in rows:
+        bulk.require(set(row)==set(properties),"R2 daily field contract differs")
+        for key,value in row.items():
+            types=properties[key]["type"];types=[types] if isinstance(types,str) else types
+            if value=="" and "null" in types:row[key]=None
+            elif "boolean" in types:
+                bulk.require(value in {"True","False"},"Invalid daily boolean");row[key]=value=="True"
+            elif "integer" in types:row[key]=int(value)
+            elif "number" in types:
+                # Retain R2's integer spelling in number fields (e.g. zero/144).
+                row[key]=int(value) if value.lstrip("-").isdigit() else float(value)
+            elif "array" in types:row[key]=json.loads(value)
+    return rows
+
+
+def build(library,coverage,output,as_of,prior_daily,r2_baseline,mapping,mapping_sha256,
+          timestamp_review,timestamp_review_sha256,impact_review,impact_review_sha256):
     tick=time.monotonic();bulk.require(not output.exists() and output.parent==library,"Fresh versioned daily subroot required")
     with (library/"SERIES_CATALOG.csv").open() as f:catalog=list(csv.DictReader(f))
     manifest=read_json(library/"NATIVE_VWC_ASSET_MANIFEST.json");native_assets={a["export_local_series_key"]:a for a in manifest["assets"]}
@@ -417,57 +640,105 @@ def build(library,coverage,output,as_of,prior_daily):
     target=[r for r in catalog if r["product_class"] in TARGETS and r["materialized"]=="True"]
     bulk.require(len(catalog)==470 and len(target)==335,"R1 exact target closure differs")
     refs=load_references(coverage,{r["proposed_stream_id"] for r in target})
+    baseline_manifest=read_json(r2_baseline/"DAILY_ASSET_MANIFEST.json")
+    bulk.require(baseline_manifest["version"]=="dendra-bulk-daily-2" and
+                 baseline_manifest["native_catalog_pins"]==pins and
+                 baseline_manifest["coverage_summary"]["sha256"]==bulk.sha(coverage),"R2 baseline/input binding differs")
+    baseline_result=read_json(r2_baseline/"DAILY_PRODUCT_RESULT.json")
+    bulk.require(baseline_result["as_of"]==as_of,"Use the R2 cutoff for exact regression")
+    baseline_assets={a["export_local_series_key"]:a for a in baseline_manifest["assets"]}
+    for asset in baseline_assets.values():
+        bulk.require(bulk.sha(r2_baseline/asset["path"])==asset["sha256"] and
+                     bulk.sha(r2_baseline/asset["csv"]["path"])==asset["csv"]["sha256"],"R2 baseline asset changed")
+    baseline_schema=read_json(r2_baseline/"00G_CANDIDATE_SCHEMA.json")
+    baseline_catalog={r["export_local_series_key"]:r for r in csv.DictReader((r2_baseline/"DAILY_SERIES_CATALOG.csv").open())}
+    sources=load_bulk_metadata(mapping,mapping_sha256,catalog)
+    impact=read_json(impact_review,impact_review_sha256)
+    bulk.require(impact["result"]=="BULK_READYTOUSE_POLICY_REVIEW_READY","Unreviewed bulk impact evidence")
+    conflicts={impact["unknown_depth_multiplicity"]["conflict_excluded"]["id"]}
     output.mkdir()
     for name in ("series","science","evidence","scratch"): (output/name).mkdir()
     try:
         helper=bulk.compile_helper(output/"bulk-csv-arrow")
-        times=timestamp_gate(helper,library,catalog,refs);bulk.write_json(output/"TIMESTAMP_EVIDENCE.json",times)
+        times=apply_reviewed_bulk_time(read_json(r2_baseline/"TIMESTAMP_EVIDENCE.json"),
+                                      timestamp_review,timestamp_review_sha256,catalog)
+        bulk.write_json(output/"TIMESTAMP_EVIDENCE.json",times)
         print("TIMESTAMP_GATE "+json.dumps({k:v["status"] for k,v in times["families"].items()}),flush=True)
-        daily_catalog=[];assets=[];qa=[];products=[];end=utc(as_of).astimezone(PST).date()
+        daily_catalog=[];assets=[];qa=[];products=[];regressions=[];end=utc(as_of).astimezone(PST).date()
         for row in catalog:
+            source=sources[row["export_local_series_key"]]
+            status=times["files"][row["relative_asset_path"]]["status"]
+            admission=historical_bulk_admission(row,status,source)
+            group=refs.get(row["proposed_stream_id"],[])
             entry=dict(row);entry.update(depth_cm=float(row["depth_cm"]) if row["depth_cm"] else None,
-                depth_status=row["depth_status"] if row["depth_cm"] else "UNKNOWN",
-                timestamp_status=times["files"][row["relative_asset_path"]]["status"],daily_asset=None,
+                depth_status=row["depth_status"] if row["depth_cm"] else "CONFLICTING" if row["proposed_stream_id"] in conflicts else "UNKNOWN",
+                timestamp_status=status,daily_asset=None,
                 accepted_daily_rows=0,withheld_daily_rows=0,missing_daily_rows=0,unresolved_daily_candidates=0,
-                eligibility="EXCLUDED_NON_TARGET",timestamp_evidence="TIMESTAMP_EVIDENCE.json")
+                eligibility="EXCLUDED_NON_TARGET",timestamp_evidence="TIMESTAMP_EVIDENCE.json",
+                historical_source_route=BULK_ROUTE,provider_purpose=source["provider_purpose"],
+                quality_admission_basis=BULK_BASIS if admission["admitted"] else None,
+                observation_api_q="PARTIALLY_KNOWN" if group else "UNAVAILABLE",
+                source_annotation_evidence="KNOWN_METADATA" if source["annotation_references"] else "NO_RETAINED_ANNOTATION_CLAIM",
+                bulk_prescreen_holds=admission["holds"],historical_bulk_policy=BULK_POLICY)
             if row["product_class"] not in TARGETS:daily_catalog.append(entry);continue
             if row["duplicate_of"]:entry["eligibility"]="DUPLICATE_EXPORT_ALIAS";daily_catalog.append(entry);continue
             if not int(row["observation_count"]):entry["eligibility"]="ALL_NULL_TARGET_NO_OBSERVATIONS";daily_catalog.append(entry);continue
             if not calendar_count(row,end):entry["eligibility"]="NO_COMPLETED_NATIVE_DAYS";daily_catalog.append(entry);continue
-            family=times["families"][row["proposed_organization"]]["status"]
-            group=refs.get(row["proposed_stream_id"],[])
-            if family!="ACCEPTED_FIXED_UTC_MINUS_08" or not group or int(row["observation_count"])>MAX_SERIES_ROWS:
+            if not admission["admitted"]:
                 entry["eligibility"]="UNRESOLVED_SEMANTICS"
-                entry["hold_reason"]="TIMESTAMP_FAMILY_UNRESOLVED" if family!="ACCEPTED_FIXED_UTC_MINUS_08" else "NO_RETAINED_API_QUALITY_EVIDENCE" if not group else "PER_SERIES_ROW_BOUND"
+                entry["hold_reason"]=admission["holds"][0]
                 entry["unresolved_daily_candidates"]=calendar_count(row,end)
                 daily_catalog.append(entry);continue
-            science=build_series(helper,library,output,row,group,as_of)
+            old_asset=baseline_assets.get(row["export_local_series_key"])
+            old_science=None;old_daily={}
+            if old_asset:
+                bulk.require(bulk.sha(r2_baseline/"science"/(row["asset_id"]+".json"))==old_asset["science_sha256"],"R2 science changed")
+                old_science=read_json(r2_baseline/"science"/(row["asset_id"]+".json"))["rows"]
+                old_daily={r["date"]:r for r in read_daily_csv(r2_baseline/old_asset["csv"]["path"],baseline_schema)}
+            science=build_series(helper,library,output,row,group,as_of,source,old_science)
+            old_by_date={r["date"]:r for r in old_science or []}
             daily=[]
             for r in science["rows"]:
+                if r==old_by_date.get(r["date"]):
+                    daily.append(old_daily[r["date"]]);continue
                 r.update(stream_id=row["proposed_stream_id"],accepted_stream_id=row["accepted_stream_id"] or None,
                     export_local_series_key=row["export_local_series_key"],station_id=row["proposed_station_id"],station_name=row["proposed_station"],
                     depth_cm=entry["depth_cm"],depth_status=entry["depth_status"],native_unit=row["native_unit"],
                     conversion_multiplier=float(row["conversion_multiplier"]),processing_version=VERSION)
                 daily.append(contract_columns(r))
+            if old_asset:
+                proof=read_json(output/"evidence"/(row["asset_id"]+".proof.json"))
+                regression=dict(stream_id=row["proposed_stream_id"],export_local_series_key=row["export_local_series_key"],
+                                **proof["r2_regression"])
+                for r in daily:
+                    before=old_daily[r["date"]]
+                    if before["daily_status"]!="UNRESOLVED_SEMANTICS":
+                        bulk.require(r==before,"Protected R2 consumer row changed")
+                regressions.append(regression)
             validate_daily(daily,row["proposed_stream_id"])
             path=output/"series"/(row["asset_id"]+".csv");daily_table(helper,path,daily)
             counts=collections.Counter(r["daily_status"] for r in daily)
             entry.update(daily_asset=path.with_suffix(".parquet").relative_to(output).as_posix(),eligibility="LOCAL_DAILY_CANDIDATE",
                 accepted_daily_rows=counts["ACCEPTED"],withheld_daily_rows=counts["WITHHELD_BY_EXISTING_SCREEN"],
                 missing_daily_rows=counts["MISSING"],unresolved_daily_candidates=counts["UNRESOLVED_SEMANTICS"])
-            source=native_assets[row["export_local_series_key"]]
+            native_source=native_assets[row["export_local_series_key"]]
             assets.append(dict(path=entry["daily_asset"],sha256=bulk.sha(path.with_suffix(".parquet")),bytes=path.with_suffix(".parquet").stat().st_size,
                 csv=dict(path=path.relative_to(output).as_posix(),sha256=bulk.sha(path),bytes=path.stat().st_size),rows=len(daily),states=dict(counts),
-                source_native=source,original_csv_sha256=row["file_sha256"],export_local_series_key=row["export_local_series_key"],
+                source_native=native_source,original_csv_sha256=row["file_sha256"],export_local_series_key=row["export_local_series_key"],
                 stream_id=row["proposed_stream_id"],science_sha256=bulk.sha(output/"science"/(row["asset_id"]+".json")),
-                input_sha256=bulk.sha(output/"evidence"/(row["asset_id"]+".input.json")),quality_proof_sha256=bulk.sha(output/"evidence"/(row["asset_id"]+".proof.json"))))
+                input_sha256=bulk.sha(output/"evidence"/(row["asset_id"]+".input.json")),quality_proof_sha256=bulk.sha(output/"evidence"/(row["asset_id"]+".proof.json")),
+                historical_source_route=BULK_ROUTE,quality_admission_basis=BULK_BASIS,
+                provider_purpose=source["provider_purpose"],observation_api_q=entry["observation_api_q"]))
             qa.append(dict(export_local_series_key=row["export_local_series_key"],stream_id=row["proposed_stream_id"],
                 observations_considered=sum(r["observation_count"] for r in daily),nominal_range_flagged=sum(r["nominal_range_observations"] for r in daily),
                 provider_quality_withheld_observations=sum(r["observation_count"] for r in daily if r["source_quality_status"]=="QUARANTINED"),
                 unresolved_observations=sum(r["observation_count"] for r in daily if r["daily_status"]=="UNRESOLVED_SEMANTICS"),
-                observation_level_deletions=0,**dict(counts)))
+                observation_level_deletions=0,historical_source_route=BULK_ROUTE,provider_purpose=source["provider_purpose"],
+                quality_admission_basis=BULK_BASIS,observation_api_q=entry["observation_api_q"],
+                daily_quality_basis_counts=dict(collections.Counter(r["source_quality_status"] for r in daily)),**dict(counts)))
             # Retain only bounded examples in memory; full daily rows are durable files.
-            products.append((row,[r for r in daily if r["daily_status"]=="ACCEPTED"][:3]))
+            fixture_row=dict(row,depth_status=entry["depth_status"])
+            products.append((fixture_row,[r for r in daily if r["daily_status"]=="ACCEPTED"][:3]))
             daily_catalog.append(entry)
             print("DAILY "+row["proposed_stream_id"]+" "+json.dumps(dict(counts)),flush=True)
         bykey={r["export_local_series_key"]:r for r in daily_catalog}
@@ -475,7 +746,27 @@ def build(library,coverage,output,as_of,prior_daily):
             if r["duplicate_of"]:r["daily_asset"]=bykey[r["duplicate_of"]]["daily_asset"]
         bulk.table_parquet(helper,output/"DAILY_SERIES_CATALOG.csv",daily_catalog)
         bulk.write_csv(output/"DAILY_QA_SUMMARY.csv",qa)
-        fixture=consumer_fixture(products,output)
+        bulk.require(len(assets)==impact["model_b"]["enter_nonempty_daily_screen"],"Reviewed screen-entry ceiling differs; stop for review")
+        unknown_counts=collections.Counter(r["proposed_station_id"] for r in catalog if r["product_class"] in TARGETS and
+                                          not r["duplicate_of"] and not r["depth_cm"] and r["proposed_stream_id"] not in conflicts)
+        unknown_products=[(r,d) for r,d in products if not r["depth_cm"] and r["proposed_stream_id"] not in conflicts and d]
+        single=next((r["export_local_series_key"] for r,d in unknown_products if unknown_counts[r["proposed_station_id"]]==1),None)
+        fixture=consumer_fixture(products,output,single)
+        fixture_representatives=[]
+        by_station=collections.defaultdict(list)
+        for r,d in unknown_products:by_station[r["proposed_station_id"]].append((r,d))
+        multiple=next((rs for rs in by_station.values() if len(rs)>=2),[])
+        for r,d in multiple[:2]:
+            name="00G_MULTI_UNKNOWN_"+r["asset_id"]+".json"
+            consumer_fixture(products,output,r["export_local_series_key"],name)
+            fixture_representatives.append(dict(path=name,station_id=r["proposed_station_id"],stream_id=r["proposed_stream_id"],
+                                               export_local_series_key=r["export_local_series_key"],sha256=bulk.sha(output/name)))
+        bulk.require(bulk.sha(output/"00G_CANDIDATE_SCHEMA.json")==bulk.sha(r2_baseline/"00G_CANDIDATE_SCHEMA.json"),
+                     "Consumer schema changed; stop for 00G review")
+        bulk.require(len(regressions)==len(baseline_assets),"Incomplete prior R2 regression closure")
+        bulk.write_json(output/"R2_REGRESSION.json",dict(streams=regressions,regressions=0,
+            intended_transitions=dict(sum((collections.Counter(r["intended_transitions"]) for r in regressions),collections.Counter())),
+            protected_rows=sum(r["protected_rows"] for r in regressions),unchanged_rows=sum(r["unchanged_rows"] for r in regressions)))
         comparisons=[]
         for prior_path in prior_daily:
             old=read_json(prior_path);bulk.require(old["science_binding"]["core_sha256"]==bulk.sha(SCRIPTS/"dendra/core.R"),"Prior daily science differs")
@@ -494,15 +785,21 @@ def build(library,coverage,output,as_of,prior_daily):
         bulk.write_json(output/"DAILY_ASSET_MANIFEST.json",dict(version=VERSION,as_of=as_of,completed_end_exclusive=end.isoformat(),
             native_library_root=str(library),native_catalog_pins=pins,source_sha256=source,assets=assets,
             policy=quality.binding(),daily_policy="dendra-daily-1.0.0-frozen-cadence",publication_eligible=False,
+            historical_bulk_policy=BULK_POLICY,historical_source_route=BULK_ROUTE,
+            candidate_version="dendra-00g-local-candidate-3",consumer_format_version=fixture["version"],
+            fixture_representatives=fixture_representatives,
+            bulk_metadata_binding=dict(path=str(mapping),sha256=mapping_sha256),
+            impact_review_binding=dict(path=str(impact_review),sha256=impact_review_sha256),
+            r2_regression_binding=dict(root=str(r2_baseline),manifest_sha256=bulk.sha(r2_baseline/"DAILY_ASSET_MANIFEST.json")),
             timestamp_evidence_sha256=bulk.sha(output/"TIMESTAMP_EVIDENCE.json"),
             coverage_summary=dict(path=str(coverage),sha256=bulk.sha(coverage)),
-            meaning="Local candidate; accepted means exact-day API quality binding plus unchanged daily screen. No public acceptance or whole-POR claim.",
+            meaning="Local historical website-bulk candidate; ReadytoUse source admission plus unchanged daily science. API q unknown stays unavailable; actual API decisions and known vetoes remain distinct. No publication or whole-POR claim.",
             csv_layout="One daily CSV per exact export-local series under series/, same stem as Parquet; never concatenate by station/depth"))
         for name,pin in pins.items():bulk.require(bulk.sha(library/name)==pin,"Native catalog/manifest modified")
         for a in native_assets.values():bulk.require(bulk.sha(library/a["path"])==a["sha256"],"Native Parquet changed")
         inputs=read_json(library/"IMPORT_INPUT_BINDING.json")
         for a in inputs["originals"]:bulk.require(bulk.sha(Path(inputs["input_directory"])/a["basename"])==a["sha256"],"Original CSV changed")
-        result=dict(result="READY_WITH_FAMILY_TIMESTAMP_HOLDS",version=VERSION,as_of=as_of,output_root=str(output),
+        result=dict(result="READY_WITH_HOLDS",version=VERSION,as_of=as_of,output_root=str(output),
             importer_head=bulk.run(["git","rev-parse","HEAD"]).stdout.strip(),catalog_rows=len(daily_catalog),
             daily_asset_series=len(assets),series_with_accepted_days=sum(a["states"].get("ACCEPTED",0)>0 for a in assets),
             daily_rows=sum(a["rows"] for a in assets),parquet_bytes=sum(a["bytes"] for a in assets),csv_bytes=sum(a["csv"]["bytes"] for a in assets),
@@ -512,13 +809,32 @@ def build(library,coverage,output,as_of,prior_daily):
             timestamp_families=times["families"],unit_unresolved_held=sum(r["product_class"]==bulk.CLASSES[2] for r in catalog),
             target_observations=sum(a["rows"] for a in native_assets.values()),qa_totals={k:sum(x[k] for x in qa) for k in ['observations_considered','nominal_range_flagged','provider_quality_withheld_observations','unresolved_observations','observation_level_deletions']},
             camp_cady=camp,fixture_kinds=list(fixture['examples']),original_csv_writes=0,native_parquet_writes=0,provider_requests=0,
+            historical_bulk_policy=BULK_POLICY,historical_source_route=BULK_ROUTE,
+            admission=dict(resolved_unique_targets=sum(r["product_class"] in TARGETS and not r["duplicate_of"] for r in catalog),
+                ready_to_use_unique_targets=sum(r["product_class"] in TARGETS and not r["duplicate_of"] and
+                                                sources[r["export_local_series_key"]]["provider_purpose"]=="ReadytoUse" for r in catalog),
+                screen_entry_traces=len(assets),new_screen_entry_traces=len(assets)-len(baseline_assets),
+                all_null_targets=sum(r["product_class"] in TARGETS and not r["duplicate_of"] and not int(r["observation_count"]) for r in catalog),
+                overlapping_prescreen_holds=dict(collections.Counter(h for r in daily_catalog if r["product_class"] in TARGETS and
+                    not r["duplicate_of"] and not r["daily_asset"] for h in r["bulk_prescreen_holds"]))),
+            quality_provenance=dict(provider_ready_to_use_admission_traces=len(assets),
+                API_q_entirely_unavailable_traces=sum(a["observation_api_q"]=="UNAVAILABLE" for a in assets),
+                API_q_partially_known_traces=sum(a["observation_api_q"]=="PARTIALLY_KNOWN" for a in assets),
+                retained_API_day_quality_basis_traces=sum(x["daily_quality_basis_counts"].get("RESOLVED_CLEAR",0)>0 for x in qa),
+                daily_quality_basis_counts=dict(sum((collections.Counter(x["daily_quality_basis_counts"]) for x in qa),collections.Counter())),
+                source_annotation_metadata_traces=sum(bool(sources[a["export_local_series_key"]]["annotation_references"]) for a in assets)),
+            r2_regression=dict(prior_streams_compared=len(regressions),regressions=0,
+                unchanged_streams=sum(r["unchanged_rows"]==r["rows"] for r in regressions),
+                protected_rows=sum(r["protected_rows"] for r in regressions),
+                intended_transitions=dict(sum((collections.Counter(r["intended_transitions"]) for r in regressions),collections.Counter()))),
+            consumer_schema_unchanged=True,fixture_representatives=fixture_representatives,
             performance=dict(wall_seconds=time.monotonic()-tick,parent_peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-                             children_peak_rss_bytes=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,memory_note="macOS bytes; one series in R, disk-bounded API union"))
+                             children_peak_rss_bytes=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,memory_note="macOS bytes; ordinary whole series or bounded complete-day R passes, disk-bounded API union"))
         bulk.write_json(output/"DAILY_PRODUCT_RESULT.json",result)
-        with zipfile.ZipFile(output/"L03_DAILY_R2_REVIEW.zip","w",zipfile.ZIP_DEFLATED) as z:
-            for n in ['DAILY_PRODUCT_RESULT.json','DAILY_SERIES_CATALOG.csv','DAILY_QA_SUMMARY.csv','TIMESTAMP_EVIDENCE.json','00G_CANDIDATE_FIXTURE.json','00G_CANDIDATE_SCHEMA.json','DAILY_COMPARISONS.json']:
+        with zipfile.ZipFile(output/"L03_DAILY_R3_REVIEW.zip","w",zipfile.ZIP_DEFLATED) as z:
+            for n in ['DAILY_PRODUCT_RESULT.json','DAILY_SERIES_CATALOG.csv','DAILY_QA_SUMMARY.csv','TIMESTAMP_EVIDENCE.json','00G_CANDIDATE_FIXTURE.json','00G_CANDIDATE_SCHEMA.json','DAILY_COMPARISONS.json','DAILY_ASSET_MANIFEST.json','R2_REGRESSION.json']+[r['path'] for r in fixture_representatives]:
                 z.write(output/n,n)
-        bulk.require((output/"L03_DAILY_R2_REVIEW.zip").stat().st_size<=5*1024*1024,"Review package exceeds 5 MiB")
+        bulk.require((output/"L03_DAILY_R3_REVIEW.zip").stat().st_size<=5*1024*1024,"Review package exceeds 5 MiB")
         return result
     except Exception as exc:
         bulk.write_json(output/"DAILY_HOLD.json",dict(error=str(exc),accepted=False,version=VERSION))
@@ -529,7 +845,11 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('library','coverage-summary','output','as-of'):p.add_argument('--'+name,required=True)
     p.add_argument('--prior-daily',action='append',required=True)
-    a=p.parse_args();r=build(Path(a.library),Path(a.coverage_summary),Path(a.output),a.as_of,[Path(x) for x in a.prior_daily])
+    for name in ('r2-baseline','bulk-mapping','bulk-mapping-sha256','timestamp-review','timestamp-review-sha256',
+                 'impact-review','impact-review-sha256'):p.add_argument('--'+name,required=True)
+    a=p.parse_args();r=build(Path(a.library),Path(a.coverage_summary),Path(a.output),a.as_of,[Path(x) for x in a.prior_daily],
+        Path(a.r2_baseline),Path(a.bulk_mapping),a.bulk_mapping_sha256,Path(a.timestamp_review),a.timestamp_review_sha256,
+        Path(a.impact_review),a.impact_review_sha256)
     print(json.dumps({k:r[k] for k in ['result','daily_asset_series','series_with_accepted_days','daily_rows','daily_states']}))
 
 
