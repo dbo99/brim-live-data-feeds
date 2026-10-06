@@ -93,6 +93,12 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
+# Local runs start at the repository root; Actions sources this builder from
+# its isolated candidate directory with GITHUB_WORKSPACE pointing at source.
+source(file.path(Sys.getenv("GITHUB_WORKSPACE", unset = "."),
+                 "scripts/soil_moisture/scan_nwcc_compat.R"))
+pt_scan_fetch <- pt_scan_make_fetch_compat()
+
 # ---- 2. Paths, constants, and switches -------------------------------------
 
 station_index_csv <- Sys.getenv(
@@ -775,7 +781,7 @@ fetch_one_scan_year <- function(site_code, year) {
     out <- tryCatch(
       withCallingHandlers(
         {
-          x <- soilDB::fetchSCAN(
+          x <- pt_scan_fetch(
             site.code = site_code,
             year = year,
             report = "SMS",
