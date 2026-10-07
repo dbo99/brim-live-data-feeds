@@ -20,9 +20,11 @@ retain native record/element and field presence, flags, value, date, fixed GMT-0
 END timestamp, identity, units and query/retrieval/hash provenance. Ledger entries
 record per-capture/per-sensor status, returned/omitted dates and failure reason.
 coverage_on returns ALL overlapping events; no evidence yields UNQUERIED.
-Version 1.1.0 also preserves absent current value + QC S + finite original value
+Versions 1.1.0 and 1.2.0 preserve absent current value + QC S + finite original value
 as SUSPECT_ORIGINAL_ONLY: a returned record with no current numeric observation.
-Validation replays stored 1.0.0 semantics without migrating accepted archives.
+Version 1.2.0 also preserves absent current value + QC S + absent original value
+as SUSPECT_NO_NUMERIC_VALUE. Neither state invents a current or original value.
+Validation replays stored 1.0.0/1.1.0 semantics without migrating accepted archives.
 
 write_archive creates a fresh directory with exactly history.json and
 manifest.json (both canonical JSON and explicitly ineligible for publication).
@@ -42,8 +44,9 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 CONTRACT = "snotel-awdb-history-1"
-ADAPTER_VERSION = "snotel-awdb-offline-1.1.0"
-_SUPPORTED_ADAPTER_VERSIONS = ("snotel-awdb-offline-1.0.0", ADAPTER_VERSION)
+ADAPTER_VERSION = "snotel-awdb-offline-1.2.0"
+_SUPPORTED_ADAPTER_VERSIONS = ("snotel-awdb-offline-1.0.0", "snotel-awdb-offline-1.1.0",
+                               ADAPTER_VERSION)
 TARGET = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data"
 MAX_BODY = 1024 * 1024
 MAX_HISTORY = 64 * 1024 * 1024
@@ -227,12 +230,18 @@ def _records(body, requested, dates, sensors, adapter_version):
                 require(key not in row or row[key] is None or _number(row[key]),
                         "nonfinite/nonnumeric native value")
             missing = ("value" in row and row["value"] is None) or row.get("qcFlag") == "M"
-            suspect_original = (adapter_version == ADAPTER_VERSION and "value" not in row
+            suspect_original = (adapter_version in ("snotel-awdb-offline-1.1.0", "snotel-awdb-offline-1.2.0")
+                                and "value" not in row
                                 and row.get("qcFlag") == "S" and _number(row.get("origValue")))
-            require(missing or suspect_original or ("value" in row and _number(row["value"])),
+            suspect_no_numeric = (adapter_version == "snotel-awdb-offline-1.2.0"
+                                  and "value" not in row and row.get("qcFlag") == "S"
+                                  and "origValue" not in row)
+            require(missing or suspect_original or suspect_no_numeric or
+                    ("value" in row and _number(row["value"])),
                     "unclassified absent value")
             state = ("EXPLICIT_MISSING" if missing else
-                     "SUSPECT_ORIGINAL_ONLY" if suspect_original else "OBSERVED")
+                     "SUSPECT_ORIGINAL_ONLY" if suspect_original else
+                     "SUSPECT_NO_NUMERIC_VALUE" if suspect_no_numeric else "OBSERVED")
             result[identity].append(dict(
                 provider_date=day, source_timestamp_utc=source_timestamp(day),
                 source_boundary_timezone="GMT-08", value_native=row.get("value"),

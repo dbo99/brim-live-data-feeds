@@ -7,6 +7,8 @@ No fixtures are downloaded; the real corpus is required for an acceptance run.
 SNOTEL_SUSPECT_FIXTURES optionally adds a local descriptor with pinned metadata,
 one capture (same fields), expected_sensor/expected_rows and legacy_archives
 ({station_triplet, path, manifest_sha256}) for real representation/version replay.
+SNOTEL_NO_NUMERIC_FIXTURES adds pinned metadata/capture and legacy_1_1_archive
+({path, manifest_sha256}) for the absent-current/absent-original representation.
 """
 
 import base64
@@ -142,12 +144,36 @@ class Synthetic(unittest.TestCase):
                     self.assertEqual(event["state"], "SUSPECT_ORIGINAL_ONLY")
                     self.assertTrue(event["successful_coverage"])
                     for item in (doc, row, entry):
-                        self.assertEqual(item["adapter_version"], "snotel-awdb-offline-1.1.0")
+                        self.assertEqual(item["adapter_version"], "snotel-awdb-offline-1.2.0")
+
+    def test_suspect_no_numeric_preserves_fields_and_returned_coverage(self):
+        for flags in ({}, dict(qaFlag=None, origQcFlag=None), dict(qaFlag="R", origQcFlag="S")):
+            source = dict(date="2026-03-07", qcFlag="S", **flags)
+            with self.subTest(source=source):
+                doc = self.build(capture([source]))
+                row = doc["observations"][0]
+                self.assertEqual(row["observation_state"], "SUSPECT_NO_NUMERIC_VALUE")
+                self.assertIsNone(row["value_native"])
+                self.assertNotIn("original_value", row)
+                self.assertEqual(row["provider_record"], source)
+                self.assertEqual(row["source_fields_present"], sorted(source))
+                self.assertEqual((row["qc_flag"], row["qa_flag"], row["original_qc_flag"]),
+                                 ("S", source.get("qaFlag"), source.get("origQcFlag")))
+                self.assertEqual(row["provider_date"], "2026-03-07")
+                self.assertEqual(row["source_timestamp_utc"], "2026-03-08T08:00:00Z")
+                self.assertEqual(row["source_boundary_timezone"], "GMT-08")
+                entry = doc["query_ledger"][0]
+                self.assertEqual(entry["returned_dates"], ["2026-03-07"])
+                self.assertEqual(entry["omitted_dates"], ["2026-03-08", "2026-03-09"])
+                event = sh.coverage_on(doc, self.identity, "2026-03-07")[0]
+                self.assertEqual(event["state"], "SUSPECT_NO_NUMERIC_VALUE")
+                self.assertTrue(event["successful_coverage"])
 
     def test_suspect_explicit_null_and_qc_m_still_mean_missing(self):
         sources = [dict(date="2026-03-07", value=None, qcFlag="S", origValue=12.5),
                    dict(date="2026-03-07", qcFlag="M", origValue=12.5),
-                   dict(date="2026-03-07", value=None, qcFlag="M", origValue=0)]
+                   dict(date="2026-03-07", value=None, qcFlag="M", origValue=0),
+                   dict(date="2026-03-07", value=None, qcFlag="S")]
         for source in sources:
             with self.subTest(source=source):
                 row = self.build(capture([source]))["observations"][0]
@@ -165,18 +191,19 @@ class Synthetic(unittest.TestCase):
             self.assertEqual(row["provider_record"], source)
 
     def test_other_absent_current_value_combinations_fail_whole_capture(self):
-        for fields in ([dict(qcFlag=flag) for flag in ("V", "R", "P", "A", None, "s", "unknown")] + [{}]):
-            source = dict(date="2026-03-08", origValue=0.0, **fields)
-            with self.subTest(source=source):
-                cap = capture([record(), source])
-                doc = self.build(cap)
-                self.assertEqual(doc["observations"], [])
-                self.assertEqual(doc["query_ledger"][0]["status"], "failed")
-                self.assertFalse(doc["query_ledger"][0]["successful_coverage"])
-                self.assertEqual(base64.b64decode(doc["captures"][0]["body_base64"]), cap["body"])
+        for fields in ([dict(qcFlag=flag) for flag in ("V", "E", "R", "P", "A", None, "s", "unknown")] + [{}]):
+            for original in ({}, dict(origValue=0.0)):
+                source = dict(date="2026-03-08", **original, **fields)
+                with self.subTest(source=source):
+                    cap = capture([record(), source])
+                    doc = self.build(cap)
+                    self.assertEqual(doc["observations"], [])
+                    self.assertEqual(doc["query_ledger"][0]["status"], "failed")
+                    self.assertFalse(doc["query_ledger"][0]["successful_coverage"])
+                    self.assertEqual(base64.b64decode(doc["captures"][0]["body_base64"]), cap["body"])
 
-    def test_suspect_original_must_be_present_finite_numeric(self):
-        originals = [{}, *[dict(origValue=v) for v in (None, True, "12", float("nan"), float("inf"), float("-inf"))]]
+    def test_present_suspect_original_must_be_finite_numeric(self):
+        originals = [dict(origValue=v) for v in (None, True, "12", float("nan"), float("inf"), float("-inf"))]
         for fields in originals:
             source = dict(date="2026-03-08", qcFlag="S", **fields)
             raw = json.dumps([dict(stationTriplet="356:CA:SNTL", data=[dict(
@@ -185,6 +212,15 @@ class Synthetic(unittest.TestCase):
                 doc = self.build(capture(raw=raw))
                 self.assertEqual(doc["observations"], [])
                 self.assertEqual(doc["query_ledger"][0]["status"], "failed")
+
+    def test_numeric_current_edited_remains_observed(self):
+        for value in (0.0, 12.5):
+            source = dict(date="2026-03-07", value=value, qcFlag="E", origValue=99.0, origQcFlag="V")
+            row = self.build(capture([source]))["observations"][0]
+            self.assertEqual(row["observation_state"], "OBSERVED")
+            self.assertEqual((row["value_native"], row["original_value"], row["qc_flag"]),
+                             (value, 99.0, "E"))
+            self.assertEqual(row["provider_record"], source)
 
     def test_suspect_original_does_not_mask_invalid_present_current_value(self):
         for value in (True, "12", float("nan"), float("inf")):
@@ -216,9 +252,59 @@ class Synthetic(unittest.TestCase):
                 self.assertEqual(sh.write_archive(Path(tmp) / "copy", reopened), manifest_pin)
                 self.assertEqual(before, {name: (root / name).read_bytes() for name in before})
 
+    def test_legacy_1_1_golden_bytes_and_rejected_no_numeric_record(self):
+        # Pins captured with the unchanged 1.1.0 implementation before this repair.
+        cases = [(capture(), "aa8d9de4f2ba4157997e9ed97b64a0a9a953cbfe0fd95912ac44121910037c08",
+                  "344511a7062fa2cdc19874f8c67d0c0b30d3bb83bd5a4c95dfa800423f8b1370", "successful_nonempty"),
+                 (capture([dict(date="2026-03-07", qcFlag="S", origValue=0.0, origQcFlag="V")]),
+                  "38181a26967cf8d6808b07a8eacf477730ece241fe347fddc487241ce0b314c7",
+                  "24aa1f4d5cc63d9a67c4c62960493a06a15d20db36b66893564a51718b5038c2", "successful_nonempty"),
+                 (capture([dict(date="2026-03-07", qcFlag="S", origQcFlag="S")]),
+                  "e6db903a8b0479f4b8fcca0f74c5d0dcdd562751d8fc4969c742604cb7521cb5",
+                  "140c3b8921fe1522f62e10369803fa6b80725cb8099505a26f0a5cada3c6c4ea", "failed")]
+        for cap, history_pin, manifest_pin, status in cases:
+            doc = sh._build_history(self.metadata, sh.sha256(self.metadata), [cap], "snotel-awdb-offline-1.1.0")
+            self.assertEqual(sh.sha256(sh.canonical(doc)), history_pin)
+            self.assertEqual(doc["query_ledger"][0]["status"], status)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "legacy"
+                self.assertEqual(sh.write_archive(root, doc), manifest_pin)
+                before = {name: (root / name).read_bytes() for name in ("history.json", "manifest.json")}
+                reopened = sh.open_archive(root, manifest_pin)
+                self.assertEqual(reopened["adapter_version"], "snotel-awdb-offline-1.1.0")
+                self.assertEqual(sh.canonical(reopened), before["history.json"])
+                self.assertEqual(sh.write_archive(Path(tmp) / "copy", reopened), manifest_pin)
+                self.assertEqual(before, {name: (root / name).read_bytes() for name in before})
+
+    def test_no_numeric_archive_determinism_and_tamper_rejection(self):
+        source = dict(date="2026-03-07", qcFlag="S", origQcFlag="S")
+        caps = [capture([source]), capture(depth=-20)]
+        doc = self.build(*caps)
+        self.assertEqual(sh.canonical(doc), sh.canonical(self.build(*reversed(caps))))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "new"
+            pin = sh.write_archive(root, doc)
+            reopened = sh.open_archive(root, pin)
+            self.assertEqual(reopened["adapter_version"], "snotel-awdb-offline-1.2.0")
+            self.assertEqual(sh.canonical(reopened), sh.canonical(doc))
+            self.assertEqual(sh.write_archive(Path(tmp) / "again", reopened), pin)
+        index = next(i for i, r in enumerate(doc["observations"]) if r["observation_state"] == "SUSPECT_NO_NUMERIC_VALUE")
+        for field, value in (("value_native", 0.0), ("original_value", None), ("original_value", 0.0),
+                             ("observation_state", "EXPLICIT_MISSING"), ("observation_state", "SUSPECT_ORIGINAL_ONLY"),
+                             ("observation_state", "OBSERVED"), ("source_fields_present", ["date", "value"]),
+                             ("provider_date", "2026-03-08"), ("qc_flag", "M")):
+            bad = copy.deepcopy(doc)
+            bad["observations"][index][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError): sh.validate_history(bad)
+        for version in ("snotel-awdb-offline-1.0.0", "snotel-awdb-offline-1.1.0"):
+            bad = copy.deepcopy(doc)
+            for item in [bad, *bad["observations"], *bad["query_ledger"]]:
+                item["adapter_version"] = version
+            with self.subTest(version=version), self.assertRaises(ValueError): sh.validate_history(bad)
+
     def test_unknown_versions_and_manifest_version_mismatch_rejected(self):
         doc = self.build(capture())
-        for version in (None, "snotel-awdb-offline-1.2.0", "unknown"):
+        for version in (None, "snotel-awdb-offline-1.3.0", "unknown"):
             bad = copy.deepcopy(doc)
             bad["adapter_version"] = version
             with self.subTest(version=version), self.assertRaises(ValueError): sh.validate_history(bad)
@@ -240,7 +326,7 @@ class Synthetic(unittest.TestCase):
             root = Path(tmp) / "new"
             pin = sh.write_archive(root, doc)
             reopened = sh.open_archive(root, pin)
-            self.assertEqual(reopened["adapter_version"], "snotel-awdb-offline-1.1.0")
+            self.assertEqual(reopened["adapter_version"], "snotel-awdb-offline-1.2.0")
             self.assertEqual(sh.canonical(reopened), sh.canonical(doc))
             self.assertEqual(sh.write_archive(Path(tmp) / "again", reopened), pin)
         index = next(i for i, row in enumerate(doc["observations"]) if row["observation_state"] == "SUSPECT_ORIGINAL_ONLY")
@@ -599,6 +685,82 @@ class SuspectPreservedEvidence(unittest.TestCase):
             self.assertEqual(reopened["adapter_version"], "snotel-awdb-offline-1.0.0")
             self.assertEqual(sh.canonical(reopened), before["history.json"])
             self.assertEqual(before, {name: (root / name).read_bytes() for name in before})
+
+
+@unittest.skipUnless(os.environ.get("SNOTEL_NO_NUMERIC_FIXTURES"), "set local no-numeric fixture descriptor")
+class NoNumericPreservedEvidence(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = Path(os.environ["SNOTEL_NO_NUMERIC_FIXTURES"])
+        cls.spec = json.loads(cls.path.read_bytes())
+        md, cap = cls.spec["metadata"], cls.spec["capture"]
+        cls.metadata = (cls.path.parent / md["path"]).read_bytes()
+        cls.body = (cls.path.parent / cap["path"]).read_bytes()
+        receipt_bytes = (cls.path.parent / cap["receipt_path"]).read_bytes()
+        if sh.sha256(cls.metadata) != md["sha256"] or sh.sha256(cls.body) != cap["sha256"] \
+                or sh.sha256(receipt_bytes) != cap["receipt_sha256"]:
+            raise ValueError("real no-numeric fixture pin mismatch")
+        cls.capture = dict(body=cls.body, receipt=json.loads(receipt_bytes), receipt_sha256=cap["receipt_sha256"])
+        cls.doc = sh.build_history(cls.metadata, md["sha256"], [cls.capture])
+
+    def test_real_request145_entire_response_and_exact_new_state(self):
+        native = {}
+        for station_data in json.loads(self.body):
+            for block in station_data["data"]:
+                e = block["stationElement"]
+                identity = sh.sensor_identity(station_data["stationTriplet"], e["heightDepth"], e["ordinal"])
+                native.update({(identity, r["date"]): r for r in block["values"]})
+        self.assertEqual(len(self.doc["observations"]), len(native))
+        self.assertEqual(len(native), 1098)
+        for row in self.doc["observations"]:
+            source = native[(row["sensor_identity"], row["provider_date"])]
+            self.assertEqual(row["provider_record"], source)
+            self.assertEqual(row["source_fields_present"], sorted(source))
+            self.assertEqual(row["value_native"], source.get("value"))
+            self.assertEqual("original_value" in row, "origValue" in source)
+            if "origValue" in source: self.assertEqual(row["original_value"], source["origValue"])
+            self.assertEqual((row["qc_flag"], row["qa_flag"], row["original_qc_flag"]),
+                             (source.get("qcFlag"), source.get("qaFlag"), source.get("origQcFlag")))
+        rows = [r for r in self.doc["observations"] if r["observation_state"] == "SUSPECT_NO_NUMERIC_VALUE"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual((row["sensor_identity"], row["provider_date"], row["source_timestamp_utc"]),
+                         ("518:CA:SNTL|SMS:-2:1", "2009-04-30", "2009-05-01T08:00:00Z"))
+        self.assertEqual(row["source_boundary_timezone"], "GMT-08")
+        self.assertIsNone(row["value_native"])
+        self.assertNotIn("original_value", row)
+        self.assertEqual(row["provider_record"], dict(date="2009-04-30", qcFlag="S", origQcFlag="S"))
+        self.assertEqual(sum(r["observation_state"] == "SUSPECT_ORIGINAL_ONLY" for r in self.doc["observations"]), 309)
+        self.assertEqual(sum(r["observation_state"] == "OBSERVED" for r in self.doc["observations"]), 788)
+        self.assertEqual(len(self.doc["query_ledger"]), 3)
+        for entry in self.doc["query_ledger"]:
+            self.assertEqual(entry["status"], "successful_nonempty")
+            self.assertTrue(entry["successful_coverage"])
+            self.assertEqual(len(entry["returned_dates"]), 366)
+            self.assertEqual(entry["omitted_dates"], [])
+        event = sh.coverage_on(self.doc, row["sensor_identity"], "2009-04-30")[0]
+        self.assertEqual(event["state"], "SUSPECT_NO_NUMERIC_VALUE")
+        self.assertTrue(event["successful_coverage"])
+        self.assertEqual(self.doc["captures"][0]["receipt"], self.capture["receipt"])
+        self.assertEqual(base64.b64decode(self.doc["captures"][0]["body_base64"]), self.body)
+
+    def test_real_request145_deterministic_reopen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "archive"
+            pin = sh.write_archive(root, self.doc)
+            self.assertEqual(sh.canonical(sh.open_archive(root, pin)), sh.canonical(self.doc))
+            rebuilt = sh.build_history(self.metadata, self.spec["metadata"]["sha256"], [self.capture])
+            self.assertEqual(sh.write_archive(Path(tmp) / "again", rebuilt), pin)
+
+    def test_existing_1_1_archive_reopens_with_original_bytes(self):
+        item = self.spec["legacy_1_1_archive"]
+        root = self.path.parent / item["path"]
+        before = {name: (root / name).read_bytes() for name in ("history.json", "manifest.json")}
+        doc = sh.open_archive(root, item["manifest_sha256"])
+        self.assertEqual(doc["adapter_version"], "snotel-awdb-offline-1.1.0")
+        self.assertEqual(sh.canonical(doc), before["history.json"])
+        self.assertEqual(sum(r["observation_state"] == "SUSPECT_ORIGINAL_ONLY" for r in doc["observations"]), 311)
+        self.assertEqual(before, {name: (root / name).read_bytes() for name in before})
 
 
 if __name__ == "__main__":
