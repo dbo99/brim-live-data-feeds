@@ -20,6 +20,9 @@ retain native record/element and field presence, flags, value, date, fixed GMT-0
 END timestamp, identity, units and query/retrieval/hash provenance. Ledger entries
 record per-capture/per-sensor status, returned/omitted dates and failure reason.
 coverage_on returns ALL overlapping events; no evidence yields UNQUERIED.
+Version 1.1.0 also preserves absent current value + QC S + finite original value
+as SUSPECT_ORIGINAL_ONLY: a returned record with no current numeric observation.
+Validation replays stored 1.0.0 semantics without migrating accepted archives.
 
 write_archive creates a fresh directory with exactly history.json and
 manifest.json (both canonical JSON and explicitly ineligible for publication).
@@ -39,7 +42,8 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 CONTRACT = "snotel-awdb-history-1"
-ADAPTER_VERSION = "snotel-awdb-offline-1.0.0"
+ADAPTER_VERSION = "snotel-awdb-offline-1.1.0"
+_SUPPORTED_ADAPTER_VERSIONS = ("snotel-awdb-offline-1.0.0", ADAPTER_VERSION)
 TARGET = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data"
 MAX_BODY = 1024 * 1024
 MAX_HISTORY = 64 * 1024 * 1024
@@ -189,7 +193,7 @@ def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _records(body, requested, dates, sensors):
+def _records(body, requested, dates, sensors, adapter_version):
     response = _json(body)
     require(isinstance(response, list), "response must be an array")
     result = {identity: [] for identity in requested}
@@ -223,13 +227,18 @@ def _records(body, requested, dates, sensors):
                 require(key not in row or row[key] is None or _number(row[key]),
                         "nonfinite/nonnumeric native value")
             missing = ("value" in row and row["value"] is None) or row.get("qcFlag") == "M"
-            require(missing or ("value" in row and _number(row["value"])), "unclassified absent value")
+            suspect_original = (adapter_version == ADAPTER_VERSION and "value" not in row
+                                and row.get("qcFlag") == "S" and _number(row.get("origValue")))
+            require(missing or suspect_original or ("value" in row and _number(row["value"])),
+                    "unclassified absent value")
+            state = ("EXPLICIT_MISSING" if missing else
+                     "SUSPECT_ORIGINAL_ONLY" if suspect_original else "OBSERVED")
             result[identity].append(dict(
                 provider_date=day, source_timestamp_utc=source_timestamp(day),
                 source_boundary_timezone="GMT-08", value_native=row.get("value"),
                 qc_flag=row.get("qcFlag"), qa_flag=row.get("qaFlag"),
                 original_qc_flag=row.get("origQcFlag"),
-                observation_state="EXPLICIT_MISSING" if missing else "OBSERVED",
+                observation_state=state,
                 source_fields_present=sorted(row), provider_record=row,
                 response_station_element=element,
                 **({"original_value": row["origValue"]} if "origValue" in row else {})))
@@ -243,6 +252,12 @@ def build_history(metadata_body, metadata_sha256, captures):
     Bad input pins/request identities raise ValueError before assigning coverage.
     HTTP/transport/response failures remain captured FAILED ledger entries.
     """
+    return _build_history(metadata_body, metadata_sha256, captures, ADAPTER_VERSION)
+
+
+def _build_history(metadata_body, metadata_sha256, captures, adapter_version):
+    """Replay one supported implementation version; never migrate stored history."""
+    require(adapter_version in _SUPPORTED_ADAPTER_VERSIONS, "unsupported adapter version")
     sensors = _sensors(metadata_body, metadata_sha256)
     require(isinstance(captures, list) and len(captures) <= 32, "capture count bound")
     total, stored, observations, ledger, seen = 0, [], [], [], set()
@@ -276,14 +291,14 @@ def build_history(metadata_body, metadata_sha256, captures):
             failure = "HTTP_OR_INCOMPLETE_ACQUISITION"
         else:
             try:
-                records = _records(body, requested, dates, sensors)
+                records = _records(body, requested, dates, sensors, adapter_version)
             except (ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError) as exc:
                 # Raw evidence survives; no partial rows or successful coverage escape.
                 failure = "INVALID_RESPONSE:" + type(exc).__name__ + ":" + str(exc)
         provenance = dict(capture_identity=capture_id, request_identity=request_id,
                           query_begin_date=dates[0], query_end_date=dates[-1],
                           retrieved_at_utc=retrieved, response_sha256=receipt["response_sha256"],
-                          adapter_version=ADAPTER_VERSION)
+                          adapter_version=adapter_version)
         for identity in requested:
             rows = records.get(identity, []) if failure is None else []
             returned = sorted(row["provider_date"] for row in rows)
@@ -296,7 +311,7 @@ def build_history(metadata_body, metadata_sha256, captures):
             observations.extend(dict(sensors[identity], **row, **provenance) for row in rows)
         require(len(observations) <= 20000, "observation bound")
     document = dict(
-        STATUS, contract=CONTRACT, adapter_version=ADAPTER_VERSION,
+        STATUS, contract=CONTRACT, adapter_version=adapter_version,
         metadata=dict(body_base64=base64.b64encode(metadata_body).decode("ascii"), sha256=metadata_sha256),
         sensors=[sensors[key] for key in sorted(sensors)],
         captures=sorted(stored, key=lambda item: item["capture_identity"]),
@@ -310,10 +325,10 @@ def build_history(metadata_body, metadata_sha256, captures):
 def validate_history(document):
     """Recompute every derived field. Does not replace external trust pins."""
     metadata = document["metadata"]
-    rebuilt = build_history(base64.b64decode(metadata["body_base64"], validate=True), metadata["sha256"],
-                            [dict(body=base64.b64decode(c["body_base64"], validate=True),
-                                  receipt=c["receipt"], receipt_sha256=c["receipt_sha256"])
-                             for c in document["captures"]])
+    rebuilt = _build_history(base64.b64decode(metadata["body_base64"], validate=True), metadata["sha256"],
+                             [dict(body=base64.b64decode(c["body_base64"], validate=True),
+                                   receipt=c["receipt"], receipt_sha256=c["receipt_sha256"])
+                              for c in document["captures"]], document.get("adapter_version"))
     require(canonical(document) == canonical(rebuilt), "derived history mismatch")
     return rebuilt
 
@@ -345,8 +360,9 @@ def coverage_on(document, identity, provider_date):
 
 def write_archive(root, document):
     """Fresh output only; return a manifest pin to retain outside this directory."""
-    history = canonical(validate_history(document))
-    manifest = canonical(dict(STATUS, contract=CONTRACT, adapter_version=ADAPTER_VERSION,
+    validated = validate_history(document)
+    history = canonical(validated)
+    manifest = canonical(dict(STATUS, contract=CONTRACT, adapter_version=validated["adapter_version"],
                               files={"history.json": {"bytes": len(history), "sha256": sha256(history)}}))
     root = Path(root)
     root.mkdir()  # Refuses any existing file, directory or symlink; no replacement.
@@ -368,10 +384,11 @@ def open_archive(root, expected_manifest_sha256):
     require(sha256(manifest_body) == expected_manifest_sha256, "manifest hash mismatch")
     manifest = _json(manifest_body)
     history = (root / "history.json").read_bytes()
-    expected = dict(STATUS, contract=CONTRACT, adapter_version=ADAPTER_VERSION,
+    document = _json(history)
+    expected = dict(STATUS, contract=CONTRACT, adapter_version=document.get("adapter_version"),
                     files={"history.json": {"bytes": len(history), "sha256": sha256(history)}})
     require(manifest_body == canonical(expected), "manifest/history mismatch")
     require(manifest == expected, "manifest schema mismatch")
-    document = validate_history(_json(history))
+    document = validate_history(document)
     require(history == canonical(document), "noncanonical history")
     return document
