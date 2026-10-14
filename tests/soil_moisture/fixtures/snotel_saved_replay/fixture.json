@@ -1,0 +1,602 @@
+{
+  "batches": [
+    {
+      "captures": [
+        {
+          "body_base64": "W3siZGF0YSI6W3sic3RhdGlvbkVsZW1lbnQiOnsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0sInZhbHVlcyI6W3siZGF0ZSI6IjIwMjYtMTAtMDEiLCJvcmlnUWNGbGFnIjoiViIsIm9yaWdWYWx1ZSI6MTIuNSwicWFGbGFnIjoiQSIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTIuNX0seyJkYXRlIjoiMjAyNi0xMC0wMiIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTAuMjV9XX0seyJzdGF0aW9uRWxlbWVudCI6eyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi04LCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSwidmFsdWVzIjpbeyJkYXRlIjoiMjAyNi0xMC0wMSIsIm9yaWdRY0ZsYWciOiJWIiwib3JpZ1ZhbHVlIjowLCJxY0ZsYWciOiJWIiwidmFsdWUiOjB9LHsiZGF0ZSI6IjIwMjYtMTAtMDIiLCJvcmlnVmFsdWUiOm51bGwsInFhRmxhZyI6bnVsbCwicWNGbGFnIjoiTSIsInZhbHVlIjpudWxsfV19LHsic3RhdGlvbkVsZW1lbnQiOnsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotOCwib3JkaW5hbCI6Miwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0sInZhbHVlcyI6W3siZGF0ZSI6IjIwMjYtMTAtMDEiLCJvcmlnUWNGbGFnIjoiViIsIm9yaWdWYWx1ZSI6Ny4yNSwicWNGbGFnIjoiUyJ9LHsiZGF0ZSI6IjIwMjYtMTAtMDIiLCJxY0ZsYWciOiJTIn1dfSx7InN0YXRpb25FbGVtZW50Ijp7ImR1cmF0aW9uTmFtZSI6IkRBSUxZIiwiZWxlbWVudENvZGUiOiJTTVMiLCJoZWlnaHREZXB0aCI6LTIwLCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSwidmFsdWVzIjpbeyJkYXRlIjoiMjAyNi0xMC0wMSIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MzMuNzV9LHsiZGF0ZSI6IjIwMjYtMTAtMDIiLCJvcmlnUWNGbGFnIjpudWxsLCJvcmlnVmFsdWUiOjE4LCJxYUZsYWciOm51bGwsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTcuMjV9XX0seyJzdGF0aW9uRWxlbWVudCI6eyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi0zMCwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0sInZhbHVlcyI6W119XSwic3RhdGlvblRyaXBsZXQiOiI5OTkwMDAwMDE6Wlo6U05UTCJ9XQo=",
+          "receipt": {
+            "body_accounting_state": "COMPLETE",
+            "captured_prefix_bytes": 1361,
+            "complete": true,
+            "error": null,
+            "evidence_kind": "SYNTHETIC_TEST_NO_HTTP",
+            "http_status": 200,
+            "physical_attempt": 1,
+            "plan_sha256": "24077ffcff18d2f1aa5323e7afab6e31f8cc68e533ae39fc3f5910c539444781",
+            "request": {
+              "method": "GET",
+              "parameters": {
+                "beginDate": "2026-10-01",
+                "duration": "DAILY",
+                "elements": "SMS:-2:1,SMS:-8:1,SMS:-8:2,SMS:-20:1,SMS:-30:1",
+                "endDate": "2026-10-02",
+                "periodRef": "END",
+                "returnFlags": "true",
+                "returnOriginalValues": "true",
+                "returnSuspectData": "true",
+                "stationTriplets": "999000001:ZZ:SNTL"
+              },
+              "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1%2CSMS%3A-8%3A1%2CSMS%3A-8%3A2%2CSMS%3A-20%3A1%2CSMS%3A-30%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+            },
+            "response_bytes": 1361,
+            "response_sha256": "8700834c0b19b8779d7e08047d296c6720c3fbdf0d11b9544bfca156f1682e61",
+            "retrieved_at_utc": "2026-10-03T12:00:00Z",
+            "total_consumed_body_bytes": 1361
+          },
+          "receipt_sha256": "fcf3647cb5fc3feb990c5021c6d502c9cf9198fbbd009fa4cfe7952f9c93d588"
+        },
+        {
+          "body_base64": "eyJlcnJvciI6IlNZTlRIRVRJQ19GQUlMVVJFIn0K",
+          "receipt": {
+            "body_accounting_state": "COMPLETE",
+            "captured_prefix_bytes": 30,
+            "complete": false,
+            "error": "HTTP_503_SYNTHETIC",
+            "evidence_kind": "SYNTHETIC_TEST_NO_HTTP",
+            "http_status": 503,
+            "physical_attempt": 2,
+            "plan_sha256": "24077ffcff18d2f1aa5323e7afab6e31f8cc68e533ae39fc3f5910c539444781",
+            "request": {
+              "method": "GET",
+              "parameters": {
+                "beginDate": "2026-10-01",
+                "duration": "DAILY",
+                "elements": "SMS:-8:1",
+                "endDate": "2026-10-02",
+                "periodRef": "END",
+                "returnFlags": "true",
+                "returnOriginalValues": "true",
+                "returnSuspectData": "true",
+                "stationTriplets": "999000002:ZZ:SNTL"
+              },
+              "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000002%3AZZ%3ASNTL&elements=SMS%3A-8%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+            },
+            "response_bytes": 30,
+            "response_sha256": "abd118640a86dd3f71acec4e5f5bd45f0976ac9e00102fd4a37ac8c2a97d8b46",
+            "retrieved_at_utc": "2026-10-03T12:00:00Z",
+            "total_consumed_body_bytes": 30
+          },
+          "receipt_sha256": "aa5c4a5f4987a022f7085c8fdabd01d81a985d6b8f4d5f7fa706e986ffecc529"
+        }
+      ],
+      "groups": [
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0seyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi04LCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSx7ImR1cmF0aW9uTmFtZSI6IkRBSUxZIiwiZWxlbWVudENvZGUiOiJTTVMiLCJoZWlnaHREZXB0aCI6LTgsIm9yZGluYWwiOjIsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMjAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMzAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9XSwic3RhdGlvbklkIjoiOTk5MDAwMDAxIiwic3RhdGlvblRyaXBsZXQiOiI5OTkwMDAwMDE6Wlo6U05UTCJ9XQo=",
+          "metadata_sha256": "95e0b4c61551330c6b418229f5e8f7df0a858b274ea38a5bbfd3fd9072b159ad",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-2:1,SMS:-8:1,SMS:-8:2,SMS:-20:1,SMS:-30:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000001:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1%2CSMS%3A-8%3A1%2CSMS%3A-8%3A2%2CSMS%3A-20%3A1%2CSMS%3A-30%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        },
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotOCwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In1dLCJzdGF0aW9uSWQiOiI5OTkwMDAwMDIiLCJzdGF0aW9uVHJpcGxldCI6Ijk5OTAwMDAwMjpaWjpTTlRMIn1dCg==",
+          "metadata_sha256": "cabc12426ee3337fcd8e28b10dc79956bd28aee41a6efff68a65f53813c4c5e2",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-8:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000002:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000002%3AZZ%3ASNTL&elements=SMS%3A-8%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        },
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotOCwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In1dLCJzdGF0aW9uSWQiOiI5OTkwMDAwMDMiLCJzdGF0aW9uVHJpcGxldCI6Ijk5OTAwMDAwMzpaWjpTTlRMIn1dCg==",
+          "metadata_sha256": "fa2351c98a8e3c38248f0026f553e35df8f602e670eb72e4023cdcf47fe4f09c",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-8:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000003:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000003%3AZZ%3ASNTL&elements=SMS%3A-8%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        }
+      ],
+      "name": "initial",
+      "pins": {
+        "expected_capture_set_sha256": "044538844f1a89bb2d7af8543f18f53b1610ee86b609b8e3fca3fb0299d66552",
+        "expected_groups_sha256": "4889a436655bac449038d730be311a7d5a58cff5203338cb56ca7dc1f8c483f1",
+        "expected_plan_sha256": "24077ffcff18d2f1aa5323e7afab6e31f8cc68e533ae39fc3f5910c539444781"
+      },
+      "selection": [
+        "999000001:ZZ:SNTL|SMS:-2:1",
+        "999000001:ZZ:SNTL|SMS:-8:1",
+        "999000001:ZZ:SNTL|SMS:-8:2",
+        "999000001:ZZ:SNTL|SMS:-20:1",
+        "999000001:ZZ:SNTL|SMS:-30:1",
+        "999000002:ZZ:SNTL|SMS:-8:1",
+        "999000003:ZZ:SNTL|SMS:-8:1"
+      ]
+    },
+    {
+      "captures": [
+        {
+          "body_base64": "W3siZGF0YSI6W3sic3RhdGlvbkVsZW1lbnQiOnsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0sInZhbHVlcyI6W3siZGF0ZSI6IjIwMjYtMTAtMDEiLCJvcmlnUWNGbGFnIjoiViIsIm9yaWdWYWx1ZSI6MTQuNSwicWFGbGFnIjoiQSIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTQuNX0seyJkYXRlIjoiMjAyNi0xMC0wMiIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTAuMjV9XX1dLCJzdGF0aW9uVHJpcGxldCI6Ijk5OTAwMDAwMTpaWjpTTlRMIn1dCg==",
+          "receipt": {
+            "body_accounting_state": "COMPLETE",
+            "captured_prefix_bytes": 346,
+            "complete": true,
+            "error": null,
+            "evidence_kind": "SYNTHETIC_TEST_NO_HTTP",
+            "http_status": 200,
+            "physical_attempt": 1,
+            "plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c",
+            "request": {
+              "method": "GET",
+              "parameters": {
+                "beginDate": "2026-10-01",
+                "duration": "DAILY",
+                "elements": "SMS:-2:1",
+                "endDate": "2026-10-02",
+                "periodRef": "END",
+                "returnFlags": "true",
+                "returnOriginalValues": "true",
+                "returnSuspectData": "true",
+                "stationTriplets": "999000001:ZZ:SNTL"
+              },
+              "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+            },
+            "response_bytes": 346,
+            "response_sha256": "984b3e165ef290b4f9cd526351fbaa294dc26c48bb5697d67b0b4dca05286f95",
+            "retrieved_at_utc": "2026-10-03T13:00:00Z",
+            "total_consumed_body_bytes": 346
+          },
+          "receipt_sha256": "0bdf54a5acfc3d38e66a7bc1cccdb3810282750d74650b03280228e2bf1550e8"
+        }
+      ],
+      "groups": [
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0seyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi04LCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSx7ImR1cmF0aW9uTmFtZSI6IkRBSUxZIiwiZWxlbWVudENvZGUiOiJTTVMiLCJoZWlnaHREZXB0aCI6LTgsIm9yZGluYWwiOjIsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMjAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMzAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9XSwic3RhdGlvbklkIjoiOTk5MDAwMDAxIiwic3RhdGlvblRyaXBsZXQiOiI5OTkwMDAwMDE6Wlo6U05UTCJ9XQo=",
+          "metadata_sha256": "95e0b4c61551330c6b418229f5e8f7df0a858b274ea38a5bbfd3fd9072b159ad",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-2:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000001:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        }
+      ],
+      "name": "changed_value",
+      "pins": {
+        "expected_capture_set_sha256": "6c514a6d3dc78886040f30b441eff93b521bb3af97cb59f44b2ba79613ac2fd8",
+        "expected_groups_sha256": "8d4ab50b39fe1db12a866e6e8b0fd1a246f3aaf4bd9ad63f67b47794a2bac4be",
+        "expected_plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c"
+      },
+      "selection": [
+        "999000001:ZZ:SNTL|SMS:-2:1"
+      ]
+    },
+    {
+      "captures": [
+        {
+          "body_base64": "W3siZGF0YSI6W3sic3RhdGlvbkVsZW1lbnQiOnsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0sInZhbHVlcyI6W3siZGF0ZSI6IjIwMjYtMTAtMDEiLCJvcmlnUWNGbGFnIjoiViIsIm9yaWdWYWx1ZSI6MTQuNSwicWFGbGFnIjoiQSIsInFjRmxhZyI6IkUiLCJ2YWx1ZSI6MTQuNX0seyJkYXRlIjoiMjAyNi0xMC0wMiIsInFjRmxhZyI6IlYiLCJ2YWx1ZSI6MTAuMjV9XX1dLCJzdGF0aW9uVHJpcGxldCI6Ijk5OTAwMDAwMTpaWjpTTlRMIn1dCg==",
+          "receipt": {
+            "body_accounting_state": "COMPLETE",
+            "captured_prefix_bytes": 346,
+            "complete": true,
+            "error": null,
+            "evidence_kind": "SYNTHETIC_TEST_NO_HTTP",
+            "http_status": 200,
+            "physical_attempt": 1,
+            "plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c",
+            "request": {
+              "method": "GET",
+              "parameters": {
+                "beginDate": "2026-10-01",
+                "duration": "DAILY",
+                "elements": "SMS:-2:1",
+                "endDate": "2026-10-02",
+                "periodRef": "END",
+                "returnFlags": "true",
+                "returnOriginalValues": "true",
+                "returnSuspectData": "true",
+                "stationTriplets": "999000001:ZZ:SNTL"
+              },
+              "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+            },
+            "response_bytes": 346,
+            "response_sha256": "2d3ab4ec74c15e11d556ff82544a8d7bb40e0a150f28e0415a0919859769e615",
+            "retrieved_at_utc": "2026-10-03T14:00:00Z",
+            "total_consumed_body_bytes": 346
+          },
+          "receipt_sha256": "8b51187f795cf72880cfdb26b8cd98af9091ea359a9937144bab842e2d13c1b8"
+        }
+      ],
+      "groups": [
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0seyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi04LCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSx7ImR1cmF0aW9uTmFtZSI6IkRBSUxZIiwiZWxlbWVudENvZGUiOiJTTVMiLCJoZWlnaHREZXB0aCI6LTgsIm9yZGluYWwiOjIsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMjAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMzAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9XSwic3RhdGlvbklkIjoiOTk5MDAwMDAxIiwic3RhdGlvblRyaXBsZXQiOiI5OTkwMDAwMDE6Wlo6U05UTCJ9XQo=",
+          "metadata_sha256": "95e0b4c61551330c6b418229f5e8f7df0a858b274ea38a5bbfd3fd9072b159ad",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-2:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000001:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        }
+      ],
+      "name": "changed_quality",
+      "pins": {
+        "expected_capture_set_sha256": "c5f4c8d0248c7316c3e59dd1bc414a6e7f09c844df31b1b1abebc1e27c697381",
+        "expected_groups_sha256": "8d4ab50b39fe1db12a866e6e8b0fd1a246f3aaf4bd9ad63f67b47794a2bac4be",
+        "expected_plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c"
+      },
+      "selection": [
+        "999000001:ZZ:SNTL|SMS:-2:1"
+      ]
+    },
+    {
+      "captures": [
+        {
+          "body_base64": "eyJlcnJvciI6IlNZTlRIRVRJQ19MQVRFUl9GQUlMVVJFIn0K",
+          "receipt": {
+            "body_accounting_state": "COMPLETE",
+            "captured_prefix_bytes": 36,
+            "complete": false,
+            "error": "HTTP_503_SYNTHETIC",
+            "evidence_kind": "SYNTHETIC_TEST_NO_HTTP",
+            "http_status": 503,
+            "physical_attempt": 1,
+            "plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c",
+            "request": {
+              "method": "GET",
+              "parameters": {
+                "beginDate": "2026-10-01",
+                "duration": "DAILY",
+                "elements": "SMS:-2:1",
+                "endDate": "2026-10-02",
+                "periodRef": "END",
+                "returnFlags": "true",
+                "returnOriginalValues": "true",
+                "returnSuspectData": "true",
+                "stationTriplets": "999000001:ZZ:SNTL"
+              },
+              "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+            },
+            "response_bytes": 36,
+            "response_sha256": "22a4e7bc362a54e8d575729d64db44be2612f61c91820d9e1021299e8b27353b",
+            "retrieved_at_utc": "2026-10-03T15:00:00Z",
+            "total_consumed_body_bytes": 36
+          },
+          "receipt_sha256": "5fe2a94f137792f82277975c3faf03ab3fd208bad24f37bdf9df131f31b08059"
+        }
+      ],
+      "groups": [
+        {
+          "metadata_base64": "W3siZGF0YVRpbWVab25lIjotOCwibmFtZSI6IlNZTlRIRVRJQyBPRkZMSU5FIEZJWFRVUkUgLSBOT1QgQSBSRUFMIFNUQVRJT04iLCJuZXR3b3JrQ29kZSI6IlNOVEwiLCJzdGF0ZUNvZGUiOiJaWiIsInN0YXRpb25FbGVtZW50cyI6W3siZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMiwib3JkaW5hbCI6MSwib3JpZ2luYWxVbml0Q29kZSI6InBjdCIsInN0b3JlZFVuaXRDb2RlIjoicGN0In0seyJkdXJhdGlvbk5hbWUiOiJEQUlMWSIsImVsZW1lbnRDb2RlIjoiU01TIiwiaGVpZ2h0RGVwdGgiOi04LCJvcmRpbmFsIjoxLCJvcmlnaW5hbFVuaXRDb2RlIjoicGN0Iiwic3RvcmVkVW5pdENvZGUiOiJwY3QifSx7ImR1cmF0aW9uTmFtZSI6IkRBSUxZIiwiZWxlbWVudENvZGUiOiJTTVMiLCJoZWlnaHREZXB0aCI6LTgsIm9yZGluYWwiOjIsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMjAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9LHsiZHVyYXRpb25OYW1lIjoiREFJTFkiLCJlbGVtZW50Q29kZSI6IlNNUyIsImhlaWdodERlcHRoIjotMzAsIm9yZGluYWwiOjEsIm9yaWdpbmFsVW5pdENvZGUiOiJwY3QiLCJzdG9yZWRVbml0Q29kZSI6InBjdCJ9XSwic3RhdGlvbklkIjoiOTk5MDAwMDAxIiwic3RhdGlvblRyaXBsZXQiOiI5OTkwMDAwMDE6Wlo6U05UTCJ9XQo=",
+          "metadata_sha256": "95e0b4c61551330c6b418229f5e8f7df0a858b274ea38a5bbfd3fd9072b159ad",
+          "request": {
+            "method": "GET",
+            "parameters": {
+              "beginDate": "2026-10-01",
+              "duration": "DAILY",
+              "elements": "SMS:-2:1",
+              "endDate": "2026-10-02",
+              "periodRef": "END",
+              "returnFlags": "true",
+              "returnOriginalValues": "true",
+              "returnSuspectData": "true",
+              "stationTriplets": "999000001:ZZ:SNTL"
+            },
+            "url": "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=999000001%3AZZ%3ASNTL&elements=SMS%3A-2%3A1&beginDate=2026-10-01&endDate=2026-10-02&duration=DAILY&periodRef=END&returnFlags=true&returnOriginalValues=true&returnSuspectData=true"
+          }
+        }
+      ],
+      "name": "later_failure",
+      "pins": {
+        "expected_capture_set_sha256": "e2aa756b02a6bf9ea5b7b9282532df0ade22310a52a3255a88255595a23834a4",
+        "expected_groups_sha256": "8d4ab50b39fe1db12a866e6e8b0fd1a246f3aaf4bd9ad63f67b47794a2bac4be",
+        "expected_plan_sha256": "8cc1bc939732e634041be3099501e225c717ff1e85c93787960cb1b9c2f4c09c"
+      },
+      "selection": [
+        "999000001:ZZ:SNTL|SMS:-2:1"
+      ]
+    }
+  ],
+  "bundle": {
+    "bindings": {
+      "dendra": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "9ac6ce676ca5bda9d1864e53aa5f24e7a5d46f373cb3043bb42f1650221eb78f",
+        "policy": "synthetic-native-contract-only"
+      },
+      "scan": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "02a60956a0c697826c3e64aa19af6b8fe429c24d082fced67a840ea967169a15",
+        "policy": "synthetic-native-contract-only"
+      },
+      "snotel": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "e6fe1deb326db287f5e05f7b799a694f443b5b5020ce51bec2280f0a3d85a533",
+        "policy": "synthetic-native-contract-only"
+      }
+    },
+    "dendra_row_schema": {},
+    "events": [],
+    "roster": [
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000001:ZZ:SNTL|SMS:-2:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -2,
+          "station_triplet": "999000001:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000001:ZZ:SNTL|SMS:-8:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -8,
+          "station_triplet": "999000001:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000001:ZZ:SNTL|SMS:-8:2",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 2,
+          "signed_depth": -8,
+          "station_triplet": "999000001:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "HELD",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000001:ZZ:SNTL|SMS:-20:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -20,
+          "station_triplet": "999000001:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000001:ZZ:SNTL|SMS:-30:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -30,
+          "station_triplet": "999000001:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000002:ZZ:SNTL|SMS:-8:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -8,
+          "station_triplet": "999000002:ZZ:SNTL"
+        }
+      },
+      {
+        "eligibility": {
+          "current": "VERIFIED",
+          "public": "VERIFIED",
+          "reference": "UNKNOWN",
+          "source": "VERIFIED"
+        },
+        "evidence": "SYNTHETIC_ONLY_NO_SOURCE_AUTHORITY",
+        "holds": [],
+        "identity": "999000003:ZZ:SNTL|SMS:-8:1",
+        "initial_outcome": "NOT_QUERIED",
+        "network": "snotel",
+        "source": {
+          "ordinal": 1,
+          "signed_depth": -8,
+          "station_triplet": "999000003:ZZ:SNTL"
+        }
+      }
+    ],
+    "version": "soil-wy2027-offline-review-1"
+  },
+  "description": "Invented ZZ station identities; no real station metadata, coordinates, private responses or source authority. Dates and values are synthetic native-contract examples.",
+  "evidence_kind": "SYNTHETIC_ONLY_NOT_PROVIDER_ACQUISITION",
+  "expected": {
+    "admitted_observations": 5,
+    "attempt_outcomes": {
+      "ACCEPTED_REVISION": 2,
+      "COMPLETE_VALID_EMPTY": 2,
+      "FAILED": 2,
+      "MISSING": 1,
+      "NO_DATA_CHANGE": 2,
+      "OBSERVED_ACCEPTED": 5,
+      "WITHHELD": 2
+    },
+    "bundle_sha256": "7584d7672405ba5ca1e31e352c702f4eb3f77f8aab942bda98466e2cd58503b7",
+    "events": 16,
+    "final_outcomes": {
+      "COMPLETE_VALID_EMPTY": 1,
+      "FAILED": 2,
+      "MISSING": 1,
+      "NOT_QUERIED": 1,
+      "OBSERVED_ACCEPTED": 1,
+      "WITHHELD": 1
+    },
+    "genuine_zeros": 1,
+    "reconciliation_sha256": "d8e4ed3009d5acd55d02ea7bb57827d769482183dd8ce27871c1bada4019208d",
+    "reference_holds": 1,
+    "roster": 7
+  },
+  "fixed_clock": "2026-10-04T12:00:00Z",
+  "request": {
+    "bindings": {
+      "dendra": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "9ac6ce676ca5bda9d1864e53aa5f24e7a5d46f373cb3043bb42f1650221eb78f",
+        "policy": "synthetic-native-contract-only"
+      },
+      "scan": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "02a60956a0c697826c3e64aa19af6b8fe429c24d082fced67a840ea967169a15",
+        "policy": "synthetic-native-contract-only"
+      },
+      "snotel": {
+        "generation": "synthetic-saved-replay-1",
+        "manifest_sha256": "e6fe1deb326db287f5e05f7b799a694f443b5b5020ce51bec2280f0a3d85a533",
+        "policy": "synthetic-native-contract-only"
+      }
+    },
+    "budgets": {
+      "dendra": {
+        "attempts": 0,
+        "new_intervals": 0,
+        "response_bytes": 0,
+        "seconds": 0
+      },
+      "scan": {
+        "attempts": 0,
+        "canaries": 0,
+        "preflight": 0
+      },
+      "snotel": {
+        "attempts": 3,
+        "response_bytes": 1048576
+      }
+    },
+    "cutoffs": {
+      "dendra": {
+        "as_of": "2026-10-04T12:00:00Z",
+        "end": "2026-10-03T08:00:00Z",
+        "start": "2026-10-01T08:00:00Z"
+      },
+      "scan": {
+        "as_of": "2026-10-04T12:00:00Z",
+        "end": "2026-10-02",
+        "start": "2026-10-01"
+      },
+      "snotel": {
+        "as_of": "2026-10-04T12:00:00Z",
+        "end": "2026-10-02",
+        "start": "2026-10-01"
+      }
+    },
+    "expected_counts": {
+      "dendra": 0,
+      "scan": 0,
+      "snotel": 7
+    },
+    "offline_only": true,
+    "selection": {
+      "dendra": [],
+      "scan": [],
+      "snotel": [
+        "999000001:ZZ:SNTL|SMS:-2:1",
+        "999000001:ZZ:SNTL|SMS:-8:1",
+        "999000001:ZZ:SNTL|SMS:-8:2",
+        "999000001:ZZ:SNTL|SMS:-20:1",
+        "999000001:ZZ:SNTL|SMS:-30:1",
+        "999000002:ZZ:SNTL|SMS:-8:1",
+        "999000003:ZZ:SNTL|SMS:-8:1"
+      ]
+    },
+    "version": "soil-wy2027-offline-review-1"
+  },
+  "version": "synthetic-snotel-saved-replay-1"
+}

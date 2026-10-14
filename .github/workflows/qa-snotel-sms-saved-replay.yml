@@ -1,0 +1,37 @@
+name: SNOTEL SMS synthetic saved replay
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the dispatched source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Replay the pinned synthetic fixture twice
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: >-
+          python3 -B scripts/soil_moisture/snotel_saved_replay.py
+          --output "${RUNNER_TEMP}/snotel-sms-synthetic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+      - name: Retain only the synthetic validation summary
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}/summary/SUMMARY.json
+            ${{ runner.temp }}/snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}/summary/MANIFEST.json

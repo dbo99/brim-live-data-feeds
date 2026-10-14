@@ -1141,6 +1141,15 @@ private implementation is not copied into this public repository.
 
 ## Nonproduction workflows
 
+The manual-only SNOTEL SMS synthetic saved replay workflow
+`qa-snotel-sms-saved-replay.yml` calls
+`scripts/soil_moisture/snotel_saved_replay.py` with a pinned, invented seven-sensor
+fixture and fixed clock. It performs no provider acquisition or publication.
+Only its synthetic aggregate summary and source-hash manifest are retained as
+14-day Actions artifacts; native checkpoints remain in runner temporary storage.
+Synthetic success does not authenticate private observations or establish
+98-sensor operational capacity. Manual hosted execution needs separate approval.
+
 The manual HRRR sandbox writes diagnostic files and an Actions artifact only.
 The weekly/manual USGS groundwater candidate preview writes a review artifact
 only. The wind watchdog reads wind manifests/state and can dispatch ASOS/AWOS,
