@@ -38,11 +38,14 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 | `.github/workflows/build-hrrr-wind-sandbox.yml` | Build HRRR wind sandbox | Manual | `scripts/build_hrrr_wind_sandbox.R` | Artifact only |
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
-| `.github/workflows/qa-snotel-sms-saved-replay.yml` | SNOTEL SMS synthetic saved replay | Manual only | `scripts/soil_moisture/snotel_saved_replay.py` | Synthetic summary/manifest artifact only; no provider call |
+| `.github/workflows/qa-snotel-sms-saved-replay.yml` | Build SNOTEL SMS synthetic replay (QA) | Manual only | `scripts/soil_moisture/snotel_saved_replay.py` | Synthetic summary/manifest artifact only; no provider call |
+| `.github/workflows/build-snotel-sms-current-wy.yml` | Build SNOTEL soil moisture current-WY feed | Manual only; acquire/publish false | `scripts/soil_network_workflow.py snotel-prepare` | Disabled by default; explicit approved main-only publication after a validated candidate |
 
-These are nineteen tracked workflows: fifteen writers and four support
-workflows. GitHub Pages deployment is separate platform-managed behavior and is
-not source-controlled in `.github/workflows`.
+This source candidate contains 20 workflow files: fifteen established scheduled
+writers, four support workflows, and one manual/default-off SNOTEL operating
+candidate. Source presence does not establish registration, enabled service state
+or dispatch authority. GitHub Pages deployment is separate platform-managed
+behavior and is not source-controlled in `.github/workflows`.
 
 ## Names and entry points
 
@@ -50,7 +53,8 @@ not source-controlled in `.github/workflows`.
 
 - Workflow filenames describe one product or diagnostic responsibility.
 - Display names identify product and action.
-- Writers call one principal R entry script.
+- The established scheduled writers call one principal R entry script. The
+  separate SNOTEL operating candidate uses the Python entry point listed above.
 - Each workflow passes explicit `--allowlist` paths and, where needed,
   `--owned-root` boundaries to the shared publisher; Git staging lives in
   `scripts/main_publisher.py`.
@@ -566,3 +570,34 @@ At minimum:
 9. Prove official `main` and hosted paths were not changed by the test.
 10. Test private BRIM when path/schema/time/unit/fallback behavior changed.
 11. Record remaining uncertainty and obtain explicit publication approval.
+
+### SNOTEL current-WY Phase B candidate (not released)
+
+`build-snotel-sms-current-wy.yml` is a separate manual-only source candidate;
+`qa-snotel-sms-saved-replay.yml` keeps its behavior with its corrected display title.
+Acquisition/publication default
+false, contradictory modes fail, and a default dispatch performs no checkout,
+provider retrieval or publication. Future explicit preparation has read-only
+repository permission and a 60-minute timeout. Both jobs check out `github.sha`;
+actual checked-out source is bound to integrity metadata and the public catalog.
+There is no real catalog in this change and no standing acquisition authority.
+
+Artifacts positively allow only `candidate/docs/data/snotel-sms/index.json`,
+`candidate/docs/data/snotel-sms/current-wy.json` and `candidate-metadata.json`.
+Disabled/no-work/failed/synthetic results cannot qualify. The 15-minute publisher
+job additionally requires explicit publication, a validated candidate and main.
+Only that job has contents-write, and its job-scoped queue remains exactly
+`brim-live-main-publish`, `cancel-in-progress: false`, `queue: max`. The unchanged
+shared publisher reconciles only the two product paths onto fresh main. Each
+source-specific callback repeats year admission; committed delivery is verified
+separately from the source-event checkout. Newer unrelated products remain owned
+by their existing writers. There are no schedules, chained triggers, activation
+steps or changes to other workflows. Local YAML/mock tests do not establish a
+hosted or real-provider pass; Git integration, disclosure, consumer, hosted,
+acquisition, first-publication and scheduling decisions remain explicit.
+
+A default `acquire=false` dispatch reports `DISABLED` and skips checkout and all
+Python steps; it produces no candidate and does not test the snapshot, prior-product
+importer, transport or publisher. The older synthetic QA validates its established
+saved-fixture replay only. Meaningful hosted Phase A/B saved-input validation needs
+a separately approved test route and dispatch; neither is implemented here.

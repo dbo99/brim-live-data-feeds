@@ -593,4 +593,30 @@ class SnotelCompactReplayTests(unittest.TestCase):
 
 
 
+class SharedSnotelReducerTests(unittest.TestCase):
+    def test_extracted_admission_and_source_loss_retention(self):
+        prior = {'science': 'accepted'}
+        for source, expected in [('FAILED', 'FAILED'), ('QUERIED_EMPTY', 'COMPLETE_VALID_EMPTY'),
+                ('OMITTED_SOURCE_GAP', 'MISSING_WITHIN_COMPLETED_QUERY'), ('EXPLICIT_MISSING', 'MISSING'),
+                ('SUSPECT_ORIGINAL_ONLY', 'WITHHELD'), ('SUSPECT_NO_NUMERIC_VALUE', 'WITHHELD')]:
+            outcome = o.snotel_admission(source, [])
+            self.assertEqual(outcome, expected)
+            self.assertEqual(o.reconcile_admitted(outcome, prior, None), (expected, prior))
+        self.assertEqual(o.snotel_admission('OBSERVED', [{'qc_flag': 'S'}]), 'WITHHELD')
+
+    def test_fingerprint_numeric_equality_presence_and_legacy_projection(self):
+        self.assertEqual(o.scientific_digest({'value': 1}), o.scientific_digest({'value': 1.0}))
+        self.assertEqual(o.scientific_digest({'value': -0.0}), o.scientific_digest({'value': 0}))
+        self.assertNotEqual(o.scientific_digest({}), o.scientific_digest({'value': None}))
+        self.assertNotEqual(o.scientific_digest({'value': '1'}), o.scientific_digest({'value': 1}))
+        a = dict(rows=[dict(provider_record=dict(value=1), response_station_element={}, observation_state='OBSERVED',
+                           source_timestamp_utc='2026-10-02T08:00:00Z', sensor_identity='SYNTHETIC', unit_native='pct')])
+        b = copy.deepcopy(a); b['rows'][0]['provider_record']['value'] = 1.0
+        self.assertEqual(o.reconcile_admitted('OBSERVED_ACCEPTED', a, b)[0], 'NO_DATA_CHANGE')
+        b['rows'][0]['provider_record']['qaFlag'] = None
+        self.assertEqual(o.reconcile_admitted('OBSERVED_ACCEPTED', a, b)[0], 'ACCEPTED_REVISION')
+        self.assertEqual(o.reconcile_admitted('OBSERVED_ACCEPTED', a, b, eligible=False), ('HELD_ELIGIBILITY', a))
+
+
+
 if __name__=='__main__':unittest.main()
