@@ -38,8 +38,9 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 | `.github/workflows/build-hrrr-wind-sandbox.yml` | Build HRRR wind sandbox | Manual | `scripts/build_hrrr_wind_sandbox.R` | Artifact only |
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
+| `.github/workflows/qa-snotel-sms-saved-replay.yml` | SNOTEL SMS synthetic saved replay | Manual only | `scripts/soil_moisture/snotel_saved_replay.py` | Synthetic summary/manifest artifact only; no provider call |
 
-These are eighteen tracked workflows: fifteen writers and three support
+These are nineteen tracked workflows: fifteen writers and four support
 workflows. GitHub Pages deployment is separate platform-managed behavior and is
 not source-controlled in `.github/workflows`.
 
