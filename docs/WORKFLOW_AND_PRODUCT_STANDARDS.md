@@ -25,7 +25,7 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 | `.github/workflows/build-major-water-supply-basin-forecasts.yml` | Build major water-supply basin forecasts | Manual dry run by default; native-IANA 10:56/16:56 Pacific | `scripts/build_major_water_supply_basin_forecasts.R` | One geometry-free CNRFC JSON payload; scheduled/explicit manual publication on `main` only |
 | `.github/workflows/build-cbrfc-major-water-supply-forecasts.yml` | Build CBRFC major water-supply forecasts | Manual dry run by default; native-IANA 08:14 Pacific daily | `scripts/build_cbrfc_major_water_supply_forecasts.R` | Separate three-record GLDA3/LKSA3 JSON payload; scheduled/explicit manual publication on `main` only |
 | `.github/workflows/build-cocorahs-daily-precip-feed.yml` | Build CoCoRaHS daily precip GeoJSON | Manual; 00:37/08:37/16:37 | `scripts/build_cocorahs_daily_precip_latest.R` | CA/CONUS products |
-| `.github/workflows/build-delta-ops-daily-summary.yml` | Build Delta Ops daily summary GeoJSON | Manual; five daily attempts | `scripts/build_delta_ops_daily_summary.R` | Four Delta files |
+| `.github/workflows/build-delta-ops-daily-summary.yml` | Build Delta Ops daily summary GeoJSON | Manual; two daily opportunities at 09:30/10:30 America/Los_Angeles, subject to already-current precheck | `scripts/build_delta_ops_daily_summary.R` | Four Delta files |
 | `.github/workflows/build-gfs-wind-latest.yml` | Build GFS wind latest | Manual; hourly :47 | `scripts/build_gfs_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-hrrr-wind-latest.yml` | Build HRRR wind latest | Manual; hourly :33 | `scripts/build_hrrr_wind_latest.R` | Rolling set/manifest/compatibility |
 | `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
@@ -132,7 +132,22 @@ Canaries check out immutable `github.sha`, require `refs/heads/main`, and reject
 an absent/invalid full commit or disagreement among approved input, event SHA
 and actual checkout before the secret-bearing step. Input values enter an
 environment variable, not executable shell interpolation. Ordinary checkout
-and all five scheduled attempts remain unchanged.
+remains unchanged. The schedule uses `30 9,10 * * *` with
+`timezone: America/Los_Angeles`: two opportunities every local day at 09:30
+and 10:30, including weekends, at the same times in PST/PDT. It also governs
+the ordinary PDF route/fallback. The existing current-date precheck can skip
+the second acquisition if today's report is already published; this is not a
+promise of two full mailbox reads. Scheduled starts may be delayed or dropped,
+and a report arriving after the last actual check may await a later run.
+See [Delta operational controls](PUBLISHING_AND_OPERATIONS.md#delta-optional-gmail-setup-and-release-controls).
+
+The reader receives the expected account from
+`secrets.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT`, alongside the three OAuth secrets.
+There is no fallback to the unmasked variable and no late masking command.
+Expected sender and enable remain variables. All four secrets are confined to
+the reader; child-process sanitization remains unchanged. Offline checks verify
+context placement, missing-account refusal and default-off/canary behavior;
+actual hosted log privacy needs a separately approved nonpublishing recheck.
 
 A valid canary bypasses the already-current precheck and selects the same
 optional dependency, retrieval, whole-report selection, real R builder and

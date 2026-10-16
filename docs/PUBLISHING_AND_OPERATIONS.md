@@ -538,13 +538,35 @@ are not hosted Gmail proof. Repository Actions secrets share the repository's
 Actions security boundary; they are not a per-workflow vault. Readonly scope
 covers the dedicated mailbox, while sender filtering is an application rule.
 
-Configuration names are exactly `DELTA_OPS_GMAIL_CLIENT_ID`,
-`DELTA_OPS_GMAIL_CLIENT_SECRET`, `DELTA_OPS_GMAIL_REFRESH_TOKEN` (Actions secrets),
-and `DELTA_OPS_GMAIL_ENABLED`, `DELTA_OPS_GMAIL_EXPECTED_ACCOUNT`,
-`DELTA_OPS_GMAIL_EXPECTED_SENDER` (repository variables). Keep enable `false`
+The four repository Actions secrets are `DELTA_OPS_GMAIL_CLIENT_ID`,
+`DELTA_OPS_GMAIL_CLIENT_SECRET`, `DELTA_OPS_GMAIL_REFRESH_TOKEN` and
+`DELTA_OPS_GMAIL_EXPECTED_ACCOUNT`. `DELTA_OPS_GMAIL_ENABLED` and
+`DELTA_OPS_GMAIL_EXPECTED_SENDER` remain repository variables. Keep enable `false`
 until separately approved. Expected account must match the dedicated mailbox;
 expected sender must equal the compiled approved DWR identity. Pass credentials
 only to retrieval, never dependency installation, R builders, tests or publishers.
+The account uses the secret context in that same reader step, with no variable
+fallback. Variables are unmasked by default; masking after the step begins does
+not protect its environment preamble. Missing account configuration remains
+unavailable, never permission to accept another mailbox. The legacy account
+variable remains temporarily for deployed-source compatibility; retire it only
+after the corrected workflow is merged and checked, under separate authorization.
+Offline wiring tests do not prove hosted log masking. A separately approved
+nonpublishing recheck must verify that the account stays out of logs/artifacts.
+
+The workflow has two daily opportunities at 09:30 and 10:30 in
+`America/Los_Angeles`, including weekends, using one native timezone entry
+through PST/PDT. The cadence also governs default PDF and PDF-fallback attempts;
+it does not activate Gmail. The same-date precheck may skip the second
+acquisition when today's report is already published. GitHub can delay or drop
+scheduled runs, especially during high load; nominal times do not guarantee
+on-time retrieval or publication. Do not rely on scheduler delay to catch a
+report arriving after a nominal check.
+Assess first and additional email arrivals against full subject-day timestamps;
+metadata subject labels are not validated science dates, and additional messages
+are not proven corrections. An arrival after the final actual check may remain
+unavailable until a later authorized run. Same-date prechecks and same/older-report
+publication no-ops remain in force; no same-date correction policy is added.
 
 For separately authorized local Desktop setup, use an owner-only directory
 `~/.config/brim-live-delta-ops/` (mode 700), with private `client.json`,

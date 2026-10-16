@@ -167,8 +167,8 @@ class DeltaCanaryWorkflowTests(unittest.TestCase):
     def test_delta_yaml_defaults_and_independent_publisher_matrix(self):
         self.assertRegex(self.text, r"gmail_canary:\n(?:.*\n){1}        type: boolean\n        required: false\n        default: false")
         self.assertRegex(self.text, r"canary_source_sha:\n(?:.*\n){1}        type: string\n        required: false\n        default: \"\"")
-        self.assertEqual(re.findall(r'- cron: "([^"]+)"', self.text),
-                         ["41 15 * * *", "11,41 16 * * *", "11,41 17 * * *"])
+        self.assertEqual(re.findall(r"- cron: '([^']+)'", self.text),
+                         ["30 9,10 * * *"])
         self.assertNotRegex(self.text, r"(?m)^  (?:push|pull_request):")
         output = re.search(r"^      should_publish: (.+)$", self.text, re.M)[1]
         publish = self.text.split("\n  publish-to-main:\n", 1)[1].splitlines()[0].strip()[4:]
@@ -199,6 +199,68 @@ class DeltaCanaryWorkflowTests(unittest.TestCase):
                             self.assertEqual(self.expression(self.field(name, "if"), context), use)
                         for name in ["Build latest Delta Ops daily summary GeoJSON", "Validate and describe Delta Ops candidate artifact"]:
                             self.assertEqual(self.expression(self.field(name, "if"), context), not use)
+
+    def delta_yaml(self):
+        import json, subprocess
+        result = subprocess.run(
+            ["ruby", "-rjson", "-ryaml", "-e", "puts JSON.generate(YAML.load(STDIN.read))"],
+            input=self.text, capture_output=True, text=True, check=True, timeout=30)
+        return json.loads(result.stdout)
+
+    def test_delta_account_secret_is_confined_to_reader_in_actual_yaml(self):
+        import json
+        document = self.delta_yaml()
+        expression = "${{ secrets.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT }}"
+        reader = next(step for step in document["jobs"]["prepare-candidate"]["steps"]
+                      if step["name"] == "Build Delta Ops through optional Gmail reader")
+        self.assertEqual(reader["env"]["DELTA_OPS_GMAIL_EXPECTED_ACCOUNT"], expression)
+        self.assertEqual(reader["env"]["DELTA_OPS_GMAIL_EXPECTED_SENDER"],
+                         "${{ vars.DELTA_OPS_GMAIL_EXPECTED_SENDER }}")
+        self.assertEqual(sum("secrets.DELTA_OPS_GMAIL_" in str(value)
+                             for value in reader["env"].values()), 4)
+        self.assertNotIn("vars.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT", self.text)
+        self.assertNotIn("add-mask", self.text)
+        self.assertEqual(self.text.count("secrets.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT"), 1)
+        reader["env"].pop("DELTA_OPS_GMAIL_EXPECTED_ACCOUNT")
+        self.assertNotIn("DELTA_OPS_GMAIL_EXPECTED_ACCOUNT", json.dumps(document))
+        # Missing account must not accept an arbitrary mailbox or contact it.
+        import sys
+        sys.path.insert(0, str(REPO / "scripts"))
+        import delta_ops_gmail as gmail
+        config = gmail.Config(True, "synthetic", "synthetic", "synthetic", "", gmail.APPROVED_SENDER)
+        self.assertFalse(config.configured())
+        class NoHTTP:
+            def request(self, *args, **kwargs):
+                raise AssertionError("Missing account must not contact the provider")
+        from datetime import datetime, timezone
+        result = gmail.retrieve(config, as_of=datetime(2026, 10, 16, tzinfo=timezone.utc), http=NoHTTP())
+        self.assertEqual(result.state, "UNCONFIGURED")
+
+    def test_delta_two_daily_pacific_opportunities_in_winter_summer_and_dst(self):
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        document = self.delta_yaml()
+        schedules = document.get("on", document.get("true"))["schedule"]
+        self.assertEqual(schedules, [
+            {"cron": "30 9,10 * * *", "timezone": "America/Los_Angeles"}])
+        # Expand the actual YAML across every day of a year, including weekends
+        # and both DST transitions; there must be exactly two local triggers.
+        start = datetime(2026, 1, 1)
+        for offset in range(365):
+            day = (start + timedelta(days=offset)).date()
+            triggers = []
+            for entry in schedules:
+                minute, hour, monthday, month, weekday = entry["cron"].split()
+                self.assertEqual((monthday, month, weekday), ("*", "*", "*"))
+                for hour_part in hour.split(","):
+                    for minute_part in minute.split(","):
+                        triggers.append(datetime(day.year, day.month, day.day, int(hour_part), int(minute_part),
+                                                 tzinfo=ZoneInfo(entry["timezone"])))
+            self.assertEqual([value.strftime("%H:%M") for value in triggers], ["09:30", "10:30"])
+            self.assertEqual(len({value.timestamp() for value in triggers}), 2)
+            if day.isoformat() in {"2026-01-15", "2026-07-15"}:
+                expected = ["17:30", "18:30"] if day.month == 1 else ["16:30", "17:30"]
+                self.assertEqual([value.astimezone(timezone.utc).strftime("%H:%M") for value in triggers], expected)
 
     def test_delta_actual_mode_shell_rejects_wrong_identity_before_secret_steps(self):
         import subprocess, tempfile
@@ -368,13 +430,12 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
     def test_delta_saved_input_is_disabled_without_changing_production_controls(self) -> None:
         text = DELTA_OPS.read_text(encoding="utf-8")
         self.assertIn('DELTA_OPS_SAVED_EMAIL: ""', text)
-        self.assertIn('cron: "41 15 * * *"', text)
-        self.assertIn('cron: "11,41 16 * * *"', text)
-        self.assertIn('cron: "11,41 17 * * *"', text)
+        self.assertIn("cron: '30 9,10 * * *'", text)
+        self.assertEqual(text.count("timezone: America/Los_Angeles"), 1)
         reader = text.split("      - name: Build Delta Ops through optional Gmail reader\n", 1)[1].split("      - name:", 1)[0]
         outside_reader = text.replace(reader, "")
         self.assertNotIn("secrets.DELTA_OPS_GMAIL_", outside_reader)
-        self.assertEqual(reader.count("secrets.DELTA_OPS_GMAIL_"), 3)
+        self.assertEqual(reader.count("secrets.DELTA_OPS_GMAIL_"), 4)
         self.assertIn("steps.delta_ops_mode.outputs.use_gmail == 'true'", reader)
         default_builder = text.split("      - name: Build latest Delta Ops daily summary GeoJSON\n", 1)[1].split("      - name:", 1)[0]
         self.assertIn("steps.delta_ops_mode.outputs.use_gmail != 'true'", default_builder)

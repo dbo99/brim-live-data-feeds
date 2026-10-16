@@ -14,15 +14,12 @@ on:
         required: false
         default: ""
   schedule:
-    # Morning retries after normal DWR Delta Ops posting time.
-    # GitHub schedules are UTC and may not run exactly on the minute.
-    # These minutes avoid an exact collision with CoCoRaHS at 16:37 UTC and
-    # stay away from the top of the hour.
-    # During PDT these are about 8:41, 9:11, 9:41, 10:11, and 10:41 AM Pacific.
-    # During PST they run one hour earlier unless adjusted seasonally.
-    - cron: "41 15 * * *"
-    - cron: "11,41 16 * * *"
-    - cron: "11,41 17 * * *"
+    # Two daily Pacific opportunities, including weekends, through PST/PDT.
+    # The second may skip acquisition if today's report is already published.
+    # GitHub can delay/drop scheduled runs, especially at the top of the hour.
+    # This cadence also governs the default PDF route and PDF fallback.
+    - cron: '30 9,10 * * *'
+      timezone: America/Los_Angeles
 
 permissions: {}
 
@@ -200,7 +197,7 @@ jobs:
         env:
           # Ordinary operation is flag-gated; explicit canary still requires DKIM.
           DELTA_OPS_GMAIL_ENABLED: "true"
-          DELTA_OPS_GMAIL_EXPECTED_ACCOUNT: ${{ vars.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT }}
+          DELTA_OPS_GMAIL_EXPECTED_ACCOUNT: ${{ secrets.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT }}
           DELTA_OPS_GMAIL_EXPECTED_SENDER: ${{ vars.DELTA_OPS_GMAIL_EXPECTED_SENDER }}
           DELTA_OPS_GMAIL_CLIENT_ID: ${{ secrets.DELTA_OPS_GMAIL_CLIENT_ID }}
           DELTA_OPS_GMAIL_CLIENT_SECRET: ${{ secrets.DELTA_OPS_GMAIL_CLIENT_SECRET }}

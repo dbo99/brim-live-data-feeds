@@ -503,6 +503,13 @@ and producer scripts.
   attribution page, never a private message URL or a claim that PDF was used.
   One build instant supplies UTC/Pacific times; the Pacific date controls the
   seven-day age ceiling and future-date rejection.
+- The 09:30 and 10:30 `America/Los_Angeles` workflow opportunities govern
+  acquisition, including the default PDF/fallback route, every day through
+  PST/PDT. The already-current precheck can skip the second acquisition. This
+  cadence does not change report dates, scientific validity, freshness limits
+  or same/older-report publication no-ops and does not enable Gmail. Mailbox
+  arrival and subject-labelled dates must not replace the report heading date;
+  scheduled/job times do not establish a new publication or consumer freshness.
 - Numeric zero, signed and approximate source values keep their scientific
   meaning. Annotated `% Inflow Diverted` remains a percentage, without joining
   annotation digits or scaling a fraction; its qualifier appears once. Status
