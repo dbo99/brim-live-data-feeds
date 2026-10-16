@@ -67,7 +67,11 @@ and fresh-main transaction SHA are distinct evidence and must not be conflated:
 | CDEC, CoCoRaHS, Delta, SCAN, streamflow, groundwater, ASOS/AWOS, snow | `github.ref` with full history | Event `github.sha`; candidate metadata carries `GITHUB_SHA` |
 | CNRFC, CBRFC, GFS, HRRR, NBM wind, NBM QPF, Winter Storm Levels | `main` for schedules; `github.ref_name` for manual runs, with full history | Actual preparation HEAD recorded as `source-sha`, then used for metadata, checkout and publisher `GITHUB_SHA` |
 
-The first group does not record preparation HEAD separately. If the branch
+Except for Delta's diagnostic checkout output, the first group does not record
+preparation HEAD separately. Delta's explicit nonpublishing Gmail canary checks
+out the event SHA and requires approved input = event = checkout before email
+access. Its ordinary publication path still uses event-SHA metadata/callbacks.
+If the branch
 advances after the event, its candidate code and event-SHA callbacks can differ.
 Fresh-main reconciliation does not prove those code versions match. Investigate
 that distinction during source-related failures; extending recorded build-SHA
@@ -288,7 +292,14 @@ The repository has product-specific, not universal, QA:
   10, and at most 10 station/report identifiers. This narrow malformed-metadata
   policy does not supply the still-missing overall completeness threshold.
 - Delta checks HTTP status, MIME, minimum size, leading PDF magic and terminal
-  EOF before Poppler, then validates report date and a minimum feature set.
+  EOF before Poppler, then strictly validates the complete four-file candidate,
+  source/derived values, exact feature identities, dates, units and provenance.
+  Optional Gmail states distinguish `UNCONFIGURED`, `RETRIEVAL_UNAVAILABLE`,
+  `COMPLETE_VALID_EMPTY`, `MESSAGE_REJECTED`, `TRUST_UNVERIFIED`, `SCAN_INCOMPLETE`
+  and `VERIFIED_ELIGIBLE`; the last requires independent approved-sender DKIM
+  and valid signed content. Missing configuration is not an empty verified
+  mailbox. Gmail logs contain fixed status/counts only, never raw MIME, account
+  details, message IDs, credentials, headers or private URLs.
   The product-specific retrieval policy in [PRODUCTS.md](PRODUCTS.md#3-delta-operations)
   bounds transient retries to three attempts. Attempt logs include status,
   normalized MIME, byte count, SHA-256, source/final URL and validation outcome;
@@ -388,6 +399,9 @@ success" is not universally equivalent to "complete current product."
 | Failure point | Current remote behavior | Prior official product |
 |---|---|---|
 | Upstream retrieval stops the script | No commit step | Remains in Git and Pages |
+| Delta optional Gmail retrieval is unavailable, unverified or incomplete | Discard an incomplete scan and invoke the existing bounded PDF route once; copied headers cannot confer trust | Accepted PDF may advance; otherwise preserve the prior complete set |
+| Delta has no acceptable whole report, a scientific conflict or invalid/review-only candidate | Fail closed; same/older valid candidates remain no-ops | Prior canonical four-file bytes remain unchanged |
+| Delta explicit Gmail canary selects only PDF or produces no validated email candidate | Report held Gmail proof; never enter publisher or shared publication queue | Prior official product remains unchanged |
 | Delta receives persistent non-PDF bytes or exhausts retrieval retries | `DELTA_OPS_UPSTREAM_NON_PDF_RESPONSE`, `DELTA_OPS_UPSTREAM_HTTP_RESPONSE` or `DELTA_OPS_UPSTREAM_TRANSPORT_FAILURE` stops preparation before output writes/candidate upload; publication is skipped | Prior canonical Delta four-file product remains unchanged |
 | CoCoRaHS has 11 or more retained observations without a usable station name, or its strict candidate validator rejects any feature | Candidate construction/publication stops; diagnostics report the bounded station-name omission evidence | Prior canonical four-file product remains unchanged in Git and Pages |
 | One or more CNRFC pages fail after a valid prior exists | Successful families/records advance; failed metrics become unexpired `stale_last_known_good`, `expired`, explicit source `unavailable`, or `failed_no_data` | A complete, honestly degraded 51-record snapshot may replace the prior; values retain their original source and successful-retrieval provenance |
@@ -431,6 +445,10 @@ and atomically renames the validated manifest last; a pre-manifest failure
 removes new unreferenced targets and leaves the prior manifest bytes unchanged.
 The filesystem still does not provide one atomic multi-path rename. Other local
 manual runs can alter final `docs/data` paths before later processing fails.
+
+Delta also validates all four prospective files in temporary storage before
+copying to the requested destination. Rejected preparation retains prior bytes;
+separate copies are not an atomic multi-path replacement or rollback guarantee.
 
 Safe local reproduction uses:
 
@@ -493,9 +511,14 @@ Historical [PR #40](https://github.com/dbo99/brim-live-data-feeds/pull/40) suppl
 transport-hardening evidence; its old availability observation is not evidence
 of a continuing outage. The current offline fixtures reproduce the rejection
 without contacting DWR. Bounded retries improve transient recovery and diagnosis
-but cannot restore access during a sustained upstream rejection. Neither the
-current implementation nor PR #40 contains Gmail/email ingestion; a dedicated
-email contingency remains separate future work, with no automatic CWC fallback.
+but cannot restore access during a sustained upstream rejection. The optional
+Gmail reader and local OAuth helper are now prepared with independent approved
+sender/signing-domain verification; ordinary Gmail ingestion remains disabled.
+Copied receiver headers confer no trust. Private evidence exists only through
+preparation/metadata creation; the publisher relies on the controlled, exact
+hash-bound artifact rather than a caller-supplied authentication label. No
+automatic CWC fallback is implemented. See the separately controlled setup,
+canary and activation procedure below.
 Same-report-date candidates remain publisher no-ops, including manual attempts.
 
 1. Confirm the first failing request and upstream provider.
@@ -506,6 +529,74 @@ Same-report-date candidates remain publisher no-ops, including manual attempts.
    green run.
 6. Retry only when provider recovery or the existing retry policy justifies it;
    obtain David's approval for a manual production dispatch or rerun.
+
+### Delta optional Gmail setup and release controls
+
+Ordinary ingestion is disabled until explicitly activated. Source installation,
+secret staging, an OAuth browser response and an ordinary disabled workflow run
+are not hosted Gmail proof. Repository Actions secrets share the repository's
+Actions security boundary; they are not a per-workflow vault. Readonly scope
+covers the dedicated mailbox, while sender filtering is an application rule.
+
+Configuration names are exactly `DELTA_OPS_GMAIL_CLIENT_ID`,
+`DELTA_OPS_GMAIL_CLIENT_SECRET`, `DELTA_OPS_GMAIL_REFRESH_TOKEN` (Actions secrets),
+and `DELTA_OPS_GMAIL_ENABLED`, `DELTA_OPS_GMAIL_EXPECTED_ACCOUNT`,
+`DELTA_OPS_GMAIL_EXPECTED_SENDER` (repository variables). Keep enable `false`
+until separately approved. Expected account must match the dedicated mailbox;
+expected sender must equal the compiled approved DWR identity. Pass credentials
+only to retrieval, never dependency installation, R builders, tests or publishers.
+
+For separately authorized local Desktop setup, use an owner-only directory
+`~/.config/brim-live-delta-ops/` (mode 700), with private `client.json`,
+`expected-account.txt` and the newly saved `oauth.json` (mode 600). Put only the
+intended dedicated account in `expected-account.txt`; do not include its address
+in public documentation. The helper does not overwrite an existing output.
+Using an already prepared optional Python environment:
+
+```sh
+python3 scripts/delta_ops_gmail_oauth.py --authorize \
+  --client-file "$HOME/.config/brim-live-delta-ops/client.json" \
+  --expected-account-file "$HOME/.config/brim-live-delta-ops/expected-account.txt" \
+  --output "$HOME/.config/brim-live-delta-ops/oauth.json"
+```
+
+The helper uses exact readonly scope, PKCE, a bounded loopback callback and
+issuer/state validation; optional Google callback fields do not weaken those
+checks. Safe terminal stages identify failure without echoing callback data or
+credentials. Browser callback acceptance alone does not establish token exchange,
+account verification or successful exclusive credential save. Do not recreate or
+refresh credentials merely to test workflow wiring. Local credentials/raw messages
+stay outside repositories, logs and review artifacts.
+
+Operational limits are the [fixed Gmail/DKIM bounds](WORKFLOW_AND_PRODUCT_STANDARDS.md#upstream-retrieval).
+PDF recovery invokes the unchanged transport once, with its own maximum three
+attempts, 10-second connection/30-second total request limits, five redirects,
+and 1/2-second backoffs. Dependency failure can therefore still produce PDF;
+PDF-only recovery does not prove Gmail works. No extra outer PDF retry is added.
+
+Release proceeds through separate decisions:
+
+1. Integrate reviewed source and localized documentation, preserving other products;
+   obtain consumer acknowledgment of additive provenance/percentage semantics.
+2. Approve one hosted nonpublishing test at a specified immutable main commit.
+   Supply `gmail_canary=true` and that full commit as `canary_source_sha` to the
+   existing workflow, leaving the enable variable false. The event and actual
+   checkout must match it before email access. Approve the bounded Gmail/DNS
+   traffic, possible PDF fallback and sanitized candidate-artifact disclosure.
+3. Review authenticated email selection, heading date, 17/17 coverage, strict
+   validation and `publication=NOT_ATTEMPTED`; confirm the publisher was excluded.
+   A PDF-only/no-candidate outcome is held proof, even if fallback data is valid.
+4. Separately approve routine activation and later verify actual canonical Git
+   and public Pages coherence. A source merge or canary artifact does not make
+   the product live. A future separately authorized enable change back to false
+   restores the ordinary PDF-only route; it does not undo previously published
+   data, bypass same-date no-op rules or authorize an official data rollback.
+
+The prepared canary retains the existing 30-minute preparation timeout and
+short artifact retention, skips the shared publication queue, and never runs a
+real publisher. Review its full [mode and artifact controls](WORKFLOW_AND_PRODUCT_STANDARDS.md#delta-nonpublishing-gmail-test-mode)
+before a separately approved dispatch. This procedure grants no current login,
+settings change, provider request, hosted execution or publication authority.
 
 ### Upstream schema change
 

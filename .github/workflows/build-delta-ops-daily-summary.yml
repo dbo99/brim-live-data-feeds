@@ -2,6 +2,17 @@ name: Build Delta Ops daily summary GeoJSON
 
 on:
   workflow_dispatch:
+    inputs:
+      gmail_canary:
+        description: "Nonpublishing Gmail proof (requires separate run approval)"
+        type: boolean
+        required: false
+        default: false
+      canary_source_sha:
+        description: "Full approved source commit; must equal the main event and checkout"
+        type: string
+        required: false
+        default: ""
   schedule:
     # Morning retries after normal DWR Delta Ops posting time.
     # GitHub schedules are UTC and may not run exactly on the minute.
@@ -22,14 +33,45 @@ jobs:
     permissions:
       contents: read
     outputs:
-      should_publish: ${{ steps.delta_ops_precheck.outputs.should_run }}
+      should_publish: ${{ steps.delta_ops_mode.outputs.is_canary != 'true' && steps.delta_ops_precheck.outputs.should_run == 'true' }}
 
     steps:
-      - name: Check out latest branch tip
+      - name: Check out selected source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.gmail_canary == true && github.sha || github.ref }}
           fetch-depth: 0
+
+      - name: Validate Delta mode and immutable canary source
+        id: delta_ops_mode
+        shell: bash
+        env:
+          CANARY_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.gmail_canary == true }}
+          CANARY_SOURCE_SHA: ${{ inputs.canary_source_sha }}
+          SOURCE_EVENT_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          EMAIL_ENABLED: ${{ vars.DELTA_OPS_GMAIL_ENABLED }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import os, re, subprocess
+          from pathlib import Path
+
+          canary = os.environ["CANARY_REQUESTED"] == "true"
+          checkout = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          expected = os.environ.get("CANARY_SOURCE_SHA", "")
+          event = os.environ["SOURCE_EVENT_SHA"]
+          if canary and (os.environ["SOURCE_REF"] != "refs/heads/main"
+                         or not re.fullmatch(r"[0-9a-f]{40}", expected)
+                         or expected != event or checkout != event):
+              raise SystemExit("DELTA_CANARY_SOURCE_REJECTED")
+          email = os.environ["SOURCE_REF"] == "refs/heads/main" and (
+              canary or os.environ.get("EMAIL_ENABLED") == "true")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
+              print("is_canary=" + str(canary).lower(), file=out)
+              print("use_gmail=" + str(email).lower(), file=out)
+              print("checkout_sha=" + checkout, file=out)
+          PYCODE
 
       - name: Log trigger context
         shell: bash
@@ -124,15 +166,57 @@ jobs:
           print(vapply(pkgs, function(p) as.character(utils::packageVersion(p)), character(1)))
 
       - name: Build latest Delta Ops daily summary GeoJSON
-        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        if: steps.delta_ops_precheck.outputs.should_run == 'true' && steps.delta_ops_mode.outputs.use_gmail != 'true'
         shell: Rscript {0}
         env:
           DELTA_OPS_OUT_DIR: ${{ runner.temp }}/delta-ops-candidate/candidate/docs/data
+          # Default route stays PDF-only. Saved input is private review only.
+          DELTA_OPS_SAVED_EMAIL: ""
+          DELTA_OPS_SELECTED_RECORD: ""
         run: |
           source("scripts/build_delta_ops_daily_summary.R")
 
+      - name: Prepare optional Delta Gmail verification dependencies
+        if: steps.delta_ops_precheck.outputs.should_run == 'true' && steps.delta_ops_mode.outputs.use_gmail == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Dependencies are confined to this optional preparation step. Failure
+          # leaves verification unavailable and permits the bounded PDF route.
+          if python3 -m venv "${RUNNER_TEMP}/delta-gmail-venv"; then
+            export PATH="${RUNNER_TEMP}/delta-gmail-venv/bin:$PATH"
+            sed -n 's/^# build: //p' requirements-delta-ops-gmail.txt > "${RUNNER_TEMP}/delta-gmail-build-requirements.txt"
+            if python3 -m pip --isolated install --disable-pip-version-check --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r "${RUNNER_TEMP}/delta-gmail-build-requirements.txt" >/dev/null 2>&1 && \
+               python3 -m pip --isolated install --disable-pip-version-check --no-cache-dir --require-hashes --no-build-isolation --no-deps -r requirements-delta-ops-gmail.txt >/dev/null 2>&1; then
+              echo "DELTA_VERIFIER_DEPENDENCIES READY"
+            else
+              echo "DELTA_VERIFIER_DEPENDENCIES UNAVAILABLE"
+            fi
+          fi
+
+      - name: Build Delta Ops through optional Gmail reader
+        if: steps.delta_ops_precheck.outputs.should_run == 'true' && steps.delta_ops_mode.outputs.use_gmail == 'true'
+        shell: bash
+        env:
+          # Ordinary operation is flag-gated; explicit canary still requires DKIM.
+          DELTA_OPS_GMAIL_ENABLED: "true"
+          DELTA_OPS_GMAIL_EXPECTED_ACCOUNT: ${{ vars.DELTA_OPS_GMAIL_EXPECTED_ACCOUNT }}
+          DELTA_OPS_GMAIL_EXPECTED_SENDER: ${{ vars.DELTA_OPS_GMAIL_EXPECTED_SENDER }}
+          DELTA_OPS_GMAIL_CLIENT_ID: ${{ secrets.DELTA_OPS_GMAIL_CLIENT_ID }}
+          DELTA_OPS_GMAIL_CLIENT_SECRET: ${{ secrets.DELTA_OPS_GMAIL_CLIENT_SECRET }}
+          DELTA_OPS_GMAIL_REFRESH_TOKEN: ${{ secrets.DELTA_OPS_GMAIL_REFRESH_TOKEN }}
+          DELTA_OPS_SAVED_EMAIL: ""
+        run: |
+          set -euo pipefail
+          if [ -x "${RUNNER_TEMP}/delta-gmail-venv/bin/python3" ]; then
+            export PATH="${RUNNER_TEMP}/delta-gmail-venv/bin:$PATH"
+          fi
+          python3 scripts/delta_ops_gmail.py build \
+            --out-dir "${RUNNER_TEMP}/delta-ops-candidate/candidate/docs/data" \
+            --artifact-metadata "${RUNNER_TEMP}/delta-ops-candidate/candidate-metadata.json"
+
       - name: Validate and describe Delta Ops candidate artifact
-        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        if: steps.delta_ops_precheck.outputs.should_run == 'true' && steps.delta_ops_mode.outputs.use_gmail != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -158,6 +242,49 @@ jobs:
             --allowlist docs/data/delta_ops_daily_summary_summary.json \
             --allowlist docs/data/delta_ops_x2_reference.geojson
 
+      - name: Verify exact Delta artifact closure and validation
+        id: delta_ops_artifact
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, os, sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts")
+          from main_publisher import validate_candidate_metadata
+          from delta_ops_publisher import ALLOWLIST, PRODUCT_ID, validate_product
+          from delta_ops_email import LABELS
+
+          artifact = Path(os.environ["RUNNER_TEMP"]) / "delta-ops-candidate"
+          root = artifact / "candidate"
+          metadata = artifact / "candidate-metadata.json"
+          try:
+              # The existing preparation path validated with private evidence before
+              # discarding it. Reuse its exact hash-bound five-file artifact here.
+              validate_candidate_metadata(root=root, metadata_path=metadata,
+                  product_id=PRODUCT_ID, allowlist=[str(p) for p in ALLOWLIST],
+                  expected_source_sha=os.environ["GITHUB_SHA"])
+              os.environ.update(BRIM_PUBLISH_PHASE="validate-candidate",
+                  BRIM_PUBLISH_CANDIDATE_ROOT=str(root), BRIM_PUBLISH_METADATA=str(metadata))
+              report_date, _ = validate_product(root)
+              values = json.loads((root / "docs/data/delta_ops_daily_summary.json").read_text())
+              coverage = sum(key in values["values"] for key in LABELS)
+              kind = values["source_kind"]
+              proof = (kind == "email" and values["review_only"] is False
+                       and values.get("source_authentication") == "dkim-rsa-sha256-full-body"
+                       and coverage == len(LABELS) == 17)
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
+                  print("gmail_proof=" + str(proof).lower(), file=out)
+                  print("selected_transport=" + kind, file=out)
+                  print("report_date=" + report_date, file=out)
+                  print("required_field_coverage=" + str(coverage), file=out)
+                  print("validation=PASS", file=out)
+          except Exception:
+              raise SystemExit("DELTA_ARTIFACT_REJECTED") from None
+          PYCODE
+
       - name: Upload validated Delta Ops publication candidate
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         uses: actions/upload-artifact@v7
@@ -167,8 +294,48 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+      - name: Report nonpublishing Gmail canary result
+        if: ${{ always() && steps.delta_ops_mode.outputs.is_canary == 'true' }}
+        shell: bash
+        env:
+          CANARY_SOURCE_SHA: ${{ inputs.canary_source_sha }}
+          SOURCE_EVENT_SHA: ${{ github.sha }}
+          CHECKOUT_SHA: ${{ steps.delta_ops_mode.outputs.checkout_sha }}
+          SELECTED_TRANSPORT: ${{ steps.delta_ops_artifact.outputs.selected_transport }}
+          REPORT_DATE: ${{ steps.delta_ops_artifact.outputs.report_date }}
+          REQUIRED_FIELD_COVERAGE: ${{ steps.delta_ops_artifact.outputs.required_field_coverage }}
+          VALIDATION: ${{ steps.delta_ops_artifact.outputs.validation }}
+          GMAIL_PROOF: ${{ steps.delta_ops_artifact.outputs.gmail_proof }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, os, re
+          e = os.environ
+          # Closed projections only: never serialize arbitrary runner/input data.
+          sha = lambda value: value if re.fullmatch(r"[0-9a-f]{40}", value) else None
+          kind = e.get("SELECTED_TRANSPORT")
+          kind = kind if kind in {"email", "pdf"} else "none"
+          date = e.get("REPORT_DATE", "")
+          date = date if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", date) else None
+          count = e.get("REQUIRED_FIELD_COVERAGE", "")
+          count = int(count) if re.fullmatch(r"(?:[0-9]|1[0-7])", count) else 0
+          valid = e.get("VALIDATION") == "PASS"
+          passed = e.get("GMAIL_PROOF") == "true" and valid and kind == "email" and count == 17
+          result = {"expected_source_sha": sha(e.get("CANARY_SOURCE_SHA", "")),
+                    "event_sha": sha(e.get("SOURCE_EVENT_SHA", "")),
+                    "checkout_sha": sha(e.get("CHECKOUT_SHA", "")),
+                    "selected_transport": kind, "report_heading_date": date,
+                    "required_field_coverage": count, "required_fields": 17,
+                    "validation": "PASS" if valid else "NOT_VALIDATED",
+                    "gmail_proof": "PASS" if passed else "HELD",
+                    "publication": "NOT_ATTEMPTED"}
+          print("DELTA_CANARY " + json.dumps(result, sort_keys=True))
+          if not passed:
+              raise SystemExit("DELTA_CANARY_GMAIL_PROOF_HELD")
+          PYCODE
+
   publish-to-main:
-    if: ${{ github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.should_publish == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.gmail_canary == true) && needs.prepare-candidate.outputs.should_publish == 'true' }}
     needs: prepare-candidate
     runs-on: ubuntu-latest
     timeout-minutes: 15

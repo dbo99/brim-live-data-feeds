@@ -188,8 +188,32 @@ ownership.
   Summary metrics and X2 river-kilometer context.
 - **Workflow:** [`.github/workflows/build-delta-ops-daily-summary.yml`](../.github/workflows/build-delta-ops-daily-summary.yml).
 - **Producer:** [`scripts/build_delta_ops_daily_summary.R`](../scripts/build_delta_ops_daily_summary.R).
-- **Source:** California DWR Delta Operations Daily Summary PDF plus curated
-  location and X2 lookup inputs.
+- **Source:** The default route remains the bounded California DWR Delta
+  Operations Daily Summary PDF plus curated location and X2 lookup inputs.
+  `scripts/delta_ops_email.py` normalizes PDF text and private saved MIME into
+  one complete 17-field report. Plain/HTML alternatives must agree; the report
+  heading supplies the date. Signs, zero, approximation and decimal text survive.
+  Required numeric fields cannot silently become null or zero. Annotated
+  diversion percentages retain their number and display `(3-day avg)` once.
+- **Optional Gmail source (not activated):** `scripts/delta_ops_gmail.py` uses
+  only `gmail.readonly`, verifies the expected account, and bounds list/get
+  retrieval. Ordinary use is main-only and default-off. Eligibility requires
+  the exact approved DWR From identity compiled into the reader, independently
+  verified aligned `public.govdelivery.com` RSA-SHA256 DKIM over the full body,
+  and signed identity/MIME headers. Copied receiver claims, subject text and
+  saved messages do not establish trust. DKIM verifies signing responsibility,
+  not that a message was never forwarded. Optional pinned dkimpy/dnspython
+  dependencies are needed only for email; unavailable verification permits the
+  bounded PDF fallback. See [configuration and limits](PUBLISHING_AND_OPERATIONS.md#delta-optional-gmail-setup-and-release-controls).
+- **Whole-report selection:** A verified current-day email may be selected
+  without PDF comparison. Otherwise the existing PDF route is invoked at most
+  once. A newer acceptable whole report wins; agreeing same-date reports prefer
+  email. Same-date scientific conflicts quarantine that date until a later
+  acceptable report. A trusted malformed in-window report needs independent
+  same/later PDF recovery or a later trusted email. An unblocked lagging email
+  may survive PDF failure within seven days. Untrusted messages impose no
+  correction barrier. Duplicate reports do not add evidence; an incomplete
+  mailbox scan discards its partial email set before independent PDF fallback.
 - **Canonical BRIM outputs:**
   [`delta_ops_daily_summary_features.geojson`](data/delta_ops_daily_summary_features.geojson),
   [`delta_ops_daily_summary_summary.json`](data/delta_ops_daily_summary_summary.json),
@@ -208,7 +232,8 @@ ownership.
   parsed-values metadata and X2 feature. Raw values and labels retain inequalities
   and source decimal text; equality raw values/labels keep their existing form.
   Missing/malformed X2 stays unavailable, with no X2 feature and null summary
-  value/relation. Other metric parsing and publication gates are unchanged.
+  value/relation. Whole-report normalization and strict candidate validation
+  apply as described in this section.
   Offline regression: `Rscript tests/test_delta_ops_x2.R`.
 - **Time model:** Report date, X2 position date, feed build UTC, and Pacific
   build time are distinct.
@@ -227,16 +252,30 @@ ownership.
   limit. Transient curl failures, HTTP 408/425/429/5xx, missing HTTP status and
   successful non-PDF responses receive at most three attempts with 1- and
   2-second backoff. Permanent HTTP/request failures and PDF parser errors do
-  not retry. No CWC or email fallback is implemented.
+  not retry. The optional Gmail selection path adds no outer PDF retry loop.
+  No CWC fallback is implemented.
 - **QA/empty policy:** Retrieval rejection stops before Poppler and output
   writes; the isolated candidate is not uploaded and the prior canonical
-  four-file product remains unchanged. Valid PDFs retain the current report-date
-  and minimum operational-feature checks. This is fail-and-retain, not a claim
-  that all later local multi-file writes are atomic.
+  four-file product remains unchanged. New candidates require the exact
+  operational feature set, all 17 source and seven derived fields, coherent
+  geometry, units, finite values, dates, provenance and calculations. Candidate
+  and staged callbacks repeat strict validation. Prior-only legacy validation
+  tolerates historical provenance and the older annotated-percentage defect for
+  comparison; new candidates cannot use that tolerance. A newer strict candidate
+  can replace that legacy prior; same/older dates remain no-ops. Four destination
+  copies are not an atomic filesystem transaction. Review-only replay artifacts
+  cannot enter production publication.
   Offline checks: `Rscript tests/test_delta_ops_pdf_transport.R`,
   `python3 -m unittest -v tests/test_delta_ops_pdf_integration.py` (localhost
   only), `Rscript tests/test_delta_ops_x2.R`, and the Delta cases in
-  `tests/test_phase2_product_publishers.py`.
+  `tests/test_phase2_product_publishers.py`. Email/Gmail regressions are
+  `tests/test_delta_ops_email.py` and `tests/test_delta_ops_gmail.py`; Delta
+  workflow tests execute the canary decisions and extracted shell logic offline.
+- **Prepared manual Gmail test:** `gmail_canary` defaults false. A separately
+  approved true dispatch requires main and an exact `canary_source_sha` matching
+  both event and checkout before credentials are exposed. It can exercise Gmail
+  while ordinary ingestion remains disabled, but always excludes publication.
+  PDF-only fallback is a held Gmail proof. See [workflow controls](WORKFLOW_AND_PRODUCT_STANDARDS.md#delta-nonpublishing-gmail-test-mode).
 - **Attribution:** California Department of Water Resources; preliminary data
   warning remains visible.
 - **Known gaps:** No manifest/schema version and no documented status for the

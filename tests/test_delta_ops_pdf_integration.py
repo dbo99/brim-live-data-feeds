@@ -155,6 +155,19 @@ invisible(dev.off())
                 self.assertEqual(len(calls), expected_calls)
                 self.assertEqual(self.snapshot(candidate), before)
 
+    def test_future_and_over_age_pdf_dates_retain_prior_bytes(self):
+        candidate = self.root / "prior"
+        seeded = self.build(candidate, "https://example.invalid/saved.pdf", direct=True)
+        self.assertEqual(seeded.returncode, 0, seeded.stderr)
+        before = self.snapshot(candidate)
+        for day in ("2026-09-07", "2026-09-16"):
+            rejected = self.build(candidate, "https://example.invalid/saved.pdf", direct=True, day=day)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("DELTA_OPS_REPORT_DATE_REJECTED", rejected.stderr)
+            self.assertEqual(self.snapshot(candidate), before)
+        accepted = self.build(self.root / "seven-day", "https://example.invalid/saved.pdf", direct=True, day="2026-09-15")
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

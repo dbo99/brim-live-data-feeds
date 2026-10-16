@@ -481,6 +481,42 @@ and producer scripts.
 
 ### Delta operations
 
+- The exact four producer paths remain `docs/data/delta_ops_daily_summary.json`,
+  `docs/data/delta_ops_daily_summary_features.geojson`,
+  `docs/data/delta_ops_daily_summary_summary.json` and
+  `docs/data/delta_ops_x2_reference.geojson`. No consumer input is removed.
+  Feature identities, static geometry, units and derived calculations remain
+  stable. Strict validation covers the 17 consumed source fields and seven
+  derived fields; it does not fill missing required observations with zero.
+- Additive `source_kind:string` (`pdf` or `email`) and `review_only:boolean`
+  appear on operational features, compact summary and parsed metadata. Static
+  X2 reference properties remain unchanged. Production rejects review-only
+  candidates. Verified email additionally has
+  `source_authentication: "dkim-rsa-sha256-full-body"` on those same surfaces;
+  PDF and review output omit it. This is signer verification, not a Google
+  receiver verdict or proof of an unforwarded delivery. The method string alone
+  cannot authorize a product: private evidence binds preparation, then the
+  controlled job's exact hash-bound artifact carries that validated result.
+- The heading supplies `report_date`; available X2 is the previous calendar
+  day. `report_date_source`, `x2_position_date_source` and `parser_note` identify
+  the actual PDF/email representation. Email `source_url` is the public DWR
+  attribution page, never a private message URL or a claim that PDF was used.
+  One build instant supplies UTC/Pacific times; the Pacific date controls the
+  seven-day age ceiling and future-date rejection.
+- Numeric zero, signed and approximate source values keep their scientific
+  meaning. Annotated `% Inflow Diverted` remains a percentage, without joining
+  annotation digits or scaling a fraction; its qualifier appears once. Status
+  text retains a null numeric representation. No individual fields are blended
+  across reports. Duplicate agreement, scientific conflict, malformed-date
+  barriers and incomplete scans follow the [whole-report policy](PRODUCTS.md#3-delta-operations).
+- New candidates pass strict validation. Historical prior-only tolerance permits
+  comparison with legacy provenance/percentage defects, never weaker new output.
+  Same/older dates remain publication no-ops, including manual attempts; invalid
+  preparation or staged data retains the last accepted complete set. An explicitly
+  requested canary never publishes, even after a successful Gmail build.
+- Private-consumer acknowledgment of additive provenance and percentage display
+  remains required before coordinated release. Offline producer tests do not
+  establish private-consumer acceptance or live hosted compatibility.
 - Canonical consumer inputs are operational features, human summary and X2
   reference GeoJSON.
 - Feature keys, numeric/raw values, labels, units, report date and source URL
