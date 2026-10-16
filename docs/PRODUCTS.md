@@ -41,7 +41,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | Major water-supply basin forecasts | `major_water_supply_basin_forecasts` | California-Nevada River Forecast Center | 10:56 and 16:56 via native `America/Los_Angeles` schedule | `docs/data/major_water_supply_basin_forecasts.json` | No |
 | CBRFC Colorado River water-supply forecasts | `cbrfc_major_water_supply_forecasts` | Colorado Basin River Forecast Center | 08:14 via native `America/Los_Angeles` schedule | `docs/data/cbrfc_major_water_supply_forecasts.json` | No |
 | CoCoRaHS precipitation | Not declared | CoCoRaHS | 00:37, 08:37, 16:37 | CA and CONUS GeoJSON files | No |
-| Delta operations | Not declared | California DWR | Five attempts between 15:41 and 17:41 | Features, summary, and X2 reference | No |
+| Delta operations | Not declared | California DWR | 09:30 and 10:30 via native America/Los_Angeles schedule; already-current reports skip acquisition | Features, summary, and X2 reference | No |
 | GFS wind | `gfs_surface_wind` | NOAA/NCEP GFS | Hourly at :47 | GFS manifest | Yes |
 | HRRR wind | `hrrr_surface_wind` | NOAA/NCEP HRRR | Hourly at :33 | HRRR manifest | Yes |
 | NBM wind guidance | Not declared | NOAA/NCEP NBM | 01:23, 07:23, 13:23, 19:23 | NBM manifest | Yes |
@@ -237,6 +237,14 @@ ownership.
   Offline regression: `Rscript tests/test_delta_ops_x2.R`.
 - **Time model:** Report date, X2 position date, feed build UTC, and Pacific
   build time are distinct.
+- **Schedule:** Two daily opportunities at 09:30 and 10:30 in native
+  `America/Los_Angeles`, including weekends and following PST/PDT without
+  seasonal edits. The cadence governs both optional email and the existing
+  PDF/default fallback; it does not enable Gmail. The second opportunity may
+  skip acquisition if today's report is already published. Scheduled starts
+  are not guaranteed, and arrivals after the final actual check can miss
+  same-day acquisition. Mailbox arrival and a subject-labelled date are timing
+  evidence only, not validated report science.
 - **Freshness:** The producer rejects future report dates by default and a
   report lag greater than seven days. Scheduled attempts skip work when the
   current local report date is already published. Manual dispatch bypasses that
