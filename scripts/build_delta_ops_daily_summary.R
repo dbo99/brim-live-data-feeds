@@ -68,10 +68,26 @@ out_x2_geojson <- file.path(out_dir, "delta_ops_x2_reference.geojson")
 cfs_to_af_day <- 1.98347
 
 local_tz <- "America/Los_Angeles"
-feed_build_time <- Sys.time()
+# The optional reader supplies one captured as-of instant and a private normalized
+# record. Credentials and raw MIME never cross into this builder process.
+selected_handoff <- NULL
+selected_path <- Sys.getenv("DELTA_OPS_SELECTED_RECORD", unset = "")
+if (nzchar(selected_path)) {
+  normalized <- tempfile("delta-handoff-", fileext = ".json")
+  args <- c("scripts/delta_ops_gmail.py", "handoff", "--input", selected_path,
+            "--output", normalized, "--out-dir", normalizePath(out_dir, mustWork = FALSE))
+  result <- suppressWarnings(system2(Sys.which("python3"), vapply(args, shQuote, character(1)),
+                                     stdout = TRUE, stderr = TRUE))
+  if (!is.null(attr(result, "status"))) stop("DELTA_OPS_HANDOFF_REJECTED", call. = FALSE)
+  selected_handoff <- jsonlite::read_json(normalized, simplifyVector = FALSE)
+  unlink(normalized)
+}
+feed_build_time <- if (is.null(selected_handoff)) Sys.time() else
+  lubridate::ymd_hms(selected_handoff$as_of, tz = "UTC", quiet = TRUE)
+if (is.na(feed_build_time)) stop("DELTA_OPS_HANDOFF_CLOCK_REJECTED", call. = FALSE)
 feed_build_time_utc <- format(lubridate::with_tz(feed_build_time, "UTC"), "%Y-%m-%dT%H:%M:%SZ")
 feed_build_time_local <- format(lubridate::with_tz(feed_build_time, local_tz), "%Y-%m-%d %H:%M:%S %Z")
-feed_build_date_local <- as.character(as.Date(lubridate::with_tz(feed_build_time, local_tz)))
+feed_build_date_local <- as.character(as.Date(feed_build_time, tz = local_tz))
 
 # Skip repeated same-day fetches by default. This lets the GitHub Action run several
 # morning retries without repeatedly downloading/parsing the PDF once today's report
@@ -110,6 +126,7 @@ pt_chr <- function(x) {
 
 pt_num <- function(x) {
   x <- as.character(x)
+  x <- sub("\\s*\\(3-day avg\\)\\s*$", "", x, ignore.case = TRUE, perl = TRUE)
   x <- gsub(",", "", x, fixed = TRUE)
   x <- gsub("[^0-9.\u2212-]", "", x)
   x <- gsub("\u2212", "-", x, fixed = TRUE)
@@ -228,10 +245,10 @@ pt_format_kaf_day <- function(x, digits = 1) {
 pt_format_percent <- function(x) {
   raw <- pt_chr(x)
   if (is.na(raw)) return(NA_character_)
-  if (grepl("%", raw, fixed = TRUE)) return(raw)
-  n <- pt_num(raw)
-  if (is.na(n)) return(raw)
-  paste0(n, "%")
+  average <- grepl("(3-day avg)", raw, fixed = TRUE)
+  value <- trimws(sub("\\s*\\(3-day avg\\)\\s*$", "", raw, perl = TRUE))
+  value <- sub("%$", "", value)
+  paste0(value, "%", if (average) " (3-day avg)" else "")
 }
 
 pt_format_m_d <- function(x) {
@@ -274,91 +291,57 @@ pt_geojson_from_df <- function(df, name = "BRIM Delta Ops Daily Summary") {
   list(type = "FeatureCollection", name = name, features = features)
 }
 
-# ---- Download/extract PDF ---------------------------------------------------
-
-message("Downloading and validating DWR Delta Operations Daily Summary PDF...")
-raw_text <- paste(delta_ops_fetch_pdf_text(pdf_url), collapse = "\n")
-x2_value <- pt_parse_x2(raw_text)
-# Keep a wrapped X2 row in one section slot so adjacent metrics cannot shift.
-section_text <- if (!is.na(x2_value$km)) {
-  sub(x2_value$source_row, paste0("X2 Position (yesterday) = ", x2_value$value_raw), raw_text, fixed = TRUE)
-} else raw_text
-lines <- pt_clean_lines(section_text)
-if (length(lines) < 20) stop("PDF text extraction returned too few lines; cannot parse Delta Ops summary.")
-
-# ---- Parse values -----------------------------------------------------------
-
-report_date_raw <- NA_character_
-report_line <- lines[grep("EXECUTIVE OPERATIONS SUMMARY ON", lines, ignore.case = TRUE)][1]
-
-if (!is.na(report_line)) {
-  report_date_raw <- sub(".*SUMMARY ON\\s+", "", report_line, ignore.case = TRUE)
-  report_date_raw <- trimws(report_date_raw)
-  report_date_raw <- sub("\\s+.*$", "", report_date_raw)
+# ---- Normalize one complete source; production remains PDF-only -------------
+# Saved email is an explicit private review route, never authenticated delivery.
+# The pure policy in delta_ops_email.py is ready for a separately approved retriever.
+saved_email <- Sys.getenv("DELTA_OPS_SAVED_EMAIL", unset = "")
+if (nzchar(saved_email) && !is.null(selected_handoff)) stop("DELTA_OPS_AMBIGUOUS_INPUT", call. = FALSE)
+message("DELTA_OPS_EMAIL_STATE ", if (nzchar(saved_email)) "private_saved_replay" else "not_configured")
+pt_normalize_source <- function(text, saved_path = "") {
+  input <- tempfile("delta-source-", fileext = ".txt")
+  output <- tempfile("delta-normalized-", fileext = ".json")
+  on.exit(unlink(c(input, output)), add = TRUE)
+  replay <- nzchar(saved_path)
+  if (!replay) writeLines(text, input, useBytes = TRUE)
+  args <- c("scripts/delta_ops_email.py", if (replay) "replay" else "pdf-text",
+            "--input", if (replay) saved_path else input, "--output", output,
+            if (replay) c("--candidate-dir", normalizePath(out_dir, mustWork = FALSE)))
+  result <- suppressWarnings(system2(Sys.which("python3"), vapply(args, shQuote, character(1)),
+                    stdout = TRUE, stderr = TRUE))
+  if (!is.null(attr(result, "status"))) {
+    stop("DELTA_OPS_SOURCE_REJECTED: ", paste(result, collapse = " "), call. = FALSE)
+  }
+  jsonlite::read_json(output, simplifyVector = FALSE)
 }
 
-if (is.na(report_date_raw) || !grepl("^\\d{1,2}/\\d{1,2}/\\d{4}$", report_date_raw)) {
-  stop(
-    "Could not find an explicit MM/DD/YYYY report date on the PDF 'EXECUTIVE OPERATIONS SUMMARY ON' line. ",
-    "Refusing to publish because report_date must be parsed from the PDF, not inferred from build time. ",
-    "report_line=", paste0(report_line, collapse = " | ")
-  )
-}
-
-report_date <- suppressWarnings(as.Date(report_date_raw, format = "%m/%d/%Y"))
-if (is.na(report_date)) {
-  stop("Could not parse report date from PDF text. report_date_raw=", report_date_raw)
-}
+raw_text <- if (nzchar(saved_email) || !is.null(selected_handoff)) "" else paste(delta_ops_fetch_pdf_text(pdf_url), collapse = "\n")
+source_record <- if (is.null(selected_handoff)) pt_normalize_source(raw_text, saved_email) else selected_handoff$record
+x2_value <- source_record$x2
+if (is.null(x2_value$km)) x2_value$km <- NA_real_
+if (is.null(x2_value$relation)) x2_value$relation <- NA_character_
+vals <- source_record$values
+source_kind <- source_record$source_kind
+review_only <- isTRUE(source_record$review_only)
+source_url <- if (source_kind == "pdf" && is.null(selected_handoff)) sub("[?#].*$", "", sub("^(https?://)[^/]*@", "\\1", pdf_url)) else source_record$source_url
+report_date_raw <- source_record$report_date_raw
+report_date <- as.Date(source_record$report_date)
+report_date_source <- paste0("parsed_from_dwr_", source_kind, "_executive_operations_summary_on_line")
+x2_date_source <- paste0("report_date_minus_1_day_because_", source_kind, "_labels_x2_as_yesterday")
+parser_note <- paste0("Automated BRIM daily parser for DWR Delta Operations Daily Summary ",
+                     if (source_kind == "pdf") "PDF" else "email",
+                     "; values are preliminary and subject to revision.")
 
 build_local_date <- as.Date(feed_build_date_local)
-if (!allow_future_report_date && report_date > build_local_date) {
-  stop(
-    "Parsed PDF report_date is in the future relative to the GitHub/Pacific build date. ",
-    "report_date=", as.character(report_date), "; build_local_date=", as.character(build_local_date), ". ",
-    "Refusing to publish."
-  )
+if (is.na(report_date) || (!allow_future_report_date && report_date > build_local_date)) {
+  stop("DELTA_OPS_REPORT_DATE_REJECTED: invalid or future report date.", call. = FALSE)
 }
-
 lag_days <- as.integer(build_local_date - report_date)
-if (!force_refresh && !is.na(lag_days) && lag_days > max_report_lag_days) {
-  stop(
-    "Parsed PDF report_date is older than the configured guardrail. ",
-    "report_date=", as.character(report_date), "; build_local_date=", as.character(build_local_date),
-    "; lag_days=", lag_days, "; max_report_lag_days=", max_report_lag_days, ". ",
-    "Refusing to publish. Set DELTA_OPS_FORCE_REFRESH=true or increase DELTA_OPS_MAX_REPORT_LAG_DAYS if this is intentional."
-  )
+if (!force_refresh && lag_days > max_report_lag_days) {
+  stop("DELTA_OPS_REPORT_DATE_REJECTED: report exceeds configured age limit.", call. = FALSE)
 }
-
-# DWR labels X2 as "X2 Position (yesterday)" in the Daily Summary.
-# Store the X2 observation date explicitly so BRIM does not label it as the report date.
 x2_position_date <- report_date - 1L
 x2_position_date_chr <- as.character(x2_position_date)
 x2_position_date_label <- pt_format_m_d(x2_position_date)
-
-scheduled_labels <- c("Clifton Court Inflow", "Jones Pumping Plant")
-hydro_labels <- c("Total Delta Inflow", "Sacramento River", "San Joaquin River")
-ops_labels <- c(
-  "Delta Conditions",
-  "Delta x-channel Gates (% of day is open)",
-  "Outflow Index",
-  "% Inflow Diverted",
-  "X2 Position (yesterday)",
-  "Controlling Factor(s)",
-  "OMR Index Daily Value"
-)
-storage_labels <- c("Shasta Reservoir", "Folsom Reservoir", "Oroville Reservoir", "San Luis Res. Total", "SWP Share")
-
-scheduled_vals <- pt_values_from_section(pt_section(lines, "SCHEDULED EXPORTS FOR TODAY", c("ESTIMATED DELTA HYDROLOGY")), scheduled_labels, 2L)
-hydro_vals <- pt_values_from_section(pt_section(lines, "ESTIMATED DELTA HYDROLOGY", c("DELTA OPERATIONS")), hydro_labels, 3L)
-ops_vals <- pt_values_from_section(pt_section(lines, "DELTA OPERATIONS", c("RESERVOIR STORAGES")), ops_labels, 7L)
-storage_vals <- pt_values_from_section(pt_section(lines, "RESERVOIR STORAGES", c("RESERVOIR RELEASES")), storage_labels, 5L)
-
-vals <- c(
-  pt_make_named(scheduled_vals, c("clifton_court_inflow", "jones_pumping_plant")),
-  pt_make_named(hydro_vals, c("total_delta_inflow", "sacramento_river", "san_joaquin_river")),
-  pt_make_named(ops_vals, c("delta_conditions", "cross_channel_gates_percent_open", "outflow_index", "percent_inflow_diverted", "x2_position_yesterday", "controlling_factors", "omr_index_daily_value")),
-  pt_make_named(storage_vals, c("shasta_storage", "folsom_storage", "oroville_storage", "san_luis_total_storage", "san_luis_swp_share"))
-)
 
 san_luis_total_taf <- pt_num(vals$san_luis_total_storage)
 san_luis_swp_taf <- pt_num(vals$san_luis_swp_share)
@@ -382,15 +365,17 @@ export_total_kaf_day <- if (is.finite(export_total_cfs)) export_total_cfs * cfs_
 outflow_kaf_day <- if (is.finite(pt_num(vals$outflow_index))) pt_num(vals$outflow_index) * cfs_to_af_day / 1000 else NA_real_
 
 parsed <- list(
-  source_url = pdf_url,
+  source_url = source_url,
+  source_kind = source_kind,
+  review_only = review_only,
   source_name = "DWR Delta Operations Daily Summary",
   report_date = as.character(report_date),
   report_date_raw = report_date_raw,
-  report_date_source = "parsed_from_dwr_pdf_executive_operations_summary_on_line",
+  report_date_source = report_date_source,
   report_date_guard_build_local_date = as.character(build_local_date),
   report_date_guard_lag_days = lag_days,
   x2_position_date = x2_position_date_chr,
-  x2_position_date_source = "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
+  x2_position_date_source = x2_date_source,
   x2_position_relation = x2_value$relation,
   feed_build_time_utc = feed_build_time_utc,
   feed_build_time_local = feed_build_time_local,
@@ -413,6 +398,16 @@ if (skip_if_current && !force_refresh && !is.na(existing_report_date) && identic
   message("Existing Delta Ops output already has parsed report date ", as.character(report_date), "; skipping writes. Set DELTA_OPS_FORCE_REFRESH=true to override.")
   quit(save = "no", status = 0)
 }
+
+# Validate a complete temporary product before replacing the requested outputs.
+# Separate destination file copies are not one atomic filesystem transaction.
+staging_root <- tempfile("delta-ops-candidate-")
+staging_data <- file.path(staging_root, "docs", "data")
+dir.create(staging_data, recursive = TRUE)
+out_values_json <- file.path(staging_data, basename(out_values_json))
+out_summary_json <- file.path(staging_data, basename(out_summary_json))
+out_geojson <- file.path(staging_data, basename(out_geojson))
+out_x2_geojson <- file.path(staging_data, basename(out_x2_geojson))
 
 # ---- Feature rows -----------------------------------------------------------
 
@@ -463,7 +458,7 @@ metric_rows <- tibble::tibble(
     paste0("Jones/CVP: ", pt_format_cfs(vals$jones_pumping_plant)),
     paste0("Banks/SWP: ", pt_format_cfs(vals$clifton_court_inflow)),
     paste0("Outflow: ", pt_format_cfs(vals$outflow_index)),
-    paste0("Diverted: ", pt_format_percent(vals$percent_inflow_diverted), " (3-day avg)"),
+    paste0("Diverted: ", pt_format_percent(vals$percent_inflow_diverted)),
     paste0("OMR: ", pt_format_cfs(vals$omr_index_daily_value)),
     paste0("Sac: ", pt_format_cfs(vals$sacramento_river)),
     paste0("SJ: ", pt_format_cfs(vals$san_joaquin_river)),
@@ -481,7 +476,9 @@ features <- loc |>
   dplyr::inner_join(metric_rows, by = "feature_key") |>
   dplyr::mutate(
     source_name = "DWR Delta Operations Daily Summary",
-    source_url = pdf_url,
+    source_url = source_url,
+    source_kind = source_kind,
+    review_only = review_only,
     report_date = as.character(report_date),
     feed_build_time_utc = feed_build_time_utc,
     feed_build_time_local = feed_build_time_local,
@@ -540,14 +537,16 @@ if (file.exists(x2_lookup_csv) && !is.na(x2_km)) {
       placement_note = "Current X2 position snapped to nearest available river-km reference point.",
       metric_name = "X2 Position (yesterday)",
       x2_position_date = x2_position_date_chr,
-      x2_position_date_source = "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
+      x2_position_date_source = x2_date_source,
       value_raw = vals$x2_position_yesterday,
       value_numeric = x2_km,
       units = "km",
       label_text = paste0("X2 ", x2_position_date_label, ": ", x2_value$value_raw),
       symbol_class = "x2_current",
       source_name = "DWR Delta Operations Daily Summary",
-      source_url = pdf_url,
+      source_url = source_url,
+    source_kind = source_kind,
+    review_only = review_only,
       report_date = as.character(report_date),
       feed_build_time_utc = feed_build_time_utc,
       feed_build_time_local = feed_build_time_local,
@@ -569,6 +568,11 @@ if (nrow(features) < 10) stop("Too few Delta Ops dashboard features to publish: 
 if (!is.na(x2_km) && !x2_lookup_added) stop("Parsed X2 value but did not add the X2 lookup feature.")
 
 geojson <- pt_geojson_from_df(features)
+# Keep source numeric precision while preserving existing coordinate serialization.
+for (i in seq_along(geojson$features)) {
+  geojson$features[[i]]$properties$value_numeric <- jsonlite::toJSON(
+    features$value_numeric[[i]], auto_unbox = TRUE, digits = NA, na = "null")
+}
 # Preserve X2 decimal precision without changing other metrics' serialization.
 x2_numeric_json <- jsonlite::toJSON(x2_km, auto_unbox = TRUE, digits = NA, na = "null")
 if (x2_lookup_added) {
@@ -579,9 +583,11 @@ if (x2_lookup_added) {
 
 summary <- list(
   source_name = "DWR Delta Operations Daily Summary",
-  source_url = pdf_url,
+  source_url = source_url,
+  source_kind = source_kind,
+  review_only = review_only,
   report_date = as.character(report_date),
-  report_date_source = "parsed_from_dwr_pdf_executive_operations_summary_on_line",
+  report_date_source = report_date_source,
   report_date_guard_build_local_date = as.character(build_local_date),
   report_date_guard_lag_days = lag_days,
   feed_build_time_utc = feed_build_time_utc,
@@ -591,7 +597,7 @@ summary <- list(
   x2_position_km = x2_numeric_json,
   x2_position_relation = x2_value$relation,
   x2_position_date = if (!is.na(x2_km)) x2_position_date_chr else NA_character_,
-  x2_position_date_source = if (!is.na(x2_km)) "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday" else NA_character_,
+  x2_position_date_source = if (!is.na(x2_km)) x2_date_source else NA_character_,
   x2_lookup_added = x2_lookup_added,
   cvp_export_cfs = cvp_export_cfs,
   swp_export_cfs = swp_export_cfs,
@@ -606,19 +612,43 @@ summary <- list(
   export_volume_label = if (!is.na(export_total_kaf_day)) paste0("CVP/SWP exports: ~", pt_format_kaf_day(export_total_kaf_day)) else NA_character_,
   east_side_streams_cfs = east_side_cfs,
   preliminary_notice = "PRELIMINARY DATA; SUBJECT TO REVISION WITHOUT NOTICE",
-  parser_note = "Automated BRIM daily parser for DWR Delta Operations Daily Summary PDF; values are preliminary and subject to revision."
+  parser_note = parser_note
 )
 
+if (source_kind == "email" && !review_only) {
+  # The private handoff and validator bind this discriminator to verified bytes.
+  # PDF and saved-review output retain their existing serialization.
+  parsed$source_authentication <- source_record$source_authentication
+  summary$source_authentication <- source_record$source_authentication
+  for (i in seq_along(geojson$features)) {
+    geojson$features[[i]]$properties$source_authentication <- source_record$source_authentication
+  }
+}
+
 jsonlite::write_json(parsed, out_values_json, auto_unbox = TRUE, pretty = TRUE, na = "null")
-jsonlite::write_json(summary, out_summary_json, auto_unbox = TRUE, pretty = TRUE, na = "null", json_verbatim = TRUE)
+jsonlite::write_json(summary, out_summary_json, auto_unbox = TRUE, pretty = TRUE, na = "null", digits = NA, json_verbatim = TRUE)
 jsonlite::write_json(geojson, out_geojson, auto_unbox = TRUE, pretty = TRUE, na = "null", json_verbatim = TRUE)
 
+validation_args <- c("scripts/delta_ops_publisher.py", "validate", "--root", staging_root,
+                     if (review_only) "--review")
+validation <- suppressWarnings(system2(Sys.which("python3"), vapply(validation_args, shQuote, character(1)),
+                      stdout = TRUE, stderr = TRUE))
+if (!is.null(attr(validation, "status"))) {
+  stop("DELTA_OPS_CANDIDATE_REJECTED: ", paste(validation, collapse = " "), call. = FALSE)
+}
+for (path in c(out_values_json, out_summary_json, out_geojson, out_x2_geojson)) {
+  if (!file.copy(path, file.path(out_dir, basename(path)), overwrite = TRUE)) {
+    stop("DELTA_OPS_OUTPUT_REPLACEMENT_FAILED", call. = FALSE)
+  }
+}
+unlink(staging_root, recursive = TRUE)
+message("DELTA_OPS_SOURCE_SELECTED kind=", source_kind, " review_only=", review_only)
 message("Delta Ops report date: ", as.character(report_date))
 message("Features written: ", nrow(features))
-message("Wrote: ", out_values_json)
-message("Wrote: ", out_summary_json)
-message("Wrote: ", out_geojson)
-message("Wrote: ", out_x2_geojson)
+message("Wrote: ", file.path(out_dir, basename(out_values_json)))
+message("Wrote: ", file.path(out_dir, basename(out_summary_json)))
+message("Wrote: ", file.path(out_dir, basename(out_geojson)))
+message("Wrote: ", file.path(out_dir, basename(out_x2_geojson)))
 message("Key parsed values:")
 message("  X2: ", vals$x2_position_yesterday, " (date ", x2_position_date_chr, ")")
 message("  X-Channel gates: ", vals$cross_channel_gates_percent_open)

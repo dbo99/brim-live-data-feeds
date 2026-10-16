@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -13,6 +14,9 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Sequence, Tuple
+from urllib.parse import urlsplit
+
+from delta_ops_email import LABELS, PUBLIC_ATTRIBUTION, ReportError, normalize_values
 
 
 PRODUCT_ID = "delta-ops-daily-summary"
@@ -31,7 +35,14 @@ def _read_json(path: Path) -> Dict[str, object]:
     if not path.is_file() or path.is_symlink():
         raise ProductError(f"missing plain Delta Ops file: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        def unique_object(pairs):
+            result = {}
+            for key, item in pairs:
+                if key in result:
+                    raise ProductError("duplicate JSON object key in Delta Ops product")
+                result[key] = item
+            return result
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except (OSError, json.JSONDecodeError) as exc:
         raise ProductError(f"unreadable JSON {path}: {exc}") from exc
     if not isinstance(value, dict):
@@ -95,7 +106,182 @@ def _feature_collection(value: Dict[str, object], label: str) -> list[object]:
     return features
 
 
-def validate_product(root: Path) -> Tuple[str, int]:
+FEATURE_SPECS = {
+    "cross_channel_gates": ("cross_channel_gates_percent_open", "percent"),
+    "jones_cvp_exports": ("jones_pumping_plant", "cfs"),
+    "banks_swp_exports": ("clifton_court_inflow", "cfs"),
+    "delta_outflow_index": ("outflow_index", "cfs"),
+    "percent_inflow_diverted": ("percent_inflow_diverted", "percent_3day_avg"),
+    "omr_index": ("omr_index_daily_value", "cfs"),
+    "sacramento_freeport": ("sacramento_river", "cfs"),
+    "san_joaquin_vernalis": ("san_joaquin_river", "cfs"),
+    "total_delta_inflow": ("east_side_streams", "cfs"),
+    "delta_conditions": ("delta_conditions", "status"),
+    "controlling_factors": ("controlling_factors", "status"),
+    "san_luis_reservoir": ("san_luis_total_storage", "TAF"),
+}
+DERIVED_KEYS = {"east_side_streams", "export_total_cfs", "export_total_kaf_day",
+                "outflow_kaf_day", "cvp_export_kaf_day", "swp_export_kaf_day", "san_luis_cvp_share"}
+
+
+def _equal_number(actual, expected, label, *, tolerance=1e-9):
+    if (isinstance(actual, bool) or not isinstance(actual, (int, float))
+            or not math.isfinite(actual) or not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=tolerance)):
+        raise ProductError(f"Delta Ops numeric mismatch: {label}")
+
+
+def _email_evidence(values, root):
+    # At preparation, reverify private raw/key evidence and bind all source
+    # fields. No caller-supplied method/boolean alone authorizes an email product.
+    if os.environ.get("DELTA_OPS_DKIM_EVIDENCE"):
+        try:
+            from delta_ops_gmail import load_verified_evidence
+            record = load_verified_evidence(os.environ["DELTA_OPS_DKIM_EVIDENCE"]).record()
+            if (record["report_date"] != values["report_date"] or record["review_only"]
+                    or any(record["values"][k] != values["values"][k] for k in LABELS)):
+                raise ValueError()
+            return
+        except Exception:
+            raise ProductError("UNVERIFIED_SIGNATURE: private source binding failed") from None
+    # Across jobs, the existing trusted preparation/artifact boundary carries
+    # exact validated bytes. Recheck its full metadata and staged-byte binding;
+    # raw MIME/key evidence is never uploaded or required by the publisher job.
+    if os.environ.get("BRIM_PUBLISH_PHASE") not in {"validate-candidate", "reconcile", "validate-staged"}:
+        raise ProductError("UNVERIFIED_SIGNATURE: no verified preparation evidence")
+    try:
+        from main_publisher import validate_candidate_metadata
+        candidate = Path(os.environ["BRIM_PUBLISH_CANDIDATE_ROOT"]).resolve()
+        metadata_path = Path(os.environ["BRIM_PUBLISH_METADATA"]).resolve()
+        metadata = _read_json(metadata_path)
+        validate_candidate_metadata(root=candidate, metadata_path=metadata_path,
+                                    product_id=PRODUCT_ID, allowlist=[str(p) for p in ALLOWLIST],
+                                    expected_source_sha=os.environ.get("GITHUB_SHA", metadata["source_event_sha"]))
+        for entry in metadata["files"]:
+            if hashlib.sha256((root / entry["path"]).read_bytes()).hexdigest() != entry["sha256"]:
+                raise ValueError()
+    except Exception:
+        raise ProductError("UNVERIFIED_SIGNATURE: validated artifact binding failed") from None
+
+
+def _validate_contract(values, summary, features, references, *, root, legacy=False, allow_review=False):
+    by_key = {f["properties"]["feature_key"]: f["properties"] for f in features}
+    expected = set(FEATURE_SPECS) | ({"x2_position_current"} if summary["x2_lookup_added"] else set())
+    if set(by_key) != expected:
+        raise ProductError("Delta Ops exact operational feature set is required")
+    if set(values["values"]) != set(LABELS) | DERIVED_KEYS:
+        raise ProductError("Delta Ops exact source and derived field set is required")
+    source = {key: values["values"][key] for key in LABELS}
+    if legacy:
+        # Earlier PDF metadata retained a label on rows separated with '~'.
+        if source["x2_position_yesterday"] is None:
+            source["x2_position_yesterday"] = "Unavailable"
+        for key, label in LABELS.items():
+            if isinstance(source[key], str):
+                source[key] = re.sub(r"^\s*" + re.escape(label) + r"\s*", "", source[key], flags=re.I)
+    try:
+        raw, numeric, x2 = normalize_values(source)
+    except ReportError as exc:
+        raise ProductError("Delta Ops required source values are invalid: " + exc.code) from None
+    numeric["east_side_streams"] = numeric["total_delta_inflow"] - numeric["sacramento_river"] - numeric["san_joaquin_river"]
+    if numeric["san_luis_swp_share"] > numeric["san_luis_total_storage"]:
+        raise ProductError("Delta Ops reservoir shares exceed total storage")
+    for key, (source_key, unit) in FEATURE_SPECS.items():
+        feature = by_key[key]
+        if feature["units"] != unit:
+            raise ProductError("Delta Ops feature units disagree")
+        actual, wanted = feature.get("value_numeric"), numeric[source_key]
+        if wanted is None:
+            if actual is not None or feature["value_raw"] != raw[source_key]:
+                raise ProductError("Delta Ops status representation disagrees")
+        elif legacy and key == "percent_inflow_diverted" and actual is None:
+            pass  # Retained annotated-percentage parser defect; new inputs cannot opt in.
+        else:
+            _equal_number(actual, wanted, key, tolerance=0.0001 if legacy else 1e-9)
+        if not legacy and source_key in raw and key != "san_luis_reservoir" and feature["value_raw"] != raw[source_key]:
+            raise ProductError("Delta Ops raw feature value disagrees")
+    expected_x2 = x2["km"] is not None
+    if summary["x2_lookup_added"] != expected_x2 or bool(references) != expected_x2:
+        raise ProductError("Delta Ops X2 availability disagrees")
+    if expected_x2:
+        point = by_key["x2_position_current"]
+        from datetime import timedelta
+        yesterday = (_date(summary["report_date"], "report date") - timedelta(days=1)).isoformat()
+        for document in [values, summary, point]:
+            if document.get("x2_position_date") != yesterday or document.get("x2_position_relation") != x2["relation"]:
+                raise ProductError("Delta Ops X2 date or relation disagrees")
+        _equal_number(summary.get("x2_position_km"), x2["km"], "X2 summary")
+        _equal_number(point.get("value_numeric"), x2["km"], "X2 feature")
+        if point["units"] != "km" or point["value_raw"] != x2["value_raw"]:
+            raise ProductError("Delta Ops X2 raw value or units disagree")
+        nearest = min(references, key=lambda f: (abs(f["properties"]["river_km"] - x2["km"]), f["properties"]["river_km"]))
+        actual_point = next(f for f in features if f["properties"]["feature_key"] == "x2_position_current")
+        if actual_point["geometry"] != nearest["geometry"]:
+            raise ProductError("Delta Ops X2 placement disagrees with reference")
+    elif summary.get("x2_position_km") is not None or summary.get("x2_position_relation") is not None:
+        raise ProductError("Delta Ops unavailable X2 must be null")
+    if not expected_x2 and (summary.get("x2_position_date") is not None or summary.get("x2_position_date_source") is not None):
+        raise ProductError("Delta Ops unavailable X2 summary dates must be null")
+    if legacy:
+        return
+    kind = values.get("source_kind")
+    review = values.get("review_only")
+    if kind not in {"pdf", "email"} or not isinstance(review, bool):
+        raise ProductError("Delta Ops candidate source provenance is required")
+    if kind == "email" and not review:
+        documents = [values, summary, *by_key.values()]
+        if any(d.get("source_authentication") != "dkim-rsa-sha256-full-body" for d in documents):
+            raise ProductError("UNVERIFIED_SIGNATURE: email source method is required")
+        _email_evidence(values, root)
+    elif any("source_authentication" in d for d in [values, summary, *by_key.values()]):
+        raise ProductError("PDF/review product cannot claim authenticated email provenance")
+    if review and not allow_review:
+        raise ProductError("saved-input review candidate cannot enter production publication")
+    url = values.get("source_url", "")
+    parsed_url = urlsplit(url)
+    if (parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc or parsed_url.username
+            or parsed_url.password or parsed_url.query or parsed_url.fragment
+            or (kind == "email" and url != PUBLIC_ATTRIBUTION)):
+        raise ProductError("Delta Ops source URL must be safe public attribution")
+    for document in [values, summary, *by_key.values()]:
+        if (document.get("source_kind") != kind or document.get("review_only") is not review
+                or document.get("source_url") != url
+                or document.get("source_name") != "DWR Delta Operations Daily Summary"):
+            raise ProductError("Delta Ops provenance disagrees across outputs")
+    report_provenance = f"parsed_from_dwr_{kind}_executive_operations_summary_on_line"
+    x2_provenance = f"report_date_minus_1_day_because_{kind}_labels_x2_as_yesterday"
+    for document in [values, summary]:
+        if document.get("report_date_source") != report_provenance:
+            raise ProductError("Delta Ops report date provenance is incorrect")
+    expected_note = ("Automated BRIM daily parser for DWR Delta Operations Daily Summary "
+                     + ("PDF" if kind == "pdf" else "email")
+                     + "; values are preliminary and subject to revision.")
+    if summary.get("parser_note") != expected_note:
+        raise ProductError("Delta Ops parser provenance is incorrect")
+    if expected_x2 and any(d.get("x2_position_date_source") != x2_provenance for d in [values, summary, by_key["x2_position_current"]]):
+        raise ProductError("Delta Ops X2 date provenance is incorrect")
+    conversion = 1.98347 / 1000
+    totals = {"cvp_export_cfs": numeric["jones_pumping_plant"], "swp_export_cfs": numeric["clifton_court_inflow"]}
+    totals["export_total_cfs"] = totals["cvp_export_cfs"] + totals["swp_export_cfs"]
+    totals.update({key.replace("_cfs", "_kaf_day"): value * conversion for key, value in list(totals.items())})
+    totals["outflow_kaf_day"] = numeric["outflow_index"] * conversion
+    totals["east_side_streams_cfs"] = numeric["east_side_streams"]
+    for key, wanted in totals.items():
+        _equal_number(summary.get(key), wanted, key)
+    derived = {"east_side_streams": (numeric["east_side_streams"], "cfs", 0),
+               "export_total_cfs": (totals["export_total_cfs"], "cfs", 0),
+               "san_luis_cvp_share": (numeric["san_luis_total_storage"] - numeric["san_luis_swp_share"], "TAF", 0)}
+    derived.update({key: (wanted, "kaf/day", 1) for key, wanted in totals.items() if key.endswith("kaf_day")})
+    for key, (wanted, unit, decimals) in derived.items():
+        text = values["values"][key]
+        suffix = r"(?:\.\d)?" if decimals else ""
+        match = re.fullmatch(r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)" + suffix + r") " + re.escape(unit), str(text))
+        if not match or abs(float(match[1].replace(",", "")) - wanted) > 0.5 * 10 ** -decimals + 1e-9:
+            raise ProductError("Delta Ops derived display value disagrees")
+    if by_key["percent_inflow_diverted"]["label_text"].count("(3-day avg)") != raw["percent_inflow_diverted"].count("(3-day avg)"):
+        raise ProductError("Delta Ops percentage qualifier is duplicated or missing")
+
+
+def validate_product(root: Path, *, legacy=False, allow_review=False) -> Tuple[str, int]:
     root = root.resolve()
     values = _read_json(root / VALUES_PATH)
     summary = _read_json(root / SUMMARY_PATH)
@@ -151,6 +337,8 @@ def validate_product(root: Path) -> Tuple[str, int]:
         if not isinstance(value_raw, str) or not value_raw:
             raise ProductError(f"Delta Ops feature {index} has invalid value_raw")
         value_numeric = properties.get("value_numeric")
+        if "value_numeric" not in properties:
+            raise ProductError(f"Delta Ops feature {index} is missing value_numeric")
         if value_numeric is not None and (
             isinstance(value_numeric, bool)
             or not isinstance(value_numeric, (int, float))
@@ -173,6 +361,7 @@ def validate_product(root: Path) -> Tuple[str, int]:
         if isinstance(river_km, bool) or not isinstance(river_km, (int, float)) or not math.isfinite(river_km):
             raise ProductError(f"Delta Ops X2 feature {index} has invalid river_km")
 
+    _validate_contract(values, summary, features, x2_features, root=root, legacy=legacy, allow_review=allow_review)
     return str(report_date), len(features)
 
 
@@ -212,7 +401,7 @@ def reconcile() -> None:
     elif not all(canonical_presence):
         raise ProductError("current main contains a partial Delta Ops product set")
     else:
-        canonical_date_text, _ = validate_product(worktree)
+        canonical_date_text, _ = validate_product(worktree, legacy=True)
         canonical_date = _date(canonical_date_text, "canonical Delta Ops report_date")
         if candidate_date < canonical_date:
             _write_result(
@@ -265,10 +454,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command")
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--root", required=True)
+    validate_parser.add_argument("--review", action="store_true", help="validate a nonpublishable private saved-input candidate")
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
-            report_date, count = validate_product(Path(args.root))
+            report_date, count = validate_product(Path(args.root), allow_review=args.review)
             print(f"Validated Delta Ops product: {count} features for {report_date}")
             return 0
         if args.command is None:

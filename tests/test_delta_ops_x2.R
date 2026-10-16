@@ -33,7 +33,8 @@ main <- function() {
     DELTA_OPS_STATIC_LOCATIONS_CSV = normalizePath("data/input/delta_ops_static_locations.csv"),
     DELTA_OPS_X2_LOOKUP_CSV = normalizePath("data/input/x2_river_km_lookup.csv"),
     DELTA_OPS_SKIP_IF_CURRENT_DATE = "false", DELTA_OPS_FORCE_REFRESH = "false",
-    DELTA_OPS_MAX_REPORT_LAG_DAYS = "7", DELTA_OPS_ALLOW_FUTURE_REPORT_DATE = "false"
+    DELTA_OPS_MAX_REPORT_LAG_DAYS = "7", DELTA_OPS_ALLOW_FUTURE_REPORT_DATE = "false",
+    DELTA_OPS_SAVED_EMAIL = ""
   )
   old_env <- setNames(Sys.getenv(names(overrides), unset = NA_character_), names(overrides))
   on.exit({
@@ -50,7 +51,7 @@ main <- function() {
     scope$feed_build_time_utc <- "2026-09-08T19:00:19Z"
     scope$feed_build_time_local <- "2026-09-08 12:00:19 PDT"
     scope$raw_text <- text
-    eval(builder[index("x2_value"):length(builder)], scope)
+    eval(builder[index("source_record"):length(builder)], scope)
     expected_files <- paste0("delta_ops_", c(
       "daily_summary.json", "daily_summary_summary.json",
       "daily_summary_features.geojson", "x2_reference.geojson"

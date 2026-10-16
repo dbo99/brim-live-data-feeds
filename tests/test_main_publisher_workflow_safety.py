@@ -111,7 +111,284 @@ def job_level_env_blocks(text: str) -> list[str]:
     return blocks
 
 
+class DeltaCanaryWorkflowTests(unittest.TestCase):
+    """Exercise decisions and shell programs extracted from the actual workflow."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = DELTA_OPS.read_text(encoding="utf-8")
+        prepare = cls.text.split("\n  publish-to-main:\n", 1)[0]
+        cls.steps = {}
+        for block in prepare.split("      - name: ")[1:]:
+            name, rest = block.split("\n", 1)
+            cls.steps[name] = rest
+
+    def expression(self, expression, context):
+        import ast
+        def token(match):
+            text = match[0]
+            if text.startswith("'"):
+                return text
+            if text in {"true", "false"}:
+                return str(text == "true")
+            return repr(context.get(text, ""))
+        value = re.sub(r"'[^']*'|(?:github|inputs|steps|needs)\.[A-Za-z0-9_.-]+|\b(?:true|false)\b", token, expression)
+        value = value.removeprefix("${{").removesuffix("}}").strip()
+        value = value.replace("&&", " and ").replace("||", " or ")
+        value = re.sub(r"!(?!=)", " not ", value).strip()
+        tree = ast.parse(value, mode="eval")
+        allowed = (ast.Expression, ast.Constant, ast.BoolOp, ast.UnaryOp,
+                   ast.Compare, ast.And, ast.Or, ast.Not, ast.Eq, ast.NotEq)
+        self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(tree)))
+        return eval(compile(tree, "<workflow-condition>", "eval"), {"__builtins__": {}})
+
+    def field(self, step, key):
+        return re.search(r"^        " + re.escape(key) + r": (.+)$", self.steps[step], re.M)[1]
+
+    def shell(self, step):
+        import textwrap
+        return textwrap.dedent(self.steps[step].split("        run: |\n", 1)[1]).rstrip() + "\n"
+
+    def execute(self, step, root, env=None, replacements=None):
+        import os, subprocess, sys
+        script = self.shell(step)
+        for old, new in (replacements or {}).items():
+            script = script.replace(old, new)
+        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
+                           PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+                           RUNNER_TEMP=str(root), GITHUB_OUTPUT=str(root / "output"))
+        for key in list(environment):
+            if key.startswith(("DELTA_OPS_", "BRIM_PUBLISH_")):
+                environment.pop(key)
+        environment.update(env or {})
+        return subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root,
+                              env=environment, capture_output=True, text=True, timeout=30)
+
+    def test_delta_yaml_defaults_and_independent_publisher_matrix(self):
+        self.assertRegex(self.text, r"gmail_canary:\n(?:.*\n){1}        type: boolean\n        required: false\n        default: false")
+        self.assertRegex(self.text, r"canary_source_sha:\n(?:.*\n){1}        type: string\n        required: false\n        default: \"\"")
+        self.assertEqual(re.findall(r'- cron: "([^"]+)"', self.text),
+                         ["41 15 * * *", "11,41 16 * * *", "11,41 17 * * *"])
+        self.assertNotRegex(self.text, r"(?m)^  (?:push|pull_request):")
+        output = re.search(r"^      should_publish: (.+)$", self.text, re.M)[1]
+        publish = self.text.split("\n  publish-to-main:\n", 1)[1].splitlines()[0].strip()[4:]
+        checkout = self.field("Check out selected source", "uses")
+        self.assertEqual(checkout, "actions/checkout@v6")
+        checkout_ref = re.search(r"^          ref: (.+)$", self.steps["Check out selected source"], re.M)[1]
+        request = re.search(r"^          CANARY_REQUESTED: (.+)$", self.steps["Validate Delta mode and immutable canary source"], re.M)[1]
+        for event in ["schedule", "workflow_dispatch"]:
+            for flag in ["", "false", "true"]:
+                for canary in [None, False, True, "false", "true"]:
+                    for ref in ["refs/heads/main", "refs/heads/feature"]:
+                        context = {"github.event_name": event, "inputs.gmail_canary": canary,
+                                   "github.ref": ref, "github.sha": "a" * 40}
+                        requested = event == "workflow_dispatch" and canary is True
+                        self.assertEqual(self.expression(request, context), requested)
+                        self.assertEqual(self.expression(checkout_ref, context), "a" * 40 if requested else ref)
+                        for run in ["false", "true"]:
+                            context.update({"steps.delta_ops_mode.outputs.is_canary": str(requested).lower(),
+                                            "steps.delta_ops_precheck.outputs.should_run": run,
+                                            "needs.prepare-candidate.outputs.should_publish": "true"})
+                            self.assertEqual(self.expression(output, context), not requested and run == "true")
+                            # A corrupted upstream true must never admit the canary publisher.
+                            self.assertEqual(self.expression(publish, context), ref == "refs/heads/main" and not requested)
+                        use = ref == "refs/heads/main" and (requested or flag == "true")
+                        context.update({"steps.delta_ops_mode.outputs.use_gmail": str(use).lower(),
+                                        "steps.delta_ops_precheck.outputs.should_run": "true"})
+                        for name in ["Build Delta Ops through optional Gmail reader", "Prepare optional Delta Gmail verification dependencies"]:
+                            self.assertEqual(self.expression(self.field(name, "if"), context), use)
+                        for name in ["Build latest Delta Ops daily summary GeoJSON", "Validate and describe Delta Ops candidate artifact"]:
+                            self.assertEqual(self.expression(self.field(name, "if"), context), not use)
+
+    def test_delta_actual_mode_shell_rejects_wrong_identity_before_secret_steps(self):
+        import subprocess, tempfile
+        step = "Validate Delta mode and immutable canary source"
+        with tempfile.TemporaryDirectory(prefix="delta-mode-") as folder:
+            root = Path(folder)
+            subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+            subprocess.run(["git", "-c", "user.name=Synthetic Fixture", "-c", "user.email=fixture@example.invalid",
+                            "commit", "--allow-empty", "-qm", "synthetic"], cwd=root, check=True, capture_output=True)
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            base = {"CANARY_REQUESTED": "true", "CANARY_SOURCE_SHA": sha, "SOURCE_EVENT_SHA": sha,
+                    "SOURCE_REF": "refs/heads/main", "EMAIL_ENABLED": "false"}
+            for change in [{}, {"CANARY_SOURCE_SHA": ""}, {"CANARY_SOURCE_SHA": "a" * 39},
+                           {"CANARY_SOURCE_SHA": "$(touch should-not-exist)"},
+                           {"SOURCE_REF": "refs/heads/feature"}, {"CANARY_SOURCE_SHA": "b" * 40},
+                           {"CANARY_SOURCE_SHA": "b" * 40, "SOURCE_EVENT_SHA": "b" * 40}]:
+                (root / "output").unlink(missing_ok=True)
+                result = self.execute(step, root, dict(base, **change))
+                self.assertEqual(result.returncode == 0, not change)
+                self.assertNotIn("$(touch", result.stdout + result.stderr)
+                if not change:
+                    self.assertIn("is_canary=true\nuse_gmail=true\ncheckout_sha=" + sha, (root / "output").read_text())
+                else:
+                    self.assertEqual(result.stderr.strip(), "DELTA_CANARY_SOURCE_REJECTED")
+                    self.assertFalse((root / "output").exists())
+                self.assertFalse((root / "should-not-exist").exists())
+            for flag in ["", "false", "true"]:
+                result = self.execute(step, root, dict(base, CANARY_REQUESTED="false", CANARY_SOURCE_SHA="", EMAIL_ENABLED=flag))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("use_gmail=" + str(flag == "true").lower(), (root / "output").read_text().splitlines()[-2])
+        names = list(self.steps)
+        self.assertLess(names.index(step), names.index("Build Delta Ops through optional Gmail reader"))
+        self.assertNotIn("${{", self.shell(step))
+
+    def test_delta_actual_precheck_current_day_and_manual_bypass(self):
+        import json, tempfile
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        step = "Check if Delta Ops feed is already current"
+        with tempfile.TemporaryDirectory(prefix="delta-precheck-") as folder:
+            root = Path(folder); summary = root / "docs/data/delta_ops_daily_summary_summary.json"
+            summary.parent.mkdir(parents=True)
+            summary.write_text(json.dumps({"report_date": datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()}))
+            for event, expected in [("schedule", "false"), ("workflow_dispatch", "true")]:
+                (root / "output").unlink(missing_ok=True)
+                result = self.execute(step, root, replacements={"${{ github.event_name }}": event})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("should_run=" + expected, (root / "output").read_text())
+
+    def test_delta_reader_and_dependency_failure_shells_keep_secrets_isolated(self):
+        import os, sys, tempfile
+        with tempfile.TemporaryDirectory(prefix="delta-shell-") as folder:
+            root = Path(folder); bin_dir = root / "bin"; bin_dir.mkdir()
+            mock = bin_dir / "python3"
+            mock.write_text("#!" + sys.executable + "\nimport sys\nraise SystemExit(1)\n")
+            mock.chmod(0o700)
+            env = {"PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+                   "DELTA_OPS_GMAIL_CLIENT_SECRET": "SYNTHETIC_DO_NOT_DISCLOSE"}
+            dependency = self.execute("Prepare optional Delta Gmail verification dependencies", root, env)
+            self.assertEqual(dependency.returncode, 0)
+            reader = self.execute("Build Delta Ops through optional Gmail reader", root, env)
+            self.assertNotEqual(reader.returncode, 0)
+            self.assertNotIn("SYNTHETIC_DO_NOT_DISCLOSE", dependency.stdout + dependency.stderr + reader.stdout + reader.stderr)
+        for name, block in self.steps.items():
+            if name != "Build Delta Ops through optional Gmail reader":
+                self.assertNotIn("secrets.DELTA_OPS_GMAIL_", block)
+        self.assertNotIn("continue-on-error", self.steps["Build Delta Ops through optional Gmail reader"])
+        upload = self.steps["Upload validated Delta Ops publication candidate"]
+        self.assertNotIn("always()", upload)
+        self.assertIn("retention-days: 2", upload)
+        self.assertIn("path: ${{ runner.temp }}/delta-ops-candidate", upload)
+        self.assertLess(list(self.steps).index("Verify exact Delta artifact closure and validation"),
+                        list(self.steps).index("Upload validated Delta Ops publication candidate"))
+
+    def test_delta_summary_only_accepts_validated_email_and_scrubs_failures(self):
+        import json, tempfile
+        step = "Report nonpublishing Gmail canary result"
+        with tempfile.TemporaryDirectory(prefix="delta-report-") as folder:
+            root = Path(folder)
+            base = {"CANARY_SOURCE_SHA": "a" * 40, "SOURCE_EVENT_SHA": "a" * 40,
+                    "CHECKOUT_SHA": "a" * 40, "SELECTED_TRANSPORT": "email", "REPORT_DATE": "2026-10-15",
+                    "REQUIRED_FIELD_COVERAGE": "17", "VALIDATION": "PASS", "GMAIL_PROOF": "true"}
+            for change in [{}, {"SELECTED_TRANSPORT": "pdf", "GMAIL_PROOF": "false"},
+                           {"SELECTED_TRANSPORT": "", "VALIDATION": "", "GMAIL_PROOF": ""},
+                           {"REQUIRED_FIELD_COVERAGE": "16"}, {"GMAIL_PROOF": "false"},
+                           {"CANARY_SOURCE_SHA": "SYNTHETIC_SECRET", "REPORT_DATE": "SYNTHETIC_SECRET", "VALIDATION": "SYNTHETIC_SECRET", "SELECTED_TRANSPORT": "SYNTHETIC_SECRET"}]:
+                result = self.execute(step, root, dict(base, **change))
+                self.assertEqual(result.returncode == 0, not change)
+                self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+                summary = json.loads(result.stdout.removeprefix("DELTA_CANARY "))
+                self.assertEqual(summary["publication"], "NOT_ATTEMPTED")
+                self.assertEqual(summary["gmail_proof"], "HELD" if change else "PASS")
+                self.assertLess(len(result.stdout), 700)
+
+    def test_delta_actual_artifact_shell_reuses_strict_validation_and_exact_closure(self):
+        import importlib.util, os, sys, tempfile
+        from unittest.mock import patch
+        step = "Verify exact Delta artifact closure and validation"
+        # Reuse the frozen, synthetic real-builder convergence fixture; no saved
+        # private messages, Gmail endpoint, dependency installation or publisher.
+        spec = importlib.util.spec_from_file_location("delta_gmail_fixture", REPO / "tests/test_delta_ops_gmail.py")
+        fixture = importlib.util.module_from_spec(spec); spec.loader.exec_module(fixture)
+        self.assertIn("validate_candidate_metadata", self.shell(step))
+        self.assertIn("validate_product(root)", self.shell(step))
+        self.assertNotIn("main_publisher.py publish", self.shell(step))
+        # Real candidate construction is covered by the frozen integration suite.
+        # Here copy its strictly validated public-shaped PDF fixture through the
+        # real builder so the changed artifact shell sees actual product bytes.
+        sys.path.insert(0, str(REPO / "scripts"))
+        import delta_ops_gmail as gmail
+        from delta_ops_email import parse_report
+        from datetime import datetime, timezone
+        with tempfile.TemporaryDirectory(prefix="delta-artifact-") as folder:
+            root = Path(folder); (root / "scripts").symlink_to(REPO / "scripts", target_is_directory=True)
+            artifact = root / "delta-ops-candidate"; candidate = artifact / "candidate"
+            record = parse_report(fixture.report(), source_kind="pdf")
+            with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}):
+                gmail.run_builder(record, as_of=datetime(2026, 10, 15, 12, tzinfo=timezone.utc),
+                                  out_dir=candidate / "docs/data", artifact_metadata=artifact / "candidate-metadata.json")
+            env = {"GITHUB_SHA": "a" * 40}
+            good = self.execute(step, root, env)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertIn("gmail_proof=false", (root / "output").read_text())
+            self.assertIn("validation=PASS", (root / "output").read_text())
+            expected = {"candidate-metadata.json", *{"candidate/" + str(p) for p in PRODUCT_PATHS[DELTA_OPS]}}
+            self.assertEqual({str(p.relative_to(artifact)) for p in artifact.rglob("*") if p.is_file()}, expected)
+            for extra in ["raw.eml", "verification.json", ".hidden"]:
+                path = artifact / extra; path.write_text("SYNTHETIC_PRIVATE_PAYLOAD")
+                bad = self.execute(step, root, env)
+                self.assertNotEqual(bad.returncode, 0)
+                self.assertNotIn("SYNTHETIC_PRIVATE_PAYLOAD", bad.stdout + bad.stderr)
+                self.assertEqual(bad.stderr.strip(), "DELTA_ARTIFACT_REJECTED")
+                path.unlink()
+            bad = self.execute(step, root, {"GITHUB_SHA": "b" * 40})
+            self.assertNotEqual(bad.returncode, 0)
+            values = candidate / "docs/data/delta_ops_daily_summary.json"
+            values.write_text(values.read_text() + " ")
+            bad = self.execute(step, root, env)
+            self.assertNotEqual(bad.returncode, 0)
+            # The same closure must recognize real-builder bytes from a locally
+            # signed synthetic email, not just a caller-supplied success label.
+            email_root = root / "email-run"; email_root.mkdir()
+            artifact = email_root / "delta-ops-candidate"; candidate = artifact / "candidate"
+            env = dict(env, RUNNER_TEMP=str(email_root))
+            raw, keys = fixture.signed_message()
+            batch = gmail.retrieve(fixture.config(), as_of=fixture.AS_OF,
+                                   http=fixture.mailbox([fixture.envelope(raw)]), keys=keys)
+            selected = gmail.select_retrieved(batch, lambda: self.fail("unexpected PDF"), as_of=fixture.AS_OF)
+            with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}):
+                gmail.run_builder(selected["record"], as_of=fixture.AS_OF,
+                                  out_dir=candidate / "docs/data", verification=batch.bindings[0],
+                                  artifact_metadata=artifact / "candidate-metadata.json")
+            (root / "output").unlink(missing_ok=True)
+            good = self.execute(step, root, env)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            output = (root / "output").read_text()
+            self.assertIn("gmail_proof=true", output)
+            self.assertIn("selected_transport=email", output)
+            self.assertIn("required_field_coverage=17", output)
+            for path in artifact.rglob("*"):
+                if path.is_file():
+                    for private in [fixture.CANARY, fixture.CLIENT_SECRET, fixture.TOKEN, fixture.ACCOUNT]:
+                        self.assertNotIn(private, path.read_text())
+
+
 class MainPublisherWorkflowSafetyTests(unittest.TestCase):
+    def test_delta_saved_input_is_disabled_without_changing_production_controls(self) -> None:
+        text = DELTA_OPS.read_text(encoding="utf-8")
+        self.assertIn('DELTA_OPS_SAVED_EMAIL: ""', text)
+        self.assertIn('cron: "41 15 * * *"', text)
+        self.assertIn('cron: "11,41 16 * * *"', text)
+        self.assertIn('cron: "11,41 17 * * *"', text)
+        reader = text.split("      - name: Build Delta Ops through optional Gmail reader\n", 1)[1].split("      - name:", 1)[0]
+        outside_reader = text.replace(reader, "")
+        self.assertNotIn("secrets.DELTA_OPS_GMAIL_", outside_reader)
+        self.assertEqual(reader.count("secrets.DELTA_OPS_GMAIL_"), 3)
+        self.assertIn("steps.delta_ops_mode.outputs.use_gmail == 'true'", reader)
+        default_builder = text.split("      - name: Build latest Delta Ops daily summary GeoJSON\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("steps.delta_ops_mode.outputs.use_gmail != 'true'", default_builder)
+        self.assertIn('source("scripts/build_delta_ops_daily_summary.R")', default_builder)
+        self.assertNotIn("secrets.", default_builder)
+        dependency_step = text.split("      - name: Prepare optional Delta Gmail verification dependencies\n", 1)[1].split("      - name:", 1)[0]
+        self.assertNotIn("secrets.", dependency_step)
+        self.assertIn("--require-hashes --no-build-isolation --no-deps", dependency_step)
+        self.assertIn("--artifact-metadata", reader)
+        describe = text.split("      - name: Validate and describe Delta Ops candidate artifact\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("steps.delta_ops_mode.outputs.use_gmail != 'true'", describe)
+        self.assertNotIn("trust_headers", text)
+        self.assertEqual(text.count("group: brim-live-main-publish"), 1)
+
     def test_main_writer_inventory_is_complete(self) -> None:
         discovered = set()
         for path in WORKFLOWS.glob("*.yml"):

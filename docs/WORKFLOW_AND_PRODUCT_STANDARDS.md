@@ -95,7 +95,9 @@ not source-controlled in `.github/workflows`.
 - Writers do not run on pull requests.
 - HRRR sandbox is manual only.
 - Groundwater preview accepts `lookback_days`.
-- Delta manual dispatch bypasses the scheduled same-date precheck.
+- Delta manual dispatch bypasses the scheduled same-date precheck. Ordinary
+  dispatch keeps its existing publication behavior; the explicit Gmail test
+  exception is described below.
 
 **Gaps**
 
@@ -119,6 +121,54 @@ remain governed by their reviewed automation policy. See
 - If manual modes are added, distinguish `artifact`, `feature_branch`, and
   `official` behavior unambiguously.
 - Never default a new test input to official publication.
+
+### Delta nonpublishing Gmail test mode
+
+**Prepared control; hosted proof and activation require separate approval.**
+The existing workflow adds typed boolean `gmail_canary` (default false) and
+string `canary_source_sha` (default empty). Only explicit manual boolean true
+selects the test; missing inputs and the string `false` never activate it.
+Canaries check out immutable `github.sha`, require `refs/heads/main`, and reject
+an absent/invalid full commit or disagreement among approved input, event SHA
+and actual checkout before the secret-bearing step. Input values enter an
+environment variable, not executable shell interpolation. Ordinary checkout
+and all five scheduled attempts remain unchanged.
+
+A valid canary bypasses the already-current precheck and selects the same
+optional dependency, retrieval, whole-report selection, real R builder and
+strict-validation path even while `DELTA_OPS_GMAIL_ENABLED=false`. It does not
+write settings or relax scientific, age, DKIM or fallback rules. Routine email
+still requires main and the exact enable value `true`; otherwise PDF is used.
+The preparation output forces `should_publish=false`, and the publisher job
+independently excludes explicit canary dispatch even if that output is wrong.
+Preparation remains `contents: read`; the excluded publisher never enters the
+shared publication queue. Normal publication permissions/queue/reconciliation
+are unchanged.
+
+Before upload, existing metadata validation checks exactly four product files
+under `candidate/` plus `candidate-metadata.json`, their hashes and event source
+binding; strict product validation is repeated using that prepared-artifact
+trust boundary. No additional artifact member is allowed. The existing run/attempt
+artifact name and two-day retention remain. A bounded log summary includes only
+approved/event/checkout identities, selected transport, heading date, 17-field
+coverage, validation and `publication=NOT_ATTEMPTED`. Validated authenticated
+email bytes qualify as Gmail proof; PDF-only recovery or no candidate reports
+HELD and fails the test result. A successful upload or ordinary disabled no-op
+alone is not Gmail proof. Raw MIME, credentials, private handoffs and DNS evidence
+are never uploaded. This source change does not authorize a hosted run.
+
+#### Offline validation
+
+Run the PDF transport and X2 R regressions; email/Gmail/PDF integration Python
+suite; Delta publisher cases; and shared workflow/publisher tests serially with
+external network denied. Only synthetic loopback services and disposable test
+Git repositories are allowed. Delta cases exercise actual workflow expressions
+and extracted shell programs for typed defaults, flag states, already-current
+reports, wrong source/ref, retrieval failures, real-builder email/PDF artifacts,
+closure and publisher exclusion despite an upstream true output. Saved original
+replay evidence stays private. Do not recollect messages or install credentials
+to test wiring. Consumer acceptance, source integration, hosted proof and routine
+activation remain distinct decisions.
 
 ## Permissions
 
@@ -225,7 +275,10 @@ read in its builder. The current exposure and handling rules are documented in
 
 - R producers use workflow-declared package sets.
 - HRRR/NBM use wgrib2 `3.8.*` through micromamba.
-- Delta installs Poppler for PDF text extraction.
+- Delta installs Poppler for PDF text extraction. Only the optional Gmail path
+  creates a temporary venv and installs the hash-pinned verification dependencies
+  from `requirements-delta-ops-gmail.txt`. Dependency setup receives no credentials;
+  unavailable verification preserves the bounded PDF fallback.
 - GFS/HRRR install geospatial system libraries.
 
 **Recommended**
@@ -246,6 +299,20 @@ read in its builder. The current exposure and handling rules are documented in
   bounded backoff, and stops after three consecutive terminal chunk failures.
 - Wind model scripts use model-cycle/lead selection.
 - Source-specific index/lookup CSVs are tracked under `data/input`.
+- Delta's optional standard-library Gmail reader requires the exact readonly
+  scope and expected account. It admits at most three pages of ten and 24 unique
+  messages, with no partial scan, 2 MiB raw-message, 3 MiB response and 16 MiB
+  aggregate body caps. There are at most 60 HTTP attempts in a 90-second reader
+  budget; requests have a 15-second wall ceiling and five-second socket limit,
+  no redirects and at most one GET retry. Token exchange is never retried.
+  Retry-After seconds and HTTP dates are honored; invalid/conflicting values,
+  delays above two seconds or beyond the remaining budget stop retrieval rather
+  than retry early. Incomplete HTTP framing is rejected. Full-body RSA-SHA256
+  DKIM requires signed identity/MIME headers, aligned approved domain and at
+  least a 1024-bit key; SHA-1, limited-body signatures and testing keys are refused.
+  Approved-selector TXT queries allow eight distinct names, sixteen UDP/TCP
+  sends, five seconds per query and forty seconds total inside the reader
+  deadline. Single-run caching does not pin keys for later runs.
 
 **Recommended**
 
@@ -262,6 +329,13 @@ read in its builder. The current exposure and handling rules are documented in
 - Wind producers create local `data/cache`, `debug` and `qa` material.
 - Model tools use working files before writing JSON/GeoJSON.
 - Official product paths are directly writable by several scripts.
+- Delta's optional source handoff is a bounded owner-only temporary file outside
+  repositories. Tokens never enter R or the publisher. R receives only paths
+  to a normalized record and short-lived verification evidence; Python reverifies
+  raw MIME and the cached key before accepting it. Temporary raw/key/record data
+  is cleaned up after preparation. All four output files are validated before
+  separate destination copies, which are not atomic. Saved replay is review-only,
+  refused in Actions and rejected by production validation.
 - The snow producer constructs and validates its four writer-managed outputs in
   a same-directory staging area before replacement, keeps backups during
   promotion, and restores already-promoted members after a later promotion
@@ -313,6 +387,11 @@ directory and atomically promoted locally.
 
 - Several producers enforce minimum counts and source-specific validation.
 - Failed scripts do not reach Git publication.
+- Delta keeps missing Gmail configuration, authenticated empty results, failed
+  retrieval, rejected content, unverified signatures and incomplete scans
+  distinct. It selects complete reports only, with one independent invocation
+  of the existing PDF route where policy permits. No acceptable report or invalid
+  candidate fails and retains canonical data; same/older valid reports are no-ops.
 - Snow implements product-specific partial publication: exactly one healthy
   provider may refresh while validated prior latest/trace rows for the failed
   provider are carried forward unchanged. Provider health includes

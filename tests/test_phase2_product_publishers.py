@@ -63,63 +63,61 @@ def point(properties: dict[str, object], longitude: float, latitude: float) -> d
 
 
 def write_delta_product(root: Path, report_date: str, build_time: str) -> None:
-    source_url = "https://example.invalid/delta.pdf"
-    source_name = "DWR Delta Operations Daily Summary"
-    features = []
-    for index in range(10):
-        features.append(
-            point(
-                {
-                    "feature_key": f"metric_{index}",
-                    "display_name": f"Metric {index}",
-                    "feature_type": "metric",
-                    "metric_name": f"Metric {index}",
-                    "units": "cfs",
-                    "label_text": f"Metric {index}: {index}",
-                    "value_raw": str(index),
-                    "value_numeric": index,
-                    "source_name": source_name,
-                    "source_url": source_url,
-                    "preliminary_notice": "PRELIMINARY",
-                    "report_date": report_date,
-                    "feed_build_time_utc": build_time,
-                },
-                -121.0 + index / 100,
-                38.0 + index / 100,
-            )
-        )
-    values = {
-        "source_name": source_name,
-        "source_url": source_url,
-        "report_date": report_date,
-        "feed_build_time_utc": build_time,
-        "values": {"metric": "1 cfs"},
+    from datetime import date, timedelta
+    yesterday = (date.fromisoformat(report_date) - timedelta(days=1)).isoformat()
+    provenance = {
+        "source_name": "DWR Delta Operations Daily Summary",
+        "source_url": "https://example.invalid/delta.pdf", "source_kind": "pdf", "review_only": False,
+        "report_date": report_date, "feed_build_time_utc": build_time,
+        "report_date_source": "parsed_from_dwr_pdf_executive_operations_summary_on_line",
+        "x2_position_date_source": "report_date_minus_1_day_because_pdf_labels_x2_as_yesterday",
+        "x2_position_date": yesterday, "x2_position_relation": ">",
+        "preliminary_notice": "PRELIMINARY",
     }
-    summary = {
-        "source_name": source_name,
-        "source_url": source_url,
-        "report_date": report_date,
-        "feed_build_time_utc": build_time,
-        "feature_count": len(features),
-        "x2_lookup_added": True,
+    raw = {
+        "clifton_court_inflow": "1,000 cfs", "jones_pumping_plant": "2,700 cfs",
+        "total_delta_inflow": "~ 11,833 cfs", "sacramento_river": "9,785 cfs",
+        "san_joaquin_river": "1,084 cfs", "delta_conditions": "Balanced",
+        "cross_channel_gates_percent_open": "100%", "outflow_index": "~ 6,100 cfs",
+        "percent_inflow_diverted": "30.2 (3-day avg)", "x2_position_yesterday": "> 81 km",
+        "controlling_factors": "Delta WQ", "omr_index_daily_value": "-3,500 cfs",
+        "shasta_storage": "2,376 TAF", "folsom_storage": "404 TAF", "oroville_storage": "1,533 TAF",
+        "san_luis_total_storage": "1,465 TAF", "san_luis_swp_share": "983 TAF",
+        "east_side_streams": "964 cfs", "export_total_cfs": "3,700 cfs",
+        "export_total_kaf_day": "7.3 kaf/day", "outflow_kaf_day": "12.1 kaf/day",
+        "cvp_export_kaf_day": "5.4 kaf/day", "swp_export_kaf_day": "2.0 kaf/day",
+        "san_luis_cvp_share": "482 TAF",
     }
-    x2 = {
-        "type": "FeatureCollection",
-        "features": [
-            point(
-                {
-                    "feature_key": "x2_reference",
-                    "display_name": "X2 75 km",
-                    "feature_type": "x2_reference",
-                    "source_name": "BRIM X2 lookup",
-                    "source_url": "reference/x2.shp",
-                    "river_km": 75,
-                },
-                -121.5,
-                38.1,
-            )
-        ],
-    }
+    specs = [
+        ("cross_channel_gates", "cross_channel_gates_percent_open", 100, "percent"),
+        ("jones_cvp_exports", "jones_pumping_plant", 2700, "cfs"),
+        ("banks_swp_exports", "clifton_court_inflow", 1000, "cfs"),
+        ("delta_outflow_index", "outflow_index", 6100, "cfs"),
+        ("percent_inflow_diverted", "percent_inflow_diverted", 30.2, "percent_3day_avg"),
+        ("omr_index", "omr_index_daily_value", -3500, "cfs"),
+        ("sacramento_freeport", "sacramento_river", 9785, "cfs"),
+        ("san_joaquin_vernalis", "san_joaquin_river", 1084, "cfs"),
+        ("total_delta_inflow", "east_side_streams", 964, "cfs"),
+        ("delta_conditions", "delta_conditions", None, "status"),
+        ("controlling_factors", "controlling_factors", None, "status"),
+        ("san_luis_reservoir", "san_luis_total_storage", 1465, "TAF"),
+        ("x2_position_current", "x2_position_yesterday", 81, "km"),
+    ]
+    features = [point({**provenance, "feature_key": key, "display_name": key,
+                       "feature_type": "metric", "metric_name": key, "units": unit,
+                       "label_text": raw[source], "value_raw": raw[source], "value_numeric": number},
+                      -121.5, 38.1) for key, source, number, unit in specs]
+    values = {**provenance, "values": raw}
+    summary = {**provenance, "feature_count": 13, "x2_lookup_added": True, "x2_position_km": 81,
+               "parser_note": "Automated BRIM daily parser for DWR Delta Operations Daily Summary PDF; values are preliminary and subject to revision.",
+               "cvp_export_cfs": 2700, "swp_export_cfs": 1000, "export_total_cfs": 3700,
+               "cvp_export_kaf_day": 2700 * 1.98347 / 1000,
+               "swp_export_kaf_day": 1000 * 1.98347 / 1000,
+               "export_total_kaf_day": 3700 * 1.98347 / 1000,
+               "outflow_kaf_day": 6100 * 1.98347 / 1000, "east_side_streams_cfs": 964}
+    x2 = {"type": "FeatureCollection", "features": [point({
+        "feature_key": "x2_reference", "display_name": "X2 81 km", "feature_type": "x2_reference",
+        "source_name": "BRIM X2 lookup", "source_url": "reference/x2.shp", "river_km": 81}, -121.5, 38.1)]}
     write_json(root / DELTA_PATHS[0], values)
     write_json(root / DELTA_PATHS[1], {"type": "FeatureCollection", "features": features})
     write_json(root / DELTA_PATHS[2], summary)
@@ -321,6 +319,91 @@ class DeltaOpsPublisherTests(CallbackCase):
     product_id = "delta-ops-daily-summary"
     semantic_type = "report_date"
     paths = DELTA_PATHS
+
+    def test_exact_keys_units_live_values_and_provenance_are_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for mutation in ("arbitrary_key", "unit", "null_live", "nan", "missing_provenance", "derived_total", "x2_date", "missing_status_numeric", "parser_provenance", "derived_text"):
+                with self.subTest(mutation=mutation):
+                    write_delta_product(root, "2026-08-18", "2026-08-18T12:00:00Z")
+                    geo = json.loads((root / DELTA_PATHS[1]).read_text())
+                    summary = json.loads((root / DELTA_PATHS[2]).read_text())
+                    values = json.loads((root / DELTA_PATHS[0]).read_text())
+                    first = geo["features"][0]["properties"]
+                    if mutation == "arbitrary_key": first["feature_key"] = "metric_0"
+                    if mutation == "unit": first["units"] = "cfs"
+                    if mutation == "null_live": first["value_numeric"] = None
+                    if mutation == "nan": first["value_numeric"] = float("nan")
+                    if mutation == "missing_provenance": summary.pop("source_kind")
+                    if mutation == "derived_total": summary["export_total_cfs"] += 1
+                    if mutation == "x2_date": summary["x2_position_date"] = "2026-08-18"
+                    if mutation == "missing_status_numeric": geo["features"][9]["properties"].pop("value_numeric")
+                    if mutation == "parser_provenance": summary["parser_note"] = "parsed from email"
+                    if mutation == "derived_text": values["values"]["export_total_kaf_day"] = "73 kaf/day"
+                    write_json(root / DELTA_PATHS[0], values)
+                    write_json(root / DELTA_PATHS[1], geo)
+                    write_json(root / DELTA_PATHS[2], summary)
+                    self.assertNotEqual(self.validate(root).returncode, 0)
+
+    def test_new_candidate_replaces_legacy_percentage_defect_without_bypass(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate, prior = root / "candidate", root / "prior"
+            write_delta_product(candidate, "2026-08-18", "2026-08-18T12:00:00Z")
+            write_delta_product(prior, "2026-08-17", "2026-08-17T12:00:00Z")
+            for path in DELTA_PATHS[:3]:
+                document = json.loads((prior / path).read_text())
+                objects = [document] if "features" not in document else [f["properties"] for f in document["features"]]
+                for value in objects:
+                    value.pop("source_kind", None)
+                    value.pop("review_only", None)
+                    if value.get("feature_key") == "percent_inflow_diverted":
+                        value["value_numeric"] = None
+                        value["label_text"] = "30.2 (3-day avg) (3-day avg)"
+                write_json(prior / path, document)
+            # Exactly these bytes are forbidden as a new candidate.
+            self.assertNotEqual(self.validate(prior).returncode, 0)
+            result = self.run_callback(phase="reconcile", candidate=candidate, worktree=prior,
+                                       metadata=self.metadata(root, "2026-08-18"), result=root / "result.json")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_copied(candidate, prior)
+
+    def test_retained_public_product_can_be_replaced_in_private_scratch(self) -> None:
+        import shutil
+        from datetime import date, timedelta
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prior, candidate = root / "prior", root / "candidate"
+            for path in DELTA_PATHS:
+                (prior / path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO / path, prior / path)
+            day = (date.fromisoformat(json.loads((prior / DELTA_PATHS[2]).read_text())["report_date"]) + timedelta(days=1)).isoformat()
+            write_delta_product(candidate, day, day + "T12:00:00Z")
+            result = self.run_callback(phase="reconcile", candidate=candidate, worktree=prior,
+                                       metadata=self.metadata(root, day), result=root / "result.json")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_copied(candidate, prior)
+
+    def test_review_candidates_and_corrupt_staged_bytes_cannot_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate, prior = root / "candidate", root / "prior"
+            write_delta_product(candidate, "2026-08-18", "2026-08-18T12:00:00Z")
+            write_delta_product(prior, "2026-08-17", "2026-08-17T12:00:00Z")
+            before = [(prior / path).read_bytes() for path in DELTA_PATHS]
+            for path in DELTA_PATHS[:3]:
+                document = json.loads((candidate / path).read_text())
+                for item in ([f["properties"] for f in document["features"]] if "features" in document else [document]):
+                    item["review_only"] = True
+                write_json(candidate / path, document)
+            result = self.run_callback(phase="reconcile", candidate=candidate, worktree=prior,
+                                       metadata=self.metadata(root, "2026-08-18"), result=root / "result.json")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(before, [(prior / path).read_bytes() for path in DELTA_PATHS])
+            (prior / DELTA_PATHS[3]).unlink()
+            checked = self.run_callback(phase="validate-staged", candidate=candidate, worktree=prior,
+                                        metadata=self.metadata(root, "2026-08-18"), result=root / "result.json")
+            self.assertNotEqual(checked.returncode, 0)
 
     def test_new_same_and_stale_reconciliation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
