@@ -558,6 +558,48 @@ def offline_snotel_capture_bridge(bundle, request, groups, captures, *,
     return result
 
 
+def snotel_admission(source_state, rows):
+    """One native admission policy for legacy replay and versioned snapshots."""
+    outcome = {'FAILED': 'FAILED', 'QUERIED_EMPTY': 'COMPLETE_VALID_EMPTY',
+               'OMITTED_SOURCE_GAP': 'MISSING_WITHIN_COMPLETED_QUERY',
+               'EXPLICIT_MISSING': 'MISSING', 'SUSPECT_ORIGINAL_ONLY': 'WITHHELD',
+               'SUSPECT_NO_NUMERIC_VALUE': 'WITHHELD'}.get(source_state, 'OBSERVED_ACCEPTED')
+    if rows and rows[0].get('qc_flag') == 'S': outcome = 'WITHHELD'
+    return outcome
+
+
+def observation_science(value):
+    """Original deep-equality projection; provenance clocks are not science."""
+    if value is None: return None
+    if 'row' in value: return value['row']
+    return [{f: r.get(f) for f in ('provider_record', 'response_station_element',
+             'observation_state', 'source_timestamp_utc', 'sensor_identity', 'unit_native')}
+            for r in value['rows']]
+
+
+def scientific_digest(value):
+    """Stable JSON science identity with Python numeric equality (1 == 1.0).
+
+    Source validators still reject invalid fields/nonfinite numbers. This is an
+    equality fingerprint, never provider authentication or raw-byte recovery.
+    """
+    def normalized(v):
+        if isinstance(v, (bool, int, float)) and int(v) == v: return int(v)
+        if isinstance(v, dict): return {k: normalized(x) for k, x in v.items()}
+        if isinstance(v, list): return [normalized(x) for x in v]
+        return v
+    return digest(normalized(value))
+
+
+def reconcile_admitted(outcome, previous, current, *, eligible=True,
+                       fingerprint=observation_science):
+    """Retain last admitted science for every non-admitted source outcome."""
+    if outcome != 'OBSERVED_ACCEPTED': return outcome, previous
+    if not eligible: return 'HELD_ELIGIBILITY', previous
+    return ('NO_DATA_CHANGE' if fingerprint(current) == fingerprint(previous)
+            else 'ACCEPTED_REVISION' if previous is not None else outcome), current
+
+
 def offline_observation(event, candidate, bundle, cutoff, *, _validated_history=None):
     """Delegate science validation; never calculate a replacement daily mean."""
     from soil_moisture import snotel_history as sn, scan_history as sc
@@ -571,9 +613,7 @@ def offline_observation(event, candidate, bundle, cutoff, *, _validated_history=
         require(source['state'] != 'UNQUERIED', 'Observation has no SNOTEL query evidence')
         rows = [r for r in doc['observations'] if r['sensor_identity'] == candidate['identity'] and r['provider_date'] == date]
         state = source['state']
-        outcome = {'FAILED': 'FAILED', 'QUERIED_EMPTY': 'COMPLETE_VALID_EMPTY', 'OMITTED_SOURCE_GAP': 'MISSING_WITHIN_COMPLETED_QUERY',
-                   'EXPLICIT_MISSING': 'MISSING', 'SUSPECT_ORIGINAL_ONLY': 'WITHHELD', 'SUSPECT_NO_NUMERIC_VALUE': 'WITHHELD'}.get(state, 'OBSERVED_ACCEPTED')
-        if rows and rows[0].get('qc_flag') == 'S': outcome = 'WITHHELD'
+        outcome = snotel_admission(state, rows)
         require(time(source['retrieved_at_utc']) <= time(cutoff['as_of']), 'Future SNOTEL retrieval')
         require(time(source['retrieved_at_utc']) == time(event['source_checked_at']), 'SNOTEL query clock binding')
         require(time(sn.source_timestamp(date)) <= time(event['source_checked_at']), 'SNOTEL source END after retrieval')
@@ -709,19 +749,9 @@ def offline_reconcile(bundle, request, roster, limit=None):
         if kind == 'OBSERVATION':
             date, outcome, value = offline_observation(event, roster[k], bundle, cutoff, _validated_history=history)
             if outcome == 'OBSERVED_ACCEPTED':
-                if not roster[k]['eligible_current_feed']:
-                    outcome = 'HELD_ELIGIBILITY'
-                else:
-                    previous = s['observations'].get(date)
-                    # Provenance clock changes alone do not revise a scientific row.
-                    def science(v):
-                        if v is None: return None
-                        if 'row' in v: return v['row']
-                        return [{f: r.get(f) for f in ('provider_record', 'response_station_element', 'observation_state',
-                                  'source_timestamp_utc', 'sensor_identity', 'unit_native')} for r in v['rows']]
-                    prior_science = science(previous)
-                    outcome = 'NO_DATA_CHANGE' if science(value) == prior_science else 'ACCEPTED_REVISION' if previous else outcome
-                    s['observations'][date] = value
+                outcome, admitted = reconcile_admitted(outcome, s['observations'].get(date), value,
+                                                       eligible=roster[k]['eligible_current_feed'])
+                if admitted is not None: s['observations'][date] = admitted
             dates = [date]
         elif kind in ('COMPLETE_VALID_EMPTY', 'COMPLETE_QUERY'):
             proof = offline_query(event, roster[k], cutoff)
