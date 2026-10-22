@@ -40,8 +40,8 @@
     "expire_after_hours": 24,
     "valid_tolerance_hours": 3
   },
-  "cycle_time_utc": "2026-10-22T06:00:00Z",
-  "retrieval_time_utc": "2026-10-22T07:36:48Z",
+  "cycle_time_utc": "2026-10-22T12:00:00Z",
+  "retrieval_time_utc": "2026-10-22T13:52:26Z",
   "publication_time_utc": null,
   "target_count": 82,
   "diagnostics": {
@@ -51,6 +51,1531 @@
     "complete_bundle_validated": true
   },
   "targets": [
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-22T13:00:00Z",
+      "valid_from_utc": "2026-10-22T10:00:00Z",
+      "valid_through_utc": "2026-10-22T16:00:00Z",
+      "lead_hours": 1,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f001.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f001.co.grib2.idx",
+      "inventory_record": "131:123480493:d=2026102212:SNOWLVL:0 m above mean sea level:1 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f001_4abfd150fb74.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "4abfd150fb7498dda93b06d72ad8b504fbd87f257549c8b41b6a1ff1406a58ce",
+      "bytes": 403623,
+      "feature_count": 58,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000,
+        11000,
+        12000,
+        13000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4352
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01471,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-22T18:00:00Z",
+      "valid_from_utc": "2026-10-22T15:00:00Z",
+      "valid_through_utc": "2026-10-22T21:00:00Z",
+      "lead_hours": 6,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f006.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f006.co.grib2.idx",
+      "inventory_record": "182:152629692:d=2026102212:SNOWLVL:0 m above mean sea level:6 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f006_ff1921494e78.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "ff1921494e78809fad085d9d1854d0696c603a629b5f97344070854b08b3983a",
+      "bytes": 509003,
+      "feature_count": 70,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000,
+        11000,
+        12000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4352
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01556,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-23T00:00:00Z",
+      "valid_from_utc": "2026-10-22T21:00:00Z",
+      "valid_through_utc": "2026-10-23T03:00:00Z",
+      "lead_hours": 12,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f012.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f012.co.grib2.idx",
+      "inventory_record": "187:159405876:d=2026102212:SNOWLVL:0 m above mean sea level:12 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f012_5f2f475c3306.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "5f2f475c33061f1570f38976b6af1d3eca1d9bc63b7fe29c62f990e941796103",
+      "bytes": 513633,
+      "feature_count": 77,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000,
+        11000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4624
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.03309,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-23T06:00:00Z",
+      "valid_from_utc": "2026-10-23T03:00:00Z",
+      "valid_through_utc": "2026-10-23T09:00:00Z",
+      "lead_hours": 18,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f018.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f018.co.grib2.idx",
+      "inventory_record": "185:154777792:d=2026102212:SNOWLVL:0 m above mean sea level:18 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f018_f49059eb88b0.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "f49059eb88b0a12059448a78bdcd466cf5d7a34f4e09d31fbc8ebf684ab6ae5e",
+      "bytes": 464994,
+      "feature_count": 98,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000,
+        11000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4400
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01702,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-23T12:00:00Z",
+      "valid_from_utc": "2026-10-23T09:00:00Z",
+      "valid_through_utc": "2026-10-23T15:00:00Z",
+      "lead_hours": 24,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f024.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f024.co.grib2.idx",
+      "inventory_record": "187:161059835:d=2026102212:SNOWLVL:0 m above mean sea level:24 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f024_391a19eb12ec.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "391a19eb12ecabd2b613f89f43ab4680d85f2c35c0a5f730826e7e67775b6dab",
+      "bytes": 415759,
+      "feature_count": 88,
+      "contour_levels_ft_msl": [
+        3000,
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4472
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.02954,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-23T18:00:00Z",
+      "valid_from_utc": "2026-10-23T15:00:00Z",
+      "valid_through_utc": "2026-10-23T21:00:00Z",
+      "lead_hours": 30,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f030.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f030.co.grib2.idx",
+      "inventory_record": "186:162406366:d=2026102212:SNOWLVL:0 m above mean sea level:30 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f030_a53335875082.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "a53335875082f63c21f046af102d704b5c278c72e805493f554db77ead0584bb",
+      "bytes": 559646,
+      "feature_count": 146,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4512
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.00974,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-24T00:00:00Z",
+      "valid_from_utc": "2026-10-23T21:00:00Z",
+      "valid_through_utc": "2026-10-24T03:00:00Z",
+      "lead_hours": 36,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f036.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f036.co.grib2.idx",
+      "inventory_record": "188:164546175:d=2026102212:SNOWLVL:0 m above mean sea level:36 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f036_064d6ee7c01d.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "064d6ee7c01dadd24059c2f19998fcbb195c0c34797e4eec89a85a956eb6c989",
+      "bytes": 497643,
+      "feature_count": 99,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4552
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.0193,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-24T06:00:00Z",
+      "valid_from_utc": "2026-10-24T03:00:00Z",
+      "valid_through_utc": "2026-10-24T09:00:00Z",
+      "lead_hours": 42,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f042.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f042.co.grib2.idx",
+      "inventory_record": "169:142313676:d=2026102212:SNOWLVL:0 m above mean sea level:42 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f042_19794878dd11.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "19794878dd1127dbc3289f696515bb134d7a86fae14e0f2e9932a40cb54af232",
+      "bytes": 471292,
+      "feature_count": 78,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4648
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.03629,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-24T12:00:00Z",
+      "valid_from_utc": "2026-10-24T09:00:00Z",
+      "valid_through_utc": "2026-10-24T15:00:00Z",
+      "lead_hours": 48,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f048.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f048.co.grib2.idx",
+      "inventory_record": "171:145468783:d=2026102212:SNOWLVL:0 m above mean sea level:48 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f048_a4f6b234dcde.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "a4f6b234dcde2f28fe8ce6e0476f4e26034c61ebcabe5761c58c30a97acebb5e",
+      "bytes": 631290,
+      "feature_count": 122,
+      "contour_levels_ft_msl": [
+        3000,
+        4000,
+        5000,
+        6000,
+        7000,
+        8000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4568
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01501,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-24T18:00:00Z",
+      "valid_from_utc": "2026-10-24T15:00:00Z",
+      "valid_through_utc": "2026-10-24T21:00:00Z",
+      "lead_hours": 54,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f054.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f054.co.grib2.idx",
+      "inventory_record": "107:90092397:d=2026102212:SNOWLVL:0 m above mean sea level:54 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f054_472c253cb514.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "472c253cb514071e1dacbf682458306547252328ed5ae60312742b7d046c8529",
+      "bytes": 640941,
+      "feature_count": 152,
+      "contour_levels_ft_msl": [
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4488
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.13766,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-25T00:00:00Z",
+      "valid_from_utc": "2026-10-24T21:00:00Z",
+      "valid_through_utc": "2026-10-25T03:00:00Z",
+      "lead_hours": 60,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f060.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f060.co.grib2.idx",
+      "inventory_record": "66:67291922:d=2026102212:SNOWLVL:0 m above mean sea level:60 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f060_d31667badbe2.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "d31667badbe2a957e33182c50224be27e411d7e822b18fc8f96dbde9dfa2d103",
+      "bytes": 295633,
+      "feature_count": 43,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4472
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.13766,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-25T06:00:00Z",
+      "valid_from_utc": "2026-10-25T03:00:00Z",
+      "valid_through_utc": "2026-10-25T09:00:00Z",
+      "lead_hours": 66,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f066.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f066.co.grib2.idx",
+      "inventory_record": "64:62659627:d=2026102212:SNOWLVL:0 m above mean sea level:66 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f066_1149d47b5134.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "1149d47b513420d0e576a9bf26844ecc04d61823a41f9786c76e879e5013f831",
+      "bytes": 280052,
+      "feature_count": 46,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4520
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.12775,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-25T12:00:00Z",
+      "valid_from_utc": "2026-10-25T09:00:00Z",
+      "valid_through_utc": "2026-10-25T15:00:00Z",
+      "lead_hours": 72,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f072.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f072.co.grib2.idx",
+      "inventory_record": "66:66034311:d=2026102212:SNOWLVL:0 m above mean sea level:72 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f072_71b93e6ab81d.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "71b93e6ab81dd72b3a1a9288f64db7a920862695b5d0c81d991ebcaf1fe02952",
+      "bytes": 271155,
+      "feature_count": 30,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4488
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.21645,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-25T18:00:00Z",
+      "valid_from_utc": "2026-10-25T15:00:00Z",
+      "valid_through_utc": "2026-10-25T21:00:00Z",
+      "lead_hours": 78,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f078.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f078.co.grib2.idx",
+      "inventory_record": "64:64408747:d=2026102212:SNOWLVL:0 m above mean sea level:78 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f078_c70baff44daf.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "c70baff44daf4d23dc27acebde370c05a2b605c1de2d2313ae147f9bf98f5cb3",
+      "bytes": 152338,
+      "feature_count": 16,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4496
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.20228,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-26T00:00:00Z",
+      "valid_from_utc": "2026-10-25T21:00:00Z",
+      "valid_through_utc": "2026-10-26T03:00:00Z",
+      "lead_hours": 84,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f084.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f084.co.grib2.idx",
+      "inventory_record": "62:64491915:d=2026102212:SNOWLVL:0 m above mean sea level:84 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f084_bf67a5e77721.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "bf67a5e77721a89dda16c27919fa55faa81c2a1a547c73f2feb4f9325eeef9f6",
+      "bytes": 172640,
+      "feature_count": 20,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4512
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.157,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-26T06:00:00Z",
+      "valid_from_utc": "2026-10-26T03:00:00Z",
+      "valid_through_utc": "2026-10-26T09:00:00Z",
+      "lead_hours": 90,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f090.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f090.co.grib2.idx",
+      "inventory_record": "56:55528300:d=2026102212:SNOWLVL:0 m above mean sea level:90 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f090_288fd9bb802e.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "288fd9bb802e08fc8a98b72269bdd1791de2e20fc4b78d80f36942d0e601910c",
+      "bytes": 120764,
+      "feature_count": 13,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4464
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.09089,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-26T12:00:00Z",
+      "valid_from_utc": "2026-10-26T09:00:00Z",
+      "valid_through_utc": "2026-10-26T15:00:00Z",
+      "lead_hours": 96,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f096.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f096.co.grib2.idx",
+      "inventory_record": "59:59025001:d=2026102212:SNOWLVL:0 m above mean sea level:96 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f096_afc9b45b304b.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "afc9b45b304bb879ab4eb00d08adb0ac6d1f9d8ead4f4234f13a24a4cd87cb08",
+      "bytes": 135335,
+      "feature_count": 15,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4440
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.50041,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-26T18:00:00Z",
+      "valid_from_utc": "2026-10-26T15:00:00Z",
+      "valid_through_utc": "2026-10-26T21:00:00Z",
+      "lead_hours": 102,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f102.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f102.co.grib2.idx",
+      "inventory_record": "56:57137066:d=2026102212:SNOWLVL:0 m above mean sea level:102 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f102_01e03bcdbccd.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "01e03bcdbccd818bdb28ce4b89eb22cc58b99186d0cf8d03a8c62e55ad70a1d1",
+      "bytes": 112994,
+      "feature_count": 11,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4432
+      },
+      "output_bbox_wgs84": [
+        -130,
+        31.15076,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-27T00:00:00Z",
+      "valid_from_utc": "2026-10-26T21:00:00Z",
+      "valid_through_utc": "2026-10-27T03:00:00Z",
+      "lead_hours": 108,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f108.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f108.co.grib2.idx",
+      "inventory_record": "59:61013451:d=2026102212:SNOWLVL:0 m above mean sea level:108 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f108_078f46a1f2e4.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "078f46a1f2e40475c0060ab1d0e6c31cb2e5dc22f2c4163f256d6cf1c7752ef3",
+      "bytes": 178384,
+      "feature_count": 13,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4448
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.04783,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-27T06:00:00Z",
+      "valid_from_utc": "2026-10-27T03:00:00Z",
+      "valid_through_utc": "2026-10-27T09:00:00Z",
+      "lead_hours": 114,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f114.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f114.co.grib2.idx",
+      "inventory_record": "56:55981913:d=2026102212:SNOWLVL:0 m above mean sea level:114 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f114_2d0c4e7c24ce.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "2d0c4e7c24ce362274757ec4b0a076077c18ba7576c8a1a96b3f9e9c8cce1eed",
+      "bytes": 134830,
+      "feature_count": 10,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4400
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.21962,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-27T12:00:00Z",
+      "valid_from_utc": "2026-10-27T09:00:00Z",
+      "valid_through_utc": "2026-10-27T15:00:00Z",
+      "lead_hours": 120,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f120.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f120.co.grib2.idx",
+      "inventory_record": "59:59626345:d=2026102212:SNOWLVL:0 m above mean sea level:120 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f120_1aa1dfeed432.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "1aa1dfeed4329cc77955d78146d69fc04539c617b3ae04721a66f3a7db3772fa",
+      "bytes": 176235,
+      "feature_count": 12,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4336
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.07812,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-27T18:00:00Z",
+      "valid_from_utc": "2026-10-27T15:00:00Z",
+      "valid_through_utc": "2026-10-27T21:00:00Z",
+      "lead_hours": 126,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f126.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f126.co.grib2.idx",
+      "inventory_record": "56:57683925:d=2026102212:SNOWLVL:0 m above mean sea level:126 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f126_f0df1e6b6f3c.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "f0df1e6b6f3c35fc167fbe412523495feeb9587262d3e4ca9ea3acf05489e202",
+      "bytes": 152865,
+      "feature_count": 12,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4296
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.18758,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-28T00:00:00Z",
+      "valid_from_utc": "2026-10-27T21:00:00Z",
+      "valid_through_utc": "2026-10-28T03:00:00Z",
+      "lead_hours": 132,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f132.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f132.co.grib2.idx",
+      "inventory_record": "59:61482815:d=2026102212:SNOWLVL:0 m above mean sea level:132 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f132_1e1820614a19.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "1e1820614a192e9b2c7c3cb1f43152969a723ee4b0377725082fd288358f928a",
+      "bytes": 188735,
+      "feature_count": 15,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4368
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.17853,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-28T06:00:00Z",
+      "valid_from_utc": "2026-10-28T03:00:00Z",
+      "valid_through_utc": "2026-10-28T09:00:00Z",
+      "lead_hours": 138,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f138.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f138.co.grib2.idx",
+      "inventory_record": "56:56422974:d=2026102212:SNOWLVL:0 m above mean sea level:138 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f138_c73679ec8de3.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "c73679ec8de3c7223fab54f4ca7c40468533d6848d0ca683660920bf6f9c550c",
+      "bytes": 183229,
+      "feature_count": 14,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4336
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.08266,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-28T12:00:00Z",
+      "valid_from_utc": "2026-10-28T09:00:00Z",
+      "valid_through_utc": "2026-10-28T15:00:00Z",
+      "lead_hours": 144,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f144.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f144.co.grib2.idx",
+      "inventory_record": "59:60110812:d=2026102212:SNOWLVL:0 m above mean sea level:144 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f144_cff9d6fdca84.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "cff9d6fdca8406297a05e5b97039061d3116bbfb9c7f3bc2b060f58668e18679",
+      "bytes": 200172,
+      "feature_count": 12,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4304
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.11714,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-28T18:00:00Z",
+      "valid_from_utc": "2026-10-28T15:00:00Z",
+      "valid_through_utc": "2026-10-28T21:00:00Z",
+      "lead_hours": 150,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f150.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f150.co.grib2.idx",
+      "inventory_record": "56:59032959:d=2026102212:SNOWLVL:0 m above mean sea level:150 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f150_c6c37516f2dc.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "c6c37516f2dc8f388a827c94e2bff8e51e766c5f95c7e861be5b0506d77e07d5",
+      "bytes": 171778,
+      "feature_count": 12,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4360
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.1517,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-29T00:00:00Z",
+      "valid_from_utc": "2026-10-28T21:00:00Z",
+      "valid_through_utc": "2026-10-29T03:00:00Z",
+      "lead_hours": 156,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f156.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f156.co.grib2.idx",
+      "inventory_record": "59:62856357:d=2026102212:SNOWLVL:0 m above mean sea level:156 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f156_b389e46ab65d.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "b389e46ab65d238ef9dcac03b80b3be71eb7ed19f207c31fa106e8d968ab91f2",
+      "bytes": 203704,
+      "feature_count": 19,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4408
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.17853,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-29T06:00:00Z",
+      "valid_from_utc": "2026-10-29T03:00:00Z",
+      "valid_through_utc": "2026-10-29T09:00:00Z",
+      "lead_hours": 162,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f162.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f162.co.grib2.idx",
+      "inventory_record": "56:57995333:d=2026102212:SNOWLVL:0 m above mean sea level:162 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f162_3a69ec05f92a.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "3a69ec05f92af26649632255e2a3ecb8372d6176924fd6a7fa2a047b6644562e",
+      "bytes": 173356,
+      "feature_count": 11,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 8,
+        "max_m": 4384
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.00386,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-29T12:00:00Z",
+      "valid_from_utc": "2026-10-29T09:00:00Z",
+      "valid_through_utc": "2026-10-29T15:00:00Z",
+      "lead_hours": 168,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f168.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f168.co.grib2.idx",
+      "inventory_record": "59:61826226:d=2026102212:SNOWLVL:0 m above mean sea level:168 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f168_895c26b00815.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "895c26b00815b1779b065d93152f53f6cd0250ad7a2d7277a540eac04c104ca4",
+      "bytes": 194953,
+      "feature_count": 11,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 7,
+        "max_m": 4343
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.05227,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-29T18:00:00Z",
+      "valid_from_utc": "2026-10-29T15:00:00Z",
+      "valid_through_utc": "2026-10-29T21:00:00Z",
+      "lead_hours": 174,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f174.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f174.co.grib2.idx",
+      "inventory_record": "56:60354559:d=2026102212:SNOWLVL:0 m above mean sea level:174 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f174_d2c978909536.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "d2c978909536fff495865ce4b4f6846922aadc078966c0b501269428984d78c6",
+      "bytes": 169581,
+      "feature_count": 10,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 12,
+        "max_m": 4380
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.06207,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-30T00:00:00Z",
+      "valid_from_utc": "2026-10-29T21:00:00Z",
+      "valid_through_utc": "2026-10-30T03:00:00Z",
+      "lead_hours": 180,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f180.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f180.co.grib2.idx",
+      "inventory_record": "59:64192416:d=2026102212:SNOWLVL:0 m above mean sea level:180 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f180_3e0ddb49ee36.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "3e0ddb49ee36c87048cdd1aa291a3d8bbe671eae03939b406c378175b15bb3ad",
+      "bytes": 211453,
+      "feature_count": 20,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 16,
+        "max_m": 4424
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.04829,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-30T06:00:00Z",
+      "valid_from_utc": "2026-10-30T03:00:00Z",
+      "valid_through_utc": "2026-10-30T09:00:00Z",
+      "lead_hours": 186,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f186.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f186.co.grib2.idx",
+      "inventory_record": "56:59354089:d=2026102212:SNOWLVL:0 m above mean sea level:186 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f186_30463a4b413f.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "30463a4b413f258ab5fd892107e073d8a54bc4df1b3f15c7196e603eb04a3fce",
+      "bytes": 183535,
+      "feature_count": 17,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 6,
+        "max_m": 4374
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.0321,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-30T12:00:00Z",
+      "valid_from_utc": "2026-10-30T09:00:00Z",
+      "valid_through_utc": "2026-10-30T15:00:00Z",
+      "lead_hours": 192,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f192.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f192.co.grib2.idx",
+      "inventory_record": "59:63301503:d=2026102212:SNOWLVL:0 m above mean sea level:192 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f192_83504dc60eb9.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "83504dc60eb95b27feea241d075a7ee05a2b68b47d59c9e3e93ed0164f7ccec9",
+      "bytes": 188211,
+      "feature_count": 21,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 0,
+        "max_m": 4280
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01523,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-30T18:00:00Z",
+      "valid_from_utc": "2026-10-30T15:00:00Z",
+      "valid_through_utc": "2026-10-30T21:00:00Z",
+      "lead_hours": 198,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f198.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f198.co.grib2.idx",
+      "inventory_record": "54:60222073:d=2026102212:SNOWLVL:0 m above mean sea level:198 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f198_385f6a7c5d8f.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "385f6a7c5d8f0053cd780fc77675a95f11a6c26b1bbde465e05bc7e085f904e4",
+      "bytes": 166323,
+      "feature_count": 9,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 11,
+        "max_m": 4323
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.1531,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-31T00:00:00Z",
+      "valid_from_utc": "2026-10-30T21:00:00Z",
+      "valid_through_utc": "2026-10-31T03:00:00Z",
+      "lead_hours": 204,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f204.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f204.co.grib2.idx",
+      "inventory_record": "57:63839518:d=2026102212:SNOWLVL:0 m above mean sea level:204 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f204_b085a2949feb.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "b085a2949feb87fc21024c8811cf553db96def7cad0d24ce9e47a290da86c14e",
+      "bytes": 152228,
+      "feature_count": 10,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 41,
+        "max_m": 4409
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.1428,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-31T06:00:00Z",
+      "valid_from_utc": "2026-10-31T03:00:00Z",
+      "valid_through_utc": "2026-10-31T09:00:00Z",
+      "lead_hours": 210,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f210.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f210.co.grib2.idx",
+      "inventory_record": "54:58424489:d=2026102212:SNOWLVL:0 m above mean sea level:210 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f210_d0f011ac4285.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "d0f011ac4285c1dd21aabf8cb498a56a00b4f6f0260f057face3b5c30367fdf5",
+      "bytes": 149562,
+      "feature_count": 10,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 21,
+        "max_m": 4325
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.17931,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-31T12:00:00Z",
+      "valid_from_utc": "2026-10-31T09:00:00Z",
+      "valid_through_utc": "2026-10-31T15:00:00Z",
+      "lead_hours": 216,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f216.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f216.co.grib2.idx",
+      "inventory_record": "57:62307388:d=2026102212:SNOWLVL:0 m above mean sea level:216 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f216_22bf728a43ec.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "22bf728a43ec6b537bf7a31512ca2f3146732ea44bcaa82100d72a2915b38c48",
+      "bytes": 179194,
+      "feature_count": 13,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 10,
+        "max_m": 4218
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.05012,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-10-31T18:00:00Z",
+      "valid_from_utc": "2026-10-31T15:00:00Z",
+      "valid_through_utc": "2026-10-31T21:00:00Z",
+      "lead_hours": 222,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f222.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f222.co.grib2.idx",
+      "inventory_record": "54:61031611:d=2026102212:SNOWLVL:0 m above mean sea level:222 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f222_7796843d63e8.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "7796843d63e83758023c8d246644b264668a7644ef31f4671c585ee70218e90e",
+      "bytes": 154723,
+      "feature_count": 10,
+      "contour_levels_ft_msl": [
+        5000,
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 25,
+        "max_m": 4257
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.23518,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-11-01T00:00:00Z",
+      "valid_from_utc": "2026-10-31T21:00:00Z",
+      "valid_through_utc": "2026-11-01T03:00:00Z",
+      "lead_hours": 228,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f228.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f228.co.grib2.idx",
+      "inventory_record": "57:65118908:d=2026102212:SNOWLVL:0 m above mean sea level:228 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f228_35087c7f5288.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "35087c7f52885112299d937c8c77ab6688e65efcbe25ef9d50620b1fb95cd777",
+      "bytes": 159813,
+      "feature_count": 8,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 16,
+        "max_m": 4368
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.48226,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-11-01T06:00:00Z",
+      "valid_from_utc": "2026-11-01T03:00:00Z",
+      "valid_through_utc": "2026-11-01T09:00:00Z",
+      "lead_hours": 234,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f234.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f234.co.grib2.idx",
+      "inventory_record": "54:58598565:d=2026102212:SNOWLVL:0 m above mean sea level:234 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f234_2fdff7110a6e.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "2fdff7110a6ecf25769a400f778f5b718068a3b2d69dbb9a3a7f88fa8eeacb85",
+      "bytes": 156068,
+      "feature_count": 9,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000,
+        10000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 13,
+        "max_m": 4293
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.01588,
+        -112,
+        44.5
+      ]
+    },
+    {
+      "source_id": "nbm_snow_level",
+      "cycle_time_utc": "2026-10-22T12:00:00Z",
+      "valid_time_utc": "2026-11-01T12:00:00Z",
+      "valid_from_utc": "2026-11-01T09:00:00Z",
+      "valid_through_utc": "2026-11-01T15:00:00Z",
+      "lead_hours": 240,
+      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f240.co.grib2",
+      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261022/12/core/blend.t12z.core.f240.co.grib2.idx",
+      "inventory_record": "55:59747864:d=2026102212:SNOWLVL:0 m above mean sea level:240 hour fcst:",
+      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102212_f240_926c48325a7e.geojson",
+      "media_type": "application/geo+json",
+      "sha256": "926c48325a7eb8ba6774b12b90a67328141f226e19f88db2e3a1add41656b4ee",
+      "bytes": 165927,
+      "feature_count": 11,
+      "contour_levels_ft_msl": [
+        6000,
+        7000,
+        8000,
+        9000
+      ],
+      "source_grid": {
+        "rows": 1597,
+        "columns": 2345,
+        "resolution_m": 2539.703,
+        "finite_coverage": 1,
+        "min_m": 23,
+        "max_m": 4183
+      },
+      "output_bbox_wgs84": [
+        -130,
+        30.68916,
+        -112,
+        44.5
+      ]
+    },
     {
       "source_id": "nbm_snow_level",
       "cycle_time_utc": "2026-10-22T06:00:00Z",
@@ -1577,1552 +3102,6 @@
         30.14249,
         -112,
         43.74077
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-21T19:00:00Z",
-      "valid_from_utc": "2026-10-21T16:00:00Z",
-      "valid_through_utc": "2026-10-21T22:00:00Z",
-      "lead_hours": 1,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f001.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f001.co.grib2.idx",
-      "inventory_record": "131:119884943:d=2026102118:SNOWLVL:0 m above mean sea level:1 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f001_5e31ba6854da.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "5e31ba6854da4dfb649c71fcaa62dba86b9f24f1729b65ef0195be582f5e3b29",
-      "bytes": 413162,
-      "feature_count": 68,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000,
-        12000,
-        13000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 92,
-        "max_m": 4588
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02518,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-22T00:00:00Z",
-      "valid_from_utc": "2026-10-21T21:00:00Z",
-      "valid_through_utc": "2026-10-22T03:00:00Z",
-      "lead_hours": 6,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f006.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f006.co.grib2.idx",
-      "inventory_record": "182:147581376:d=2026102118:SNOWLVL:0 m above mean sea level:6 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f006_44d9594db543.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "44d9594db543cd7910f1463f23f6538df7d3a85207ff3360a1189a013092de3e",
-      "bytes": 468519,
-      "feature_count": 86,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000,
-        12000,
-        13000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 33,
-        "max_m": 4697
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.00827,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-22T06:00:00Z",
-      "valid_from_utc": "2026-10-22T03:00:00Z",
-      "valid_through_utc": "2026-10-22T09:00:00Z",
-      "lead_hours": 12,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f012.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f012.co.grib2.idx",
-      "inventory_record": "184:151194312:d=2026102118:SNOWLVL:0 m above mean sea level:12 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f012_0404987c291f.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "0404987c291f06e5630cc77583b9f836e666c195695432321b0ed2c1d25c4db9",
-      "bytes": 469135,
-      "feature_count": 82,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000,
-        12000,
-        13000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 2,
-        "max_m": 4458
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.01076,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-22T12:00:00Z",
-      "valid_from_utc": "2026-10-22T09:00:00Z",
-      "valid_through_utc": "2026-10-22T15:00:00Z",
-      "lead_hours": 18,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f018.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f018.co.grib2.idx",
-      "inventory_record": "187:158368572:d=2026102118:SNOWLVL:0 m above mean sea level:18 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f018_8822fcb65f1a.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "8822fcb65f1af2cbf4b96d01c8d613807d9dc08f143b9697d194b9c563780543",
-      "bytes": 447863,
-      "feature_count": 68,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000,
-        12000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 1,
-        "max_m": 4321
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02002,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-22T18:00:00Z",
-      "valid_from_utc": "2026-10-22T15:00:00Z",
-      "valid_through_utc": "2026-10-22T21:00:00Z",
-      "lead_hours": 24,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f024.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f024.co.grib2.idx",
-      "inventory_record": "185:156809044:d=2026102118:SNOWLVL:0 m above mean sea level:24 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f024_dafe90deefa4.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "dafe90deefa4e1cef093b9dfef8bfa0a355b6abe545d2cd2ba43dc4f73e599b8",
-      "bytes": 594251,
-      "feature_count": 106,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000,
-        12000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 2,
-        "max_m": 4346
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.01753,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-23T00:00:00Z",
-      "valid_from_utc": "2026-10-22T21:00:00Z",
-      "valid_through_utc": "2026-10-23T03:00:00Z",
-      "lead_hours": 30,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f030.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f030.co.grib2.idx",
-      "inventory_record": "188:160527821:d=2026102118:SNOWLVL:0 m above mean sea level:30 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f030_0e87b03c5814.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "0e87b03c581454aee9518ea3866ed194980acf2ad16f3868a21f50fca8aebdfe",
-      "bytes": 520751,
-      "feature_count": 98,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4568
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02919,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-23T06:00:00Z",
-      "valid_from_utc": "2026-10-23T03:00:00Z",
-      "valid_through_utc": "2026-10-23T09:00:00Z",
-      "lead_hours": 36,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f036.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f036.co.grib2.idx",
-      "inventory_record": "186:156767933:d=2026102118:SNOWLVL:0 m above mean sea level:36 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f036_194d9a9813b6.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "194d9a9813b6661f28cc9ac66c7d868e00ecb1b91ebbf063432dd9e9a9222118",
-      "bytes": 490682,
-      "feature_count": 116,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000,
-        11000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4440
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02032,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-23T12:00:00Z",
-      "valid_from_utc": "2026-10-23T09:00:00Z",
-      "valid_through_utc": "2026-10-23T15:00:00Z",
-      "lead_hours": 42,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f042.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f042.co.grib2.idx",
-      "inventory_record": "171:147166782:d=2026102118:SNOWLVL:0 m above mean sea level:42 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f042_c5048104f13d.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "c5048104f13dbd12574c8336995e09e62bcc1526187e5775c2f7b356905e0815",
-      "bytes": 427901,
-      "feature_count": 85,
-      "contour_levels_ft_msl": [
-        3000,
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4496
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02291,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-23T18:00:00Z",
-      "valid_from_utc": "2026-10-23T15:00:00Z",
-      "valid_through_utc": "2026-10-23T21:00:00Z",
-      "lead_hours": 48,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f048.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f048.co.grib2.idx",
-      "inventory_record": "169:144507221:d=2026102118:SNOWLVL:0 m above mean sea level:48 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f048_ac3164d14b83.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "ac3164d14b83726fcd37e09688bc06f79856194d3bd58bcc9d52379d50f79a5f",
-      "bytes": 536045,
-      "feature_count": 125,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4584
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.01261,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-24T00:00:00Z",
-      "valid_from_utc": "2026-10-23T21:00:00Z",
-      "valid_through_utc": "2026-10-24T03:00:00Z",
-      "lead_hours": 54,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f054.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f054.co.grib2.idx",
-      "inventory_record": "109:91987059:d=2026102118:SNOWLVL:0 m above mean sea level:54 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f054_d92ef206a61f.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "d92ef206a61fecb3ddbd4a4f248e29c21937ff0f55e5791e157ee0473f58ec44",
-      "bytes": 523316,
-      "feature_count": 94,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4544
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.00766,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-24T06:00:00Z",
-      "valid_from_utc": "2026-10-24T03:00:00Z",
-      "valid_through_utc": "2026-10-24T09:00:00Z",
-      "lead_hours": 60,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f060.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f060.co.grib2.idx",
-      "inventory_record": "64:63329849:d=2026102118:SNOWLVL:0 m above mean sea level:60 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f060_4d8d1f41fb27.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "4d8d1f41fb27926f4892a3913cdc87a82c90554b14a7f4a56b539ba323ab0456",
-      "bytes": 362772,
-      "feature_count": 40,
-      "contour_levels_ft_msl": [
-        3000,
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4496
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.09046,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-24T12:00:00Z",
-      "valid_from_utc": "2026-10-24T09:00:00Z",
-      "valid_through_utc": "2026-10-24T15:00:00Z",
-      "lead_hours": 66,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f066.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f066.co.grib2.idx",
-      "inventory_record": "66:66725698:d=2026102118:SNOWLVL:0 m above mean sea level:66 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f066_9673f79a8cc5.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "9673f79a8cc51b60a766fe6ac36bb0f38e5fa1084a2ec47481db6bd1cd509220",
-      "bytes": 364864,
-      "feature_count": 40,
-      "contour_levels_ft_msl": [
-        3000,
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4504
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.17052,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-24T18:00:00Z",
-      "valid_from_utc": "2026-10-24T15:00:00Z",
-      "valid_through_utc": "2026-10-24T21:00:00Z",
-      "lead_hours": 72,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f072.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f072.co.grib2.idx",
-      "inventory_record": "64:64999694:d=2026102118:SNOWLVL:0 m above mean sea level:72 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f072_ad9551c6c23e.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "ad9551c6c23e8822bd36f604e7d00e92caab8fca8cf662037fa5b23d64979bba",
-      "bytes": 330942,
-      "feature_count": 36,
-      "contour_levels_ft_msl": [
-        4000,
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4512
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.06883,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-25T00:00:00Z",
-      "valid_from_utc": "2026-10-24T21:00:00Z",
-      "valid_through_utc": "2026-10-25T03:00:00Z",
-      "lead_hours": 78,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f078.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f078.co.grib2.idx",
-      "inventory_record": "66:68054884:d=2026102118:SNOWLVL:0 m above mean sea level:78 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f078_e48b291a5f9a.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "e48b291a5f9a2dcd1e3ea62c4a414ea829cce2556035fdf6d67b23dd031d5810",
-      "bytes": 221443,
-      "feature_count": 24,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4528
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.07146,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-25T06:00:00Z",
-      "valid_from_utc": "2026-10-25T03:00:00Z",
-      "valid_through_utc": "2026-10-25T09:00:00Z",
-      "lead_hours": 84,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f084.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f084.co.grib2.idx",
-      "inventory_record": "59:59604049:d=2026102118:SNOWLVL:0 m above mean sea level:84 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f084_df0b3362408a.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "df0b3362408ada6b02514b5a616070e9baae5f7eab3a8b51d0ce64f5f0cbff31",
-      "bytes": 139076,
-      "feature_count": 17,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4488
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.04346,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-25T12:00:00Z",
-      "valid_from_utc": "2026-10-25T09:00:00Z",
-      "valid_through_utc": "2026-10-25T15:00:00Z",
-      "lead_hours": 90,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f090.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f090.co.grib2.idx",
-      "inventory_record": "59:59288976:d=2026102118:SNOWLVL:0 m above mean sea level:90 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f090_6bf552c76b04.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "6bf552c76b04cb22d1266647ed2716a62bc45a3732c447b0ac9202b9d7bdf4a2",
-      "bytes": 149765,
-      "feature_count": 16,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4504
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.22176,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-25T18:00:00Z",
-      "valid_from_utc": "2026-10-25T15:00:00Z",
-      "valid_through_utc": "2026-10-25T21:00:00Z",
-      "lead_hours": 96,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f096.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f096.co.grib2.idx",
-      "inventory_record": "56:57329581:d=2026102118:SNOWLVL:0 m above mean sea level:96 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f096_333fdffb76dc.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "333fdffb76dc1e489761f45977c65e49e966c62d57ca7603f735cc6012c927a8",
-      "bytes": 120184,
-      "feature_count": 13,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4480
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.21218,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-26T00:00:00Z",
-      "valid_from_utc": "2026-10-25T21:00:00Z",
-      "valid_through_utc": "2026-10-26T03:00:00Z",
-      "lead_hours": 102,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f102.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f102.co.grib2.idx",
-      "inventory_record": "59:61243537:d=2026102118:SNOWLVL:0 m above mean sea level:102 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f102_8719eaa0b7aa.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "8719eaa0b7aaa59f6202582b95bc6f3f444acf75d6c15dbe832b035160723379",
-      "bytes": 176269,
-      "feature_count": 21,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4496
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.15506,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-26T06:00:00Z",
-      "valid_from_utc": "2026-10-26T03:00:00Z",
-      "valid_through_utc": "2026-10-26T09:00:00Z",
-      "lead_hours": 108,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f108.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f108.co.grib2.idx",
-      "inventory_record": "56:56182384:d=2026102118:SNOWLVL:0 m above mean sea level:108 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f108_0fa30eae2a99.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "0fa30eae2a99e2c223015e27e7448ba2358bbf6fcb549a42ff3bf3bcaf16010b",
-      "bytes": 145661,
-      "feature_count": 14,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4440
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02524,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-26T12:00:00Z",
-      "valid_from_utc": "2026-10-26T09:00:00Z",
-      "valid_through_utc": "2026-10-26T15:00:00Z",
-      "lead_hours": 114,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f114.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f114.co.grib2.idx",
-      "inventory_record": "59:59453987:d=2026102118:SNOWLVL:0 m above mean sea level:114 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f114_3cbc07dcd0ea.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "3cbc07dcd0ea95724c21d967e4a904aac9a5b6820b4b4370bd627ad48fb8b345",
-      "bytes": 148605,
-      "feature_count": 12,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4416
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.71707,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-26T18:00:00Z",
-      "valid_from_utc": "2026-10-26T15:00:00Z",
-      "valid_through_utc": "2026-10-26T21:00:00Z",
-      "lead_hours": 120,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f120.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f120.co.grib2.idx",
-      "inventory_record": "56:57502319:d=2026102118:SNOWLVL:0 m above mean sea level:120 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f120_70b931b3ca43.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "70b931b3ca4320008375f0efa27fc3fefc4a9686ab5f3c65e22d15833cc6bf8a",
-      "bytes": 145068,
-      "feature_count": 13,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4408
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.04504,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-27T00:00:00Z",
-      "valid_from_utc": "2026-10-26T21:00:00Z",
-      "valid_through_utc": "2026-10-27T03:00:00Z",
-      "lead_hours": 126,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f126.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f126.co.grib2.idx",
-      "inventory_record": "59:61449056:d=2026102118:SNOWLVL:0 m above mean sea level:126 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f126_e70b5c261de0.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "e70b5c261de0b35a01e254b75c31d968635869215255bc70fffe34aa318e1824",
-      "bytes": 193924,
-      "feature_count": 16,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4448
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.2452,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-27T06:00:00Z",
-      "valid_from_utc": "2026-10-27T03:00:00Z",
-      "valid_through_utc": "2026-10-27T09:00:00Z",
-      "lead_hours": 132,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f132.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f132.co.grib2.idx",
-      "inventory_record": "56:56460934:d=2026102118:SNOWLVL:0 m above mean sea level:132 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f132_806fe7e83d13.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "806fe7e83d1389ca97b575369f4b7a3e1b60d485624b506c0fff7c77ae9ad4ab",
-      "bytes": 158433,
-      "feature_count": 11,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4384
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.24264,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-27T12:00:00Z",
-      "valid_from_utc": "2026-10-27T09:00:00Z",
-      "valid_through_utc": "2026-10-27T15:00:00Z",
-      "lead_hours": 138,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f138.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f138.co.grib2.idx",
-      "inventory_record": "59:59633426:d=2026102118:SNOWLVL:0 m above mean sea level:138 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f138_2903333ee113.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "2903333ee1133524d76a35b0a68b29b74460032c9188f3c1eec814e4eb9ba62d",
-      "bytes": 163707,
-      "feature_count": 11,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4312
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.22231,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-27T18:00:00Z",
-      "valid_from_utc": "2026-10-27T15:00:00Z",
-      "valid_through_utc": "2026-10-27T21:00:00Z",
-      "lead_hours": 144,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f144.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f144.co.grib2.idx",
-      "inventory_record": "56:57964913:d=2026102118:SNOWLVL:0 m above mean sea level:144 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f144_10cdea1cb61a.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "10cdea1cb61abbf08c17a3b9a637ca173794c5beeb20150aa53e263ed1882b87",
-      "bytes": 154905,
-      "feature_count": 8,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4312
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.06804,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-28T00:00:00Z",
-      "valid_from_utc": "2026-10-27T21:00:00Z",
-      "valid_through_utc": "2026-10-28T03:00:00Z",
-      "lead_hours": 150,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f150.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f150.co.grib2.idx",
-      "inventory_record": "59:62028078:d=2026102118:SNOWLVL:0 m above mean sea level:150 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f150_5e2f483549c3.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "5e2f483549c3ef609df7e2c1699278135b5aa05a609cbe513f5c369cb559a16e",
-      "bytes": 187764,
-      "feature_count": 19,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4376
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.11425,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-28T06:00:00Z",
-      "valid_from_utc": "2026-10-28T03:00:00Z",
-      "valid_through_utc": "2026-10-28T09:00:00Z",
-      "lead_hours": 156,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f156.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f156.co.grib2.idx",
-      "inventory_record": "56:57036644:d=2026102118:SNOWLVL:0 m above mean sea level:156 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f156_dc51b3c0953b.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "dc51b3c0953b2848858a9247e8ad429bcce35e032989226cd16c36b8bd4e78c1",
-      "bytes": 181251,
-      "feature_count": 13,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4320
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.11567,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-28T12:00:00Z",
-      "valid_from_utc": "2026-10-28T09:00:00Z",
-      "valid_through_utc": "2026-10-28T15:00:00Z",
-      "lead_hours": 162,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f162.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f162.co.grib2.idx",
-      "inventory_record": "59:60727537:d=2026102118:SNOWLVL:0 m above mean sea level:162 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f162_b59fd6157c63.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "b59fd6157c638f9a82df6b56df5a3a27d78d7aa7b961670369af44d35a446a3e",
-      "bytes": 201908,
-      "feature_count": 24,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 0,
-        "max_m": 4240
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.13481,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-28T18:00:00Z",
-      "valid_from_utc": "2026-10-28T15:00:00Z",
-      "valid_through_utc": "2026-10-28T21:00:00Z",
-      "lead_hours": 168,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f168.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f168.co.grib2.idx",
-      "inventory_record": "56:59420568:d=2026102118:SNOWLVL:0 m above mean sea level:168 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f168_68ee21462cf9.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "68ee21462cf995094d1b8b421c7a4612b25de7a9b7e31668a690ff8f8dd10552",
-      "bytes": 179465,
-      "feature_count": 13,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 6,
-        "max_m": 4318
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.03451,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-29T00:00:00Z",
-      "valid_from_utc": "2026-10-28T21:00:00Z",
-      "valid_through_utc": "2026-10-29T03:00:00Z",
-      "lead_hours": 174,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f174.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f174.co.grib2.idx",
-      "inventory_record": "59:63752034:d=2026102118:SNOWLVL:0 m above mean sea level:174 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f174_6b8ba96c58ab.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "6b8ba96c58ab8e823077cc4ac2b2a24efff88e465a72a089070b0a75cbd39c2c",
-      "bytes": 196051,
-      "feature_count": 16,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 12,
-        "max_m": 4396
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.05982,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-29T06:00:00Z",
-      "valid_from_utc": "2026-10-29T03:00:00Z",
-      "valid_through_utc": "2026-10-29T09:00:00Z",
-      "lead_hours": 180,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f180.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f180.co.grib2.idx",
-      "inventory_record": "56:58875022:d=2026102118:SNOWLVL:0 m above mean sea level:180 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f180_72bf699199b8.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "72bf699199b8e06fe717be9caaab5043f070bf3bf14f66eca7504987dcb6949e",
-      "bytes": 171717,
-      "feature_count": 14,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 17,
-        "max_m": 4361
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.07922,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-29T12:00:00Z",
-      "valid_from_utc": "2026-10-29T09:00:00Z",
-      "valid_through_utc": "2026-10-29T15:00:00Z",
-      "lead_hours": 186,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f186.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f186.co.grib2.idx",
-      "inventory_record": "59:62538210:d=2026102118:SNOWLVL:0 m above mean sea level:186 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f186_cbad8bf24402.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "cbad8bf24402034885d63019b6dbb6fe282e8b262696ec17ba2bb23d6caa22c1",
-      "bytes": 193539,
-      "feature_count": 23,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 19,
-        "max_m": 4307
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.05968,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-29T18:00:00Z",
-      "valid_from_utc": "2026-10-29T15:00:00Z",
-      "valid_through_utc": "2026-10-29T21:00:00Z",
-      "lead_hours": 192,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f192.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f192.co.grib2.idx",
-      "inventory_record": "56:61091062:d=2026102118:SNOWLVL:0 m above mean sea level:192 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f192_a600f5ef1ef7.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "a600f5ef1ef7407abf6b5f3aca4693777a59852e953bab8f0f61e70ba9687a17",
-      "bytes": 171616,
-      "feature_count": 14,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 20,
-        "max_m": 4340
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.06207,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-30T00:00:00Z",
-      "valid_from_utc": "2026-10-29T21:00:00Z",
-      "valid_through_utc": "2026-10-30T03:00:00Z",
-      "lead_hours": 198,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f198.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f198.co.grib2.idx",
-      "inventory_record": "57:64012358:d=2026102118:SNOWLVL:0 m above mean sea level:198 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f198_0317023ee4ed.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "0317023ee4eda20ff9b79fad44d6c75010554a1dfb6dd5d7af3df0c5050d98d4",
-      "bytes": 170299,
-      "feature_count": 9,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 25,
-        "max_m": 4409
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.06834,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-30T06:00:00Z",
-      "valid_from_utc": "2026-10-30T03:00:00Z",
-      "valid_through_utc": "2026-10-30T09:00:00Z",
-      "lead_hours": 204,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f204.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f204.co.grib2.idx",
-      "inventory_record": "54:58858209:d=2026102118:SNOWLVL:0 m above mean sea level:204 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f204_130f539440ce.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "130f539440ce836cc3da77b034be3411785637145c3621f3d3bf7a136f32116f",
-      "bytes": 157174,
-      "feature_count": 11,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 17,
-        "max_m": 4369
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.03255,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-30T12:00:00Z",
-      "valid_from_utc": "2026-10-30T09:00:00Z",
-      "valid_through_utc": "2026-10-30T15:00:00Z",
-      "lead_hours": 210,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f210.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f210.co.grib2.idx",
-      "inventory_record": "57:62830924:d=2026102118:SNOWLVL:0 m above mean sea level:210 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f210_d189967402e6.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "d189967402e60a6e5211d774ec0b606962d04e5dadb32ac13fde28c21b30a5d0",
-      "bytes": 188990,
-      "feature_count": 16,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 6,
-        "max_m": 4294
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.00912,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-30T18:00:00Z",
-      "valid_from_utc": "2026-10-30T15:00:00Z",
-      "valid_through_utc": "2026-10-30T21:00:00Z",
-      "lead_hours": 216,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f216.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f216.co.grib2.idx",
-      "inventory_record": "54:61107372:d=2026102118:SNOWLVL:0 m above mean sea level:216 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f216_c904f261b25b.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "c904f261b25b983249ff681ccb61c4ab7893c8663dba9238996187767a1cdb70",
-      "bytes": 152423,
-      "feature_count": 13,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 8,
-        "max_m": 4328
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.05126,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-31T00:00:00Z",
-      "valid_from_utc": "2026-10-30T21:00:00Z",
-      "valid_through_utc": "2026-10-31T03:00:00Z",
-      "lead_hours": 222,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f222.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f222.co.grib2.idx",
-      "inventory_record": "57:65124050:d=2026102118:SNOWLVL:0 m above mean sea level:222 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f222_bb4faf268dbd.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "bb4faf268dbdaad7b75beeda226847136a6bb8a7197ca1e7da2f1993e32f2914",
-      "bytes": 144997,
-      "feature_count": 8,
-      "contour_levels_ft_msl": [
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 8,
-        "max_m": 4392
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.01648,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-31T06:00:00Z",
-      "valid_from_utc": "2026-10-31T03:00:00Z",
-      "valid_through_utc": "2026-10-31T09:00:00Z",
-      "lead_hours": 228,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f228.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f228.co.grib2.idx",
-      "inventory_record": "54:59531823:d=2026102118:SNOWLVL:0 m above mean sea level:228 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f228_23fa53366c48.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "23fa53366c48a61f2f28b89f09ed8cbbd2f685d32dbb3f95c1d27bf5d716c40d",
-      "bytes": 143180,
-      "feature_count": 9,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 5,
-        "max_m": 4317
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.25323,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-31T12:00:00Z",
-      "valid_from_utc": "2026-10-31T09:00:00Z",
-      "valid_through_utc": "2026-10-31T15:00:00Z",
-      "lead_hours": 234,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f234.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f234.co.grib2.idx",
-      "inventory_record": "57:64428980:d=2026102118:SNOWLVL:0 m above mean sea level:234 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f234_a6950720731d.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "a6950720731dd47c18fc6fd01c3d35e57e69ecc7c12b6ad426c6c5d2191d281d",
-      "bytes": 158948,
-      "feature_count": 10,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 2,
-        "max_m": 4234
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.25673,
-        -112,
-        44.5
-      ]
-    },
-    {
-      "source_id": "nbm_snow_level",
-      "cycle_time_utc": "2026-10-21T18:00:00Z",
-      "valid_time_utc": "2026-10-31T18:00:00Z",
-      "valid_from_utc": "2026-10-31T15:00:00Z",
-      "valid_through_utc": "2026-10-31T21:00:00Z",
-      "lead_hours": 240,
-      "retrieval_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f240.co.grib2",
-      "inventory_url": "https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.20261021/18/core/blend.t18z.core.f240.co.grib2.idx",
-      "inventory_record": "53:58470627:d=2026102118:SNOWLVL:0 m above mean sea level:240 hour fcst:",
-      "path": "nbm/snow-level/winter_storm_levels_nbm_snow_level_2026102118_f240_7faa6e4d5e3f.geojson",
-      "media_type": "application/geo+json",
-      "sha256": "7faa6e4d5e3f4cdd1d774b6dfa0550e464e0a5b4bb3953806cf772acb6c21b50",
-      "bytes": 158148,
-      "feature_count": 9,
-      "contour_levels_ft_msl": [
-        5000,
-        6000,
-        7000,
-        8000,
-        9000,
-        10000
-      ],
-      "source_grid": {
-        "rows": 1597,
-        "columns": 2345,
-        "resolution_m": 2539.703,
-        "finite_coverage": 1,
-        "min_m": 41,
-        "max_m": 4297
-      },
-      "output_bbox_wgs84": [
-        -130,
-        30.02649,
-        -112,
-        44.5
       ]
     }
   ]
