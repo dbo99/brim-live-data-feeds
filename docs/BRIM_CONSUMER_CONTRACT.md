@@ -615,6 +615,80 @@ and producer scripts.
 - Daily/monthly/fallback files have split producer ownership and must not be
   assumed to refresh with the scheduled writer.
 
+### SNOTEL SMS current-WY snapshot (inactive)
+
+The additive `snotel-sms-current-wy-1` contract is implemented for offline saved
+inputs, not enabled or accepted by a live consumer. Future paths are exactly
+`docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`.
+Index generation, ending-year WY, predecessor and the single target's byte count
+and SHA-256 must agree. Product generation is its canonical content digest before
+adding the generation field; it is not a future Git commit SHA.
+
+Each sensor preserves `sensor_identity`, `station_triplet`, SMS `element_code`,
+signed `height_depth`, `ordinal`, `duration=DAILY`, `period_ref=END`,
+`unit_native=pct` and its metadata digest. There is no averaging, display-depth
+substitution, clamping or percent conversion. Provider date D and source timestamp
+D+1 08:00Z are separate fields under fixed GMT−08, independent of DST.
+
+The product declares `day_columns`, `record_columns`, `presence_fields` and
+`evidence_columns`; array positions are versioned and validated, not inferred.
+A day holds provider date, source timestamp, admission, last-admitted numeric
+record, latest native record and latest query evidence index. Native records hold
+value, original value, presence bits, QC/QA/original-QC, native observation state,
+element scientific-digest index and acquisition-evidence index. Presence bits map
+exactly to `value`, `origValue`, `qcFlag`, `qaFlag`, `origQcFlag`; absent and null
+remain different. Provider `date` is always present. Unknown native row fields
+fail disclosure validation. Flags are at most 64 UTF-8 bytes and 64 canonical JSON
+content bytes (escaping included, enclosing quotes excluded), without control
+characters; finite numeric JSON representations are at most 32 bytes. Oversized
+fields fail; they are never shortened, rounded or replaced.
+
+Evidence tables resolve entirely inside the two-file product: exact station,
+query interval, retrieval UTC clock, response/receipt/request hashes, consumed
+body bytes, pinned metadata and adapter version. Exact requests can be rebuilt
+from the interval and sensor membership, with original/suspect/flags requested.
+Element digests retain scientific equality without publishing arbitrary metadata
+dictionaries. Digests do not recover raw bytes or independently authenticate NRCS.
+Compact prior import therefore requires an independently verified committed
+product/manifest/hash binding in addition to structural and semantic validation.
+
+Numeric zero remains a numeric observation. Native `OBSERVED` with suspect QC is
+withheld; explicit missing, original-only suspect, no-numeric suspect, omitted
+dates and complete-valid-empty queries remain distinct. A later nonnumeric result
+retains any prior admitted value with its original evidence, separately from the
+latest outcome. Consumers must not display that retained value as freshly observed.
+`NO_DATA_CHANGE` and `ACCEPTED_REVISION` use the shared source-science comparison;
+a new retrieval can advance query provenance without revising science. Failed,
+incomplete or unqueried required stations cannot produce a replacement product.
+Last-good remains unchanged and is not made current by a build clock.
+
+Routine refreshes cover one current WY only. At rollover, an older product may
+remain last-good with its actual year and coverage, but its observations are never
+copied to the new year's rows or labeled current. A predecessor binding establishes
+publication lineage only. `annual_maintenance` records the season end, unfinished
+tail and separate Dave-directed maintenance policy. Query-accounted positions are
+not promises of numeric values or a complete year.
+
+Exact native catalog/data disclosure, this compact public evidence projection,
+consumer decoding/status presentation and explicit initial publication remain
+required before release. No existing consumed output is removed or changed.
+
+The Phase B runner does not change these arrays or scientific states. Its private
+operational result distinguishes `DISABLED`, `NO_ELIGIBLE_INTERVAL`, `HELD` and
+`CANDIDATE_READY`; only the last can supply a validated replacement. Source-check
+time, latest admitted measurement timestamp, candidate generation and committed
+publication acknowledgment are separate facts. `science_changed=false` does not
+mean query provenance or latest missing/withheld status was unchanged. A valid
+stale publication no-op preserves the authenticated newer product and is not an
+acknowledgment that the older candidate was newly published.
+
+Consumer acceptance must cover native array decoding, retained-value age, latest
+nonnumeric status, explicit year/coverage and rollover with an older last-good
+generation. A new build or completed source check must never make old observations
+look current. The optional provisional year-end bundle is outside live ownership;
+its manifest cannot certify complete September 30 coverage or finalized reference
+eligibility. No consumer switch, second live trace or reference policy changes here.
+
 ### Snow-pillow SWE
 
 - Latest GeoJSON is required for the live layer.
