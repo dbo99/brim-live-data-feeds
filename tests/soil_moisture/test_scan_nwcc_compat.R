@@ -2,6 +2,7 @@
 # Optional offline regression: append paths to a saved report and fetchSCAN.R.
 # No production builder is sourced, and every transport call is a fixture.
 source("scripts/soil_moisture/scan_nwcc_compat.R")
+source("scripts/soil_moisture/scan_metered_http.R")
 passed <- 0L
 test <- function(name, code) {
   force(code)
@@ -151,8 +152,18 @@ eval(quote(fetchSCAN <- function(site.code, year, report, timeseries, tz) {
 }), upstream)
 original_get <- upstream$.get_SCAN_data
 original_fetch <- upstream$fetchSCAN
-compat <- pt_scan_make_fetch_compat(upstream$fetchSCAN)
-test("private parser boundary: unchanged transport and one call, no fallback", {
+make_compat <- function(fetch = upstream$fetchSCAN) {
+  http <- pt_scan_make_http(20, 2^21, 2^24, 60, 10,
+    backend = function(method, url, form, timeout, read_limit, consume, check) {
+      upstream$calls[[length(upstream$calls) + 1L]] <- form
+      consume(charToRaw(upstream$response))
+      list(status = 200L, complete = TRUE)
+    })
+  pt_scan_make_fetch_compat(http, c(2218, 2149), fetch,
+    site_metadata = function(ids) data.frame(Site = ids))
+}
+compat <- make_compat()
+test("private parser/transport boundary: exact request, no namespace mutation or fallback", {
   stopifnot(length(upstream$calls) == 0L)
   out <- compat(2218, 2026)
   stopifnot(identical(out$SMS, pt_scan_parse_nwcc_report(report())), out$tz == "UTC",
@@ -161,8 +172,7 @@ test("private parser boundary: unchanged transport and one call, no fallback", {
               timeseries = "Daily", format = "copy", sitenum = 2218, interval = "YEAR", year = 2026, month = "CY")),
             identical(upstream$.get_SCAN_data, original_get), identical(upstream$fetchSCAN, original_fetch))
   private_fetch <- environment(compat)$fetch_scan
-  stopifnot(identical(body(private_fetch), body(original_fetch)),
-            identical(body(environment(private_fetch)$.get_SCAN_data)[[2L]], body(original_get)[[2L]]))
+  stopifnot(identical(body(private_fetch), body(original_fetch)))
   upstream$response <- "Access denied"
   stopifnot(inherits(try(compat(2218, 2026), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
   stopifnot(inherits(try(compat(2218, 2026, timeseries = "Hourly"), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
@@ -170,12 +180,12 @@ test("private parser boundary: unchanged transport and one call, no fallback", {
   unsupported$.get_SCAN_data <- function(req) stop("must never execute")
   unsupported$fetchSCAN <- upstream$fetchSCAN
   environment(unsupported$fetchSCAN) <- unsupported
-  stopifnot(inherits(try(pt_scan_make_fetch_compat(unsupported$fetchSCAN), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
+  stopifnot(inherits(try(make_compat(unsupported$fetchSCAN), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
   # A qualified call would bypass the private environment and must fail closed.
   eval(quote(fetchSCAN <- function() soilDB:::.get_SCAN_data(list())), unsupported)
   unsupported$.get_SCAN_data <- original_get
   environment(unsupported$.get_SCAN_data) <- unsupported
-  stopifnot(inherits(try(pt_scan_make_fetch_compat(unsupported$fetchSCAN), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
+  stopifnot(inherits(try(make_compat(unsupported$fetchSCAN), silent = TRUE), "try-error"), length(upstream$calls) == 2L)
 })
 
 # Extract only pure definitions and chosen transformation expressions. Never
@@ -192,7 +202,7 @@ named_expression <- function(name) {
 }
 test("builder helper path in repository and isolated Actions working directory", local({
   helper_source <- Filter(function(expr) is.call(expr) && identical(expr[[1L]], as.name("source")), as.list(builder))
-  stopifnot(length(helper_source) == 1L)
+  stopifnot(length(helper_source) == 2L)
   original_dir <- getwd()
   original_workspace <- Sys.getenv("GITHUB_WORKSPACE", unset = NA_character_)
   on.exit({
@@ -219,18 +229,19 @@ fixture$scan_canary_site_codes <- c(2218L, 2149L)
 fixture$fetch_years <- c(2025L, 2026L)
 fixture$scan_canary_max_requests <- 2L
 fixture$scan_canary_min_successes <- 1L
-test("builder retries, diagnostics, pair budget and fail-closed canary", {
+test("builder fatal propagation, pair budget and good canary", {
   upstream$calls <- list()
   upstream$response <- "Access denied"
   fixture$scan_fetch_diag_rows <- list()
+  fixture$pt_scan_fetch <- make_compat()
   failure <- suppressMessages(tryCatch(fixture$pt_run_scan_canary(), error = identity))
-  stopifnot(inherits(failure, "error"), grepl("previous hosted feed is preserved", conditionMessage(failure)),
-            length(upstream$calls) == 6L, length(fixture$scan_fetch_diag_rows) == 2L,
-            all(vapply(fixture$scan_fetch_diag_rows, function(x) x$attempts == 3L && x$rows == 0L && x$status == "empty_or_failed", logical(1))))
+  stopifnot(inherits(failure, "scan_integrity_error"),
+            length(upstream$calls) == 1L, length(fixture$scan_fetch_diag_rows) == 0L)
   pairs <- fixture$pt_scan_canary_pairs()
   stopifnot(identical(pairs$site_code, c(2218L, 2218L)), identical(pairs$year, c(2026L, 2025L)))
   upstream$calls <- list()
   upstream$response <- report()
+  fixture$pt_scan_fetch <- make_compat()
   fixture$scan_fetch_diag_rows <- list()
   out <- suppressMessages(fixture$pt_run_scan_canary())
   stopifnot(out$ok, nrow(out$pairs) == 1L, nrow(out$rows) == 4L,
@@ -255,14 +266,26 @@ test("offline builder current-WY/duplicate-depth/zero/date/age fixture", {
   out <- fixture$sms_daily
   stopifnot(nrow(out) == 2L, identical(out$sms_pct, c(0, 30)),
             identical(out$depth_in, c(2L, 8L)),
-            # Existing summarise() counts its already-collapsed sensor_id, so
-            # sensor_count is 1 even for this two-sensor mean. Preserve that
-            # pre-existing metadata behavior in this parsing-only repair.
-            identical(out$sensor_count, c(1L, 1L)),
+            identical(out$sensor_count, c(1L, 2L)),
             out$sensor_id[2L] == "SMS.I_8, SMS.I-2_8" || out$sensor_id[2L] == "SMS.I-2_8, SMS.I_8",
             all(out$obs_date == as.Date("2026-10-01")), all(out$water_year == 2027L),
             all(out$water_day == 1L), all(out$obs_age_days == 4L),
             all(out$obs_datetime_utc == "2026-10-01T20:00:00Z"))
+})
+
+test("sensor counts use original distinct members including existing missing-ID semantics", {
+  original <- fixture$sms_clean
+  for (ids in list(c("one", "one"), c("one", "two"), c("one", NA_character_),
+                   c(NA_character_, NA_character_))) {
+    fixture$sms_clean <- original[rep(1L, 2L), ]
+    fixture$sms_clean$sensor_id <- ids
+    fixture$sms_clean$sms_pct <- c(20, 40)
+    eval(named_expression("sms_daily"), fixture)
+    stopifnot(fixture$sms_daily$sms_pct == 30,
+              fixture$sms_daily$sensor_count == dplyr::n_distinct(ids),
+              fixture$sms_daily$sensor_id == paste(sort(unique(ids)), collapse = ", "))
+  }
+  fixture$sms_clean <- original
 })
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -285,11 +308,8 @@ if (length(args)) {
       if (any(vapply(c("fetchSCAN", ".get_SCAN_data", ".make_SCAN_req", ".formatSCAN_soil_sensor_suites"),
                      function(name) assignment(expr, name), logical(1)))) eval(expr, saved)
     }
-    saved_fetch <- pt_scan_make_fetch_compat(saved$fetchSCAN)
-    patched <- environment(environment(saved_fetch)$fetch_scan)$.get_SCAN_data
     old_statements <- as.list(body(saved$.get_SCAN_data))
     start <- which(vapply(old_statements, identical, logical(1), quote(tc <- textConnection(r.content))))
-    stopifnot(identical(as.list(body(patched))[seq_len(start - 1L)], old_statements[seq_len(start - 1L)]))
     # Execute only the saved source's old decoding tail, aligned to the known
     # fixture line, and then its unchanged formatter. No transport can execute.
     legacy_tail <- as.call(c(list(as.name("{")), old_statements[start:length(old_statements)]))

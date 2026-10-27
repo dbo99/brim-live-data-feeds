@@ -1188,7 +1188,7 @@ private implementation is not copied into this public repository.
 
 ## Nonproduction workflows
 
-The manual-only SNOTEL SMS synthetic saved replay workflow
+The manual-only **Build SNOTEL SMS synthetic replay (QA)** workflow
 `qa-snotel-sms-saved-replay.yml` calls
 `scripts/soil_moisture/snotel_saved_replay.py` with a pinned, invented seven-sensor
 fixture and fixed clock. It performs no provider acquisition or publication.
@@ -1205,6 +1205,61 @@ publish repository data.
 
 These workflows must not be described as additional product families.
 
+### SNOTEL SMS current-WY snapshot (inactive, offline implementation)
+
+`scripts/soil_moisture/snotel_snapshot.py` implements the additive, versioned
+`snotel-sms-current-wy-1` saved-input product. Its future closed ownership is
+`docs/data/snotel-sms/index.json` plus `docs/data/snotel-sms/current-wy.json`.
+No product files, real catalog or values are installed by the offline gate.
+The source-specific `scripts/snotel_sms_publisher.py` supplies pure validation,
+fresh-main reconciliation and staged-validation callbacks for the unchanged
+shared publisher. The local Phase B candidate adds a separately gated operating
+entry; no provider run or publication is enabled by source implementation.
+
+The planner pins one fixed UTC−08 source calendar and requests only October 1
+through the latest completed day in that same ending-year WY. October 1 can
+return `NO_ELIGIBLE_INTERVAL` with zero requests. It has no previous-WY catch-up,
+overlap, fallback or annual-maintenance acquisition option. Complete 365/366-day
+saved-input fixtures test serializer capacity separately; publication callbacks
+reject their use as routine prior-year refreshes at rollover.
+
+Caller-pinned metadata and membership must describe exactly 32 station groups
+and 98 SMS sensors. Saved captures are validated station at a time through the
+unchanged native adapter and shared scientific reducer. Any required station
+failure holds the whole replacement. Successful empty, omitted, missing and
+withheld outcomes remain distinct from numeric observations. Both files together
+must fit 32 MiB without truncation; legacy replay limits are unchanged.
+
+See [native consumer semantics](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-wy-snapshot-inactive)
+and [recovery/maintenance](SOIL_MOISTURE_OPERATIONS.md#current-wy-snotel-replacement-offline-phase-a).
+Source integration, exact-catalog disclosure, consumer support, real acquisition
+budgets and resource clearance, hosted execution and publication remain separate
+approval gates. The existing manual synthetic QA behavior is unchanged; its display title is
+**Build SNOTEL SMS synthetic replay (QA)**.
+
+The proposed `.github/workflows/build-snotel-sms-current-wy.yml` has only
+`workflow_dispatch`, with acquisition/publication false by default. Its
+`prepare-candidate` job invokes `soil_network_workflow.py snotel-prepare` against
+the exact checked-out source commit and a separately release-approved, pinned
+public catalog. It reads prior product blobs from that explicit commit; absence
+requires explicit bootstrap and a partial/corrupt pair holds. No real catalog is
+included. At most 32 serial station requests use the unchanged transport, each
+with one attempt, zero retries/redirects, 1 MiB body-read allowance and 60 seconds
+acquisition; aggregate ceilings are 32 MiB and 1,920 seconds. A station failure or
+Retry-After holds the whole candidate. Only the two validated product files and
+shared integrity metadata can become an artifact. The separate main-only writer
+uses the existing publisher queue and owns no other feed paths.
+
+`scripts/soil_moisture/snotel_year_end.py` is a manual no-provider export helper.
+It verifies an explicitly selected committed generation for an ended WY and
+copies the original two files plus `provisional-export.json` to a separately
+authorized private destination. Status is **PROVISIONAL — NOT FINALIZED**;
+missing/withheld coverage and unfinished tail remain truthful. It does not query
+an old year, calculate references, choose current main, or run at rollover.
+Real export location/permission and any public historical placement are separate
+decisions. See the Phase B procedure in
+[soil operations](SOIL_MOISTURE_OPERATIONS.md#phase-b-operating-candidate-and-provisional-export).
+
 ## Change triggers
 
 Update this inventory when any of the following changes:
@@ -1216,3 +1271,10 @@ Update this inventory when any of the following changes:
 - an observed product class changes from active to compatibility/deprecated;
 - an empty-result or last-known-good guard changes;
 - a material payload or runtime trend changes operational planning.
+
+### SCAN/SNOTEL synthetic hosted qualification
+
+The selected-source integration and nonpublishing Linux test route are documented
+in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does not
+activate acquisition/publication, release real SNOTEL catalog data, or resolve
+the held history joins. Production and consumer readiness remain separate.
