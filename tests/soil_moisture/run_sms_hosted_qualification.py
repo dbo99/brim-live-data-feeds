@@ -196,6 +196,34 @@ def dcf(text):
         else:key,value=line.split(':',1);row[key]=value.strip()
     return records
 
+def apt_download_url(planned_url, mirror_text=None):
+    """Resolve only the supported runner mirror-file transport to official URLs."""
+    target=urllib.parse.urlsplit(planned_url)
+    assert not target.query and not target.fragment and not target.username and not target.password
+    hosts={'archive.ubuntu.com','security.ubuntu.com','azure.archive.ubuntu.com'}
+    if target.scheme in ('http','https'):
+        assert target.hostname in hosts and target.port is None
+        assert target.path.startswith('/ubuntu/pool/') and '..' not in urllib.parse.unquote(target.path).split('/')
+        return planned_url
+    assert target.scheme=='mirror+file' and not target.netloc
+    prefix='/etc/apt/apt-mirrors.txt/'
+    assert target.path.startswith(prefix)
+    relative=target.path[len(prefix):]
+    assert relative.startswith('pool/') and '..' not in urllib.parse.unquote(relative).split('/')
+    assert mirror_text is not None and len(mirror_text.encode())<=65536
+    choices=[]
+    for line in mirror_text.splitlines():
+        line=line.split('#',1)[0].strip()
+        if not line:continue
+        match=re.fullmatch(r'(https?://(?:archive\.ubuntu\.com|security\.ubuntu\.com|azure\.archive\.ubuntu\.com)/ubuntu/?)\s+priority:([123])',line)
+        assert match,'Unsupported APT mirror entry'
+        choices.append((int(match[2]),match[1].rstrip('/')+'/'))
+    assert len(choices)==3 and {x[0] for x in choices}=={1,2,3}
+    assert {urllib.parse.urlsplit(x[1]).hostname for x in choices}==hosts
+    base=min(choices)[1]
+    assert base=='https://archive.ubuntu.com/ubuntu/','Expected existing Canonical-first mirror configuration'
+    return base+relative
+
 def provision(out):
     """Download exact required bodies into runner scratch before installation.
 
@@ -237,11 +265,21 @@ def provision(out):
         return path
     apt=['libcurl4-openssl-dev','libssl-dev','libxml2-dev']
     plan=subprocess.check_output(['sudo','apt-get','--print-uris','--yes','--download-only','install',*apt],text=True,timeout=45)
+    assert len(plan.encode())<=65536,'APT URI plan exceeded bounded diagnostic size'
+    dump(out/'APT_PLAN.json',dict(plan=plan,requested_packages=apt))
     archives=out/'apt-archives';archives.mkdir();(archives/'partial').mkdir()
+    routes=[]
     for line in plan.splitlines():
         if not line.startswith("'"):continue
         parts=shlex.split(line);assert len(parts)==4;url,name,size,digest=parts;assert Path(name).name==name
-        download(url,archives/name,128*1024**2,int(size),digest)
+        mirror_text=None
+        if urllib.parse.urlsplit(url).scheme=='mirror+file':
+            mirror=Path('/etc/apt/apt-mirrors.txt');assert mirror.is_file() and not mirror.is_symlink() and mirror.stat().st_size<=65536
+            mirror_text=mirror.read_text()
+        resolved=apt_download_url(url,mirror_text)
+        routes.append(dict(planned_url=url,resolved_url=resolved,file=name,bytes=int(size),catalog_digest=digest))
+        with (out/'APT_ROUTES.jsonl').open('a') as f:f.write(json.dumps(routes[-1])+'\n')
+        download(resolved,archives/name,128*1024**2,int(size),digest)
     dump(out/'APT_DOWNLOADS.json',dict(metadata='Existing platform signed APT indexes reused; no index update traffic',packages=apt,planned_uris=[r for r in records]))
     command(['sudo','apt-get','--yes','--no-download','-o','Dir::Cache::archives='+str(archives),'install',*apt],out,'apt-install',timeout=180)
     r=shutil.which('Rscript');assert r
@@ -287,10 +325,12 @@ def provision(out):
 
 def summarize(root):
     artifacts=root/'artifacts';artifacts.mkdir(exist_ok=False)
-    mapping={'tests/SUMMARY.json':'COMPONENT_SUMMARY.json','tests/SCAN.json':'SCAN.json','tests/SNOTEL.json':'SNOTEL.json','tests/EGRESS.json':'EGRESS.json','tests/RUNTIME.json':'RUNTIME.json','tests/COMPILER.json':'COMPILER.json','tests/SOURCE.json':'SOURCE.json','tests/LOOPBACK.json':'LOOPBACK.json','tests/CONTROLS.json':'CONTROLS.json','setup/RESOLVED_RUNTIME_LOCK.json':'DEPENDENCIES.json','setup/APT_DOWNLOADS.json':'APT_DOWNLOADS.json','setup/DOWNLOAD_PROGRESS.json':'DOWNLOAD_PROGRESS.json','tests/tmp/legacy-replay/summary/SUMMARY.json':'LEGACY_REPLAY.json'}
+    mapping={'tests/SUMMARY.json':'COMPONENT_SUMMARY.json','tests/SCAN.json':'SCAN.json','tests/SNOTEL.json':'SNOTEL.json','tests/EGRESS.json':'EGRESS.json','tests/RUNTIME.json':'RUNTIME.json','tests/COMPILER.json':'COMPILER.json','tests/SOURCE.json':'SOURCE.json','tests/LOOPBACK.json':'LOOPBACK.json','tests/CONTROLS.json':'CONTROLS.json','setup/RESOLVED_RUNTIME_LOCK.json':'DEPENDENCIES.json','setup/APT_PLAN.json':'APT_PLAN.json','setup/APT_DOWNLOADS.json':'APT_DOWNLOADS.json','setup/DOWNLOAD_PROGRESS.json':'DOWNLOAD_PROGRESS.json','tests/tmp/legacy-replay/summary/SUMMARY.json':'LEGACY_REPLAY.json'}
     for src,dest in mapping.items():
         p=root/src
         if p.exists():shutil.copyfile(p,artifacts/dest)
+    routes=root/'setup/APT_ROUTES.jsonl'
+    if routes.exists():dump(artifacts/'APT_ROUTES.json',[json.loads(x) for x in routes.read_text().splitlines()])
     downloads=root/'setup/DOWNLOADS.jsonl'
     if downloads.exists():dump(artifacts/'DOWNLOADS.json',[json.loads(x) for x in downloads.read_text().splitlines()])
     monitors={}
