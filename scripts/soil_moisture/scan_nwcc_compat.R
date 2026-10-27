@@ -1,5 +1,5 @@
-# NWCC SMS/Daily decoding only. Transport, metadata and sensor formatting stay
-# in soilDB; the builder continues to own retries, canaries and publication QA.
+# Scoped NWCC SMS/Daily transport/parser seam. Installed soilDB still owns
+# request construction, cached station metadata and sensor formatting.
 pt_scan_parse_nwcc_report <- function(body, site_code = NULL, year = NULL) {
   fail <- function(reason) stop("SCAN NWCC parse: ", reason, call. = FALSE)
   # A single station/calendar-year daily report is small. Bound both the input
@@ -97,7 +97,8 @@ pt_scan_parse_nwcc_report <- function(body, site_code = NULL, year = NULL) {
   x
 }
 
-pt_scan_make_fetch_compat <- function(fetch_scan = soilDB::fetchSCAN) {
+pt_scan_make_fetch_compat <- function(http, authorized_sites, fetch_scan = soilDB::fetchSCAN,
+                                      site_metadata = soilDB::SCAN_site_metadata) {
   unsupported <- function() stop(
     "SCAN NWCC compatibility: unsupported soilDB parsing boundary; review before fetching",
     call. = FALSE
@@ -115,9 +116,8 @@ pt_scan_make_fetch_compat <- function(fetch_scan = soilDB::fetchSCAN) {
       !identical(environment(get_data), ns) ||
       calls == 0L || calls != sum(all.names(body(fetch_scan)) == ".get_SCAN_data")) unsupported()
 
-  # Copy closures into a private environment, never patch the package namespace.
-  # Retain the installed helper's transport/status/content handling verbatim and
-  # replace only its fixed-skip parsing tail. Unknown layouts fail before I/O.
+  # Authenticate the supported installed boundary before replacing its catches
+  # and transport. Never mutate installed bindings or silently use a new layout.
   statements <- as.list(body(get_data))
   boundary <- which(vapply(statements, identical, logical(1), quote(tc <- textConnection(r.content))))
   if (length(boundary) != 1L || boundary < 2L ||
@@ -135,19 +135,58 @@ pt_scan_make_fetch_compat <- function(fetch_scan = soilDB::fetchSCAN) {
     if (!any(vapply(statements, identical, logical(1), normalization))) unsupported()
   }
 
+  if (!is.list(http) || !all(vapply(http[c("request", "check", "fail")], is.function, logical(1)))) unsupported()
+  valid_ids <- function(x) length(x) > 0L && is.numeric(x) && !anyNA(x) &&
+    all(is.finite(x) & x > 0 & x == floor(x)) && !anyDuplicated(x)
+  if (!valid_ids(authorized_sites)) http$fail("SCAN authorized station set is empty or invalid")
+  metadata <- site_metadata(authorized_sites)
+  if (!is.data.frame(metadata) || !identical(as.character(metadata$Site), as.character(authorized_sites))) {
+    http$fail("SCAN cached metadata does not exactly match authorized stations")
+  }
   private <- new.env(parent = ns)
-  private$pt_scan_parse_nwcc_report <- pt_scan_parse_nwcc_report
-  body(get_data) <- as.call(c(statements[seq_len(boundary - 1L)], list(quote(
-    pt_scan_parse_nwcc_report(r.content, site_code = req$sitenum, year = req$year)
-  ))))
-  environment(get_data) <- private
-  private$.get_SCAN_data <- get_data
+  fault <- NULL; requested_sites <- NULL; requested_years <- NULL
+  private$SCAN_site_metadata <- function(site.code) {
+    metadata[match(site.code, metadata$Site), , drop = FALSE]
+  }
+  private$.get_SCAN_data <- function(req) {
+    if (!is.null(fault)) stop(fault)
+    tryCatch({
+      http$check()
+      if (!is.list(req) || !identical(names(req), c("intervalType", "report", "timeseries",
+          "format", "sitenum", "interval", "year", "month")) ||
+          !identical(unname(vapply(req[c("intervalType", "report", "timeseries", "format", "interval", "month")], as.character, character(1))),
+                     c(" View Historic ", "SMS", "Daily", "copy", "YEAR", "CY")) ||
+          length(req$sitenum) != 1L || !as.character(req$sitenum) %in% as.character(requested_sites) ||
+          length(req$year) != 1L || !as.character(req$year) %in% as.character(requested_years)) {
+        http$fail("SCAN installed request escaped its exact station/year scope")
+      }
+      response <- http$request("POST", "https://wcc.sc.egov.usda.gov/nwcc/view", form = req)
+      tryCatch(pt_scan_parse_nwcc_report(response$body, site_code = req$sitenum, year = req$year),
+               error = function(e) http$fail(conditionMessage(e)))
+    }, error = function(e) { fault <<- e; stop(e) })
+  }
   environment(fetch_scan) <- private
   # This adapter is intentionally confined to the builder's SMS/Daily call.
   function(site.code, year, report = "SMS", timeseries = "Daily", tz = "UTC") {
-    if (!identical(report, "SMS") || !identical(timeseries, "Daily")) {
-      stop("SCAN NWCC compatibility supports SMS/Daily only", call. = FALSE)
+    http$check()
+    if (!valid_ids(site.code) || any(!site.code %in% authorized_sites) ||
+        !valid_ids(year) || any(year < 1800 | year > 9999)) {
+      http$fail("SCAN requested stations/years are empty, invalid or outside the authorized set")
     }
-    fetch_scan(site.code = site.code, year = year, report = report, timeseries = timeseries, tz = tz)
+    if (!identical(report, "SMS") || !identical(timeseries, "Daily")) {
+      http$fail("SCAN NWCC compatibility supports SMS/Daily only")
+    }
+    requested_sites <<- site.code; requested_years <<- year; fault <<- NULL
+    value <- tryCatch(fetch_scan(site.code = site.code, year = year, report = report, timeseries = timeseries, tz = tz),
+      error = function(e) {
+        if (!is.null(fault)) stop(fault)
+        if (pt_scan_fatal(e)) stop(e)
+        http$fail(paste("SCAN installed formatter failed:", conditionMessage(e)))
+      })
+    # Installed fetchSCAN catches helper failures. Preserve their original type
+    # across that catch and prevent another request after the first failure.
+    if (!is.null(fault)) stop(fault)
+    http$check()
+    value
   }
 }

@@ -1,15 +1,20 @@
-name: SNOTEL SMS synthetic saved replay
+name: SCAN and SNOTEL SMS synthetic hosted qualification
 
 'on':
   workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact reviewed integration commit (synthetic tests only)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  offline-replay:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  synthetic-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Check out the dispatched source
         uses: actions/checkout@v6
@@ -18,20 +23,55 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Replay the pinned synthetic fixture twice
+      - name: Verify branch and source; refuse workflow reruns
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/codex/sms-integration-hosted-qa-20261026
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "${RUNNER_TEMP}/sms-hosted-qa"
+
+      - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
+        timeout-minutes: 2
+        run: sudo bash scripts/configure_apt_mirror_order.sh
+
+      - name: Set up R
+        timeout-minutes: 12
+        uses: ./.github/actions/setup-r-hardened
+
+      - name: Provision pinned packages with a cumulative body budget
+        timeout-minutes: 30
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: >-
-          python3 -B scripts/soil_moisture/snotel_saved_replay.py
-          --output "${RUNNER_TEMP}/snotel-sms-synthetic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        run: |
+          python3 -B tests/soil_moisture/run_sms_hosted_qualification.py supervise \
+            --output "${RUNNER_TEMP}/sms-hosted-qa/setup-monitor" \
+            --seconds 1680 --trigger 3221225472 --ceiling 4294967296 -- \
+            python3 -B tests/soil_moisture/run_sms_hosted_qualification.py provision \
+              --output "${RUNNER_TEMP}/sms-hosted-qa/setup"
 
-      - name: Retain only the synthetic validation summary
-        if: ${{ success() }}
+      - name: Qualify native SCAN then NEW SNOTEL snapshot with external egress denied
+        timeout-minutes: 12
+        run: bash tests/soil_moisture/run_sms_hosted_qualification.sh
+
+      - name: Assemble bounded synthetic review evidence
+        if: ${{ always() }}
+        timeout-minutes: 2
+        run: |
+          python3 -B tests/soil_moisture/run_sms_hosted_qualification.py summarize \
+            --output "${RUNNER_TEMP}/sms-hosted-qa"
+
+      - name: Retain only synthetic qualification receipts
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          name: sms-hosted-qa-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 14
           if-no-files-found: error
           path: |
-            ${{ runner.temp }}/snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}/summary/SUMMARY.json
-            ${{ runner.temp }}/snotel-sms-synthetic-${{ github.run_id }}-${{ github.run_attempt }}/summary/MANIFEST.json
+            ${{ runner.temp }}/sms-hosted-qa/artifacts/*.json
+            ${{ runner.temp }}/sms-hosted-qa/artifacts/DIAGNOSTICS.txt

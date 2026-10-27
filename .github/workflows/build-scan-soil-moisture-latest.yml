@@ -17,12 +17,66 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      SCAN_LIVE_APPROVAL_JSON: ${{ vars.SCAN_LIVE_APPROVAL_JSON }}
+      SCAN_HTTP_MAX_REQUESTS: ${{ vars.SCAN_HTTP_MAX_REQUESTS }}
+      SCAN_HTTP_RESPONSE_BYTES: ${{ vars.SCAN_HTTP_RESPONSE_BYTES }}
+      SCAN_HTTP_TOTAL_BYTES: ${{ vars.SCAN_HTTP_TOTAL_BYTES }}
+      SCAN_HTTP_CAMPAIGN_SECONDS: ${{ vars.SCAN_HTTP_CAMPAIGN_SECONDS }}
+      SCAN_FETCH_TIMEOUT_SEC: ${{ vars.SCAN_FETCH_TIMEOUT_SEC }}
+
     steps:
-      - name: Check out latest branch tip
+      - name: Check out source event
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require exact future approval before any provider check
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cat > "${RUNNER_TEMP}/scan-approval-guard.py" <<'PYGUARD'
+          # BEGIN SCAN_APPROVAL_GUARD
+          import datetime, hashlib, json, math, os, re
+          from pathlib import Path
+          names = ("SCAN_HTTP_MAX_REQUESTS", "SCAN_HTTP_RESPONSE_BYTES", "SCAN_HTTP_TOTAL_BYTES", "SCAN_HTTP_CAMPAIGN_SECONDS", "SCAN_FETCH_TIMEOUT_SEC")
+          receipt = {"source_sha": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "REFUSED", "provider_invoked_by_guard": False}
+          try:
+              raw = os.environ.get("SCAN_LIVE_APPROVAL_JSON", "")
+              grant = json.loads(raw)
+              assert set(grant) == {"approved", "approval_id", "source_sha", "run_number", "not_before_utc", "not_after_utc", "budgets"}
+              assert grant["approved"] is True and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", grant["approval_id"])
+              assert os.environ["GITHUB_RUN_ATTEMPT"] == "1" and os.environ["GITHUB_REF"] == "refs/heads/main"
+              assert re.fullmatch(r"[0-9a-f]{40}", receipt["source_sha"]) and grant["source_sha"] == receipt["source_sha"]
+              assert type(grant["run_number"]) is int and grant["run_number"] == int(os.environ["GITHUB_RUN_NUMBER"])
+              def stamp(value):
+                  assert re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value)
+                  return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+              start, end = stamp(grant["not_before_utc"]), stamp(grant["not_after_utc"])
+              now = datetime.datetime.now(datetime.timezone.utc)
+              assert start <= now < end and 0 < (end-start).total_seconds() <= 86400
+              assert set(grant["budgets"]) == set(names)
+              values = {}
+              for name in names:
+                  value = float(os.environ.get(name, ""))
+                  assert math.isfinite(value) and value > 0 and type(grant["budgets"][name]) in (int,float) and value == grant["budgets"][name]
+                  assert (value <= 2147483647 and value == int(value)) if name in names[:3] else value <= 86400
+                  values[name] = value
+              assert values["SCAN_HTTP_CAMPAIGN_SECONDS"] + 30 < (end-now).total_seconds()
+              assert values["SCAN_FETCH_TIMEOUT_SEC"] <= values["SCAN_HTTP_CAMPAIGN_SECONDS"]
+              receipt.update(status="APPROVED_FOR_THIS_FIRST_ATTEMPT", approval_sha256=hashlib.sha256(raw.encode()).hexdigest(), budgets=values, run_number=grant["run_number"], not_after_utc=grant["not_after_utc"])
+          except Exception:
+              raise SystemExit("SCAN has no valid first-attempt, source/run-bound finite approval")
+          finally:
+              root = Path(os.environ["RUNNER_TEMP"])/"scan-control"
+              root.mkdir(exist_ok=True)
+              (root/("approval-"+os.environ.get("SCAN_GUARD_PHASE","initial")+".json")).write_text(json.dumps(receipt,sort_keys=True)+"\n")
+          # END SCAN_APPROVAL_GUARD
+          PYGUARD
+          python3 "${RUNNER_TEMP}/scan-approval-guard.py"
 
       - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
         shell: bash
@@ -63,6 +117,11 @@ jobs:
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/scan-soil-moisture-candidate/candidate"
 
+      - name: Recheck the same approval immediately before acquisition
+        env:
+          SCAN_GUARD_PHASE: pre-acquisition
+        run: python3 "${RUNNER_TEMP}/scan-approval-guard.py"
+
       - name: Build SCAN soil moisture latest feed
         shell: Rscript {0}
         working-directory: ${{ runner.temp }}/scan-soil-moisture-candidate/candidate
@@ -75,10 +134,21 @@ jobs:
           SCAN_NWCC_PREFLIGHT_TIMEOUT_SEC: "20"
           SCAN_FETCH_RETRIES: "3"
           SCAN_FETCH_RETRY_PAUSE_SEC: "6"
-          SCAN_FETCH_TIMEOUT_SEC: "60"
           SCAN_SMS_REQUEST_PAUSE_SEC: "0.35"
         run: |
-          source(file.path(Sys.getenv("GITHUB_WORKSPACE"), "scripts/build_scan_soil_moisture_latest.R"))
+          required <- c(soilDB="2.9.2", httr="1.4.9", curl="8.1.0")
+          stopifnot(all(vapply(names(required), function(n) as.character(packageVersion(n)), character(1)) == required))
+          grant <- jsonlite::fromJSON(Sys.getenv("SCAN_LIVE_APPROVAL_JSON"))
+          remaining <- as.numeric(difftime(as.POSIXct(grant$not_after_utc, format="%Y-%m-%dT%H:%M:%SZ", tz="UTC"), Sys.time(), units="secs"))
+          stopifnot(is.finite(remaining), remaining > as.numeric(Sys.getenv("SCAN_HTTP_CAMPAIGN_SECONDS")) + 30)
+          scope <- new.env(parent=globalenv())
+          failure <- tryCatch({
+            source(file.path(Sys.getenv("GITHUB_WORKSPACE"), "scripts/build_scan_soil_moisture_latest.R"), local=scope)
+            NULL
+          }, error=identity)
+          receipt <- list(source_sha=Sys.getenv("GITHUB_SHA"), run_id=Sys.getenv("GITHUB_RUN_ID"), run_attempt=Sys.getenv("GITHUB_RUN_ATTEMPT"), status=if(is.null(failure)) "BUILT" else "FAILED", error_class=if(is.null(failure)) NULL else class(failure)[1], account=if(exists("pt_scan_http",scope,inherits=FALSE)) scope$pt_scan_http$snapshot() else NULL)
+          jsonlite::write_json(receipt, file.path(Sys.getenv("RUNNER_TEMP"), "scan-control", "runtime-account.json"), auto_unbox=TRUE, null="null")
+          if(!is.null(failure)) stop(failure)
 
       - name: Validate and describe SCAN candidate artifact
         shell: bash
@@ -114,6 +184,16 @@ jobs:
           path: ${{ runner.temp }}/scan-soil-moisture-candidate
           if-no-files-found: error
           retention-days: 2
+
+
+      - name: Retain bounded SCAN control and accounting receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: scan-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scan-control/*.json
+          if-no-files-found: warn
+          retention-days: 14
 
   publish-to-main:
     if: ${{ github.ref == 'refs/heads/main' }}

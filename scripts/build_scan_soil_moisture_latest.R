@@ -97,7 +97,8 @@ suppressPackageStartupMessages({
 # its isolated candidate directory with GITHUB_WORKSPACE pointing at source.
 source(file.path(Sys.getenv("GITHUB_WORKSPACE", unset = "."),
                  "scripts/soil_moisture/scan_nwcc_compat.R"))
-pt_scan_fetch <- pt_scan_make_fetch_compat()
+source(file.path(Sys.getenv("GITHUB_WORKSPACE", unset = "."),
+                 "scripts/soil_moisture/scan_metered_http.R"))
 
 # ---- 2. Paths, constants, and switches -------------------------------------
 
@@ -265,10 +266,7 @@ if (is.na(scan_initial_empty_abort_requests) || scan_initial_empty_abort_request
   scan_initial_empty_abort_requests <- 12L
 }
 
-## Apply a longer httr timeout globally. soilDB::fetchSCAN() uses httr/curl
-## under the hood, and this prevents slow-but-working NRCS responses from
-## failing at the default ~10-second connection timeout.
-httr::set_config(httr::timeout(fetch_timeout_sec))
+## Timeouts belong to the scoped metered transport, never global httr state.
 
 ## Keep UTC fields for machine-readable QA, but create Los Angeles display
 ## fields for BRIM user-facing popups, hovers, and summaries.
@@ -655,6 +653,11 @@ message("Current water year: ", current_water_year)
 message("Current WY start date: ", current_wy_start_date)
 message("Fetch years: ", paste(fetch_years, collapse = ", "))
 
+## One explicit finite account covers endpoint, canary, main requests and retries.
+## A roster or historical workflow timeout is not a reviewed physical budget.
+pt_scan_http <- pt_scan_http_from_env()
+pt_scan_fetch <- pt_scan_make_fetch_compat(pt_scan_http, station_index$site_code)
+
 # ---- 5. Read optional historical percentile context -------------------------
 
 percentiles_available <- file.exists(percentiles_csv)
@@ -716,16 +719,12 @@ pt_check_nrcs_endpoint <- function() {
     )
 
     resp <- tryCatch(
-      httr::GET(
-        nrcs_preflight_url,
-        httr::timeout(nrcs_preflight_timeout_sec),
-        httr::user_agent("BRIM-SCAN-live-feed/1.0")
-      ),
-      error = function(e) e
+      pt_scan_http$request("GET", nrcs_preflight_url, timeout = nrcs_preflight_timeout_sec),
+      error = function(e) { if (pt_scan_fatal(e)) stop(e); e }
     )
 
-    if (inherits(resp, "response")) {
-      status <- httr::status_code(resp)
+    if (!inherits(resp, "error")) {
+      status <- resp$status
       if (!is.na(status) && status >= nrcs_preflight_ok_status_min && status <= nrcs_preflight_ok_status_max) {
         message("NRCS/NWCC endpoint reachable; HTTP status ", status, ".")
         return(invisible(TRUE))
@@ -801,6 +800,7 @@ fetch_one_scan_year <- function(site_code, year) {
         }
       ),
       error = function(e) {
+        if (pt_scan_fatal(e)) stop(e)
         last_message <<- conditionMessage(e)
         tibble()
       }
@@ -1034,8 +1034,8 @@ sms_daily <- sms_clean |>
       z <- na.omit(obs_datetime_local)
       if (length(z) == 0) NA_character_ else z[1]
     },
-    sensor_id = paste(sort(unique(sensor_id)), collapse = ", "),
     sensor_count = dplyr::n_distinct(sensor_id),
+    sensor_id = paste(sort(unique(sensor_id)), collapse = ", "),
     .groups = "drop"
   ) |>
   mutate(

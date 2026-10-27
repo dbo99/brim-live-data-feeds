@@ -1,0 +1,151 @@
+name: Build SNOTEL soil moisture current-WY feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      acquire:
+        description: Separately approved real acquisition
+        type: boolean
+        default: false
+      publish:
+        description: Separately approved main publication
+        type: boolean
+        default: false
+      bootstrap:
+        description: Explicit absence of a prior public product
+        type: boolean
+        default: false
+      window_end:
+        description: Approved absolute UTC acquisition-window end (Z)
+        type: string
+        required: false
+
+permissions: {}
+
+jobs:
+  prepare-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      candidate_ready: ${{ steps.prepare.outputs.candidate_ready }}
+      source_sha: ${{ steps.prepare.outputs.source_sha }}
+    steps:
+      - name: Validate explicit modes
+        env:
+          ACQUIRE: ${{ inputs.acquire }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          if [[ "$PUBLISH" == true && "$ACQUIRE" != true ]]; then
+            echo "Publication requires explicit acquisition"; exit 2
+          fi
+          if [[ "$ACQUIRE" == true && "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
+            echo "A rerun cannot replace spent or missing source-attempt state"; exit 2
+          fi
+          if [[ "$ACQUIRE" != true ]]; then echo "DISABLED: zero source requests"; fi
+
+      - name: Check out exact source event
+        if: ${{ inputs.acquire }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare complete bounded current-WY candidate
+        id: prepare
+        if: ${{ inputs.acquire }}
+        shell: bash
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+          WINDOW_END: ${{ inputs.window_end }}
+          CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
+          ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
+          RELEASE_APPROVED: ${{ vars.SNOTEL_SMS_PUBLIC_RELEASE_APPROVED }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git --no-optional-locks rev-parse HEAD)"
+          test "$source_sha" = "$GITHUB_SHA"
+          test "$RELEASE_APPROVED" = true
+          flags=(--acquire --release-approved)
+          if [[ "$PUBLISH" == true ]]; then flags+=(--publish); fi
+          if [[ "$BOOTSTRAP" == true ]]; then flags+=(--bootstrap); fi
+          python3 -B scripts/soil_network_workflow.py snotel-prepare \
+            --repo . --root "$RUNNER_TEMP/snotel-run" \
+            --source-sha "$source_sha" --prior-commit "$source_sha" \
+            --catalog-sha256 "$CATALOG_PIN" --roster-sha256 "$ROSTER_PIN" \
+            --window-end "$WINDOW_END" \
+            --budget-json '{"attempts":32,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920,"finalization_seconds":120}' \
+            "${flags[@]}"
+          python3 -B - <<'PY'
+          import json, os
+          from pathlib import Path
+          r=json.loads((Path(os.environ['RUNNER_TEMP'])/'snotel-run/result.json').read_bytes())
+          ready=r['candidate_ready'] and not r['synthetic'] and r['status']=='CANDIDATE_READY'
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('candidate_ready='+str(ready).lower()+'\nsource_sha='+r['source_commit']+'\n')
+          PY
+
+      - name: Upload only the validated public candidate
+        if: ${{ steps.prepare.outputs.candidate_ready == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: snotel-current-wy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/snotel-run/transfer/candidate/docs/data/snotel-sms/index.json
+            ${{ runner.temp }}/snotel-run/transfer/candidate/docs/data/snotel-sms/current-wy.json
+            ${{ runner.temp }}/snotel-run/transfer/candidate-metadata.json
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    needs: prepare-candidate
+    if: ${{ inputs.acquire && inputs.publish && github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.candidate_ready == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check out candidate source event
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download closed candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: snotel-current-wy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snotel-transfer
+
+      - name: Publish through the unchanged shared owner
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source_sha }}
+          CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
+          ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
+          RELEASE_APPROVED: ${{ vars.SNOTEL_SMS_PUBLIC_RELEASE_APPROVED }}
+        run: |
+          set -euo pipefail
+          test "$(git --no-optional-locks rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test "$RELEASE_APPROVED" = true
+          python3 -B scripts/soil_network_workflow.py snotel-publish \
+            --repo . --transfer "$RUNNER_TEMP/snotel-transfer" \
+            --catalog-sha256 "$CATALOG_PIN" --roster-sha256 "$ROSTER_PIN"
+
+      - name: Authenticate committed delivery independently
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          delivered_commit="$(git --no-optional-locks rev-parse FETCH_HEAD)"
+          python3 -B scripts/soil_network_workflow.py snotel-acknowledge \
+            --repo . --commit "$delivered_commit" \
+            --candidate "$RUNNER_TEMP/snotel-transfer/candidate"
