@@ -200,6 +200,17 @@ named_expression <- function(name) {
   stopifnot(length(matches) == 1L)
   matches[[1L]]
 }
+test("frozen source cutoff preserves default and refuses invalid/current-WY escape", {
+  env <- new.env(parent = globalenv())
+  eval(named_expression("pt_scan_cutoff_date"), env)
+  today <- as.Date("2026-11-10"); start <- as.Date("2026-10-01")
+  stopifnot(env$pt_scan_cutoff_date("", today, start) == today,
+            env$pt_scan_cutoff_date("2026-11-09", today, start) == as.Date("2026-11-09"),
+            env$pt_scan_cutoff_date("2026-10-01", today, start) == start)
+  for (bad in c("2026-11-11", "2026-09-30", "2026-02-30", "2026-1-01", "junk")) {
+    stopifnot(inherits(try(env$pt_scan_cutoff_date(bad, today, start), silent=TRUE), "try-error"))
+  }
+})
 test("builder helper path in repository and isolated Actions working directory", local({
   helper_source <- Filter(function(expr) is.call(expr) && identical(expr[[1L]], as.name("source")), as.list(builder))
   stopifnot(length(helper_source) == 2L)
@@ -247,6 +258,49 @@ test("builder fatal propagation, pair budget and good canary", {
   stopifnot(out$ok, nrow(out$pairs) == 1L, nrow(out$rows) == 4L,
             length(upstream$calls) == 1L, fixture$scan_fetch_diag_rows[[1L]]$attempts == 1L)
 })
+test("actual preflight/canary/main route shares meter and excludes attempted pairs", {
+  env <- new.env(parent = globalenv())
+  for (name in c("pt_record_fetch_diag", "fetch_one_scan_year", "pt_check_nrcs_endpoint",
+                 "pt_scan_canary_pairs", "pt_run_scan_canary", "pt_fetch_scan_grid_with_early_abort")) {
+    eval(named_expression(name), env)
+  }
+  env$fetch_retries <- 3L; env$fetch_retry_pause_sec <- 0; env$request_pause_sec <- 0
+  env$nrcs_preflight_retries <- 3L; env$nrcs_preflight_pause_sec <- 0
+  env$nrcs_preflight_timeout_sec <- 2
+  env$nrcs_preflight_url <- "https://wcc.sc.egov.usda.gov/"
+  env$nrcs_preflight_ok_status_min <- 200L; env$nrcs_preflight_ok_status_max <- 399L
+  env$station_index <- tibble::tibble(site_code = c(2218L, 2149L))
+  env$scan_canary_site_codes <- c(2218L, 2149L); env$fetch_years <- 2026L
+  env$scan_canary_max_requests <- 6L; env$scan_canary_min_successes <- 1L
+  env$scan_initial_empty_abort_requests <- 2L; env$scan_fetch_diag_rows <- list()
+  calls <- list()
+  h <- pt_scan_make_http(10, 2^21, 2^24, 30, 2,
+    backend = function(method, url, form, timeout, read_limit, consume, check) {
+      calls[[length(calls) + 1L]] <<- list(method = method, form = form)
+      # One complete transient POST failure must consume another attempt.
+      if (length(calls) == 2L) {
+        consume(charToRaw("busy")); return(list(status = 503L, complete = TRUE))
+      }
+      bytes <- if (method == "GET") "ok" else
+        gsub("2218", as.character(form$sitenum), report(), fixed = TRUE)
+      consume(charToRaw(bytes)); list(status = 200L, complete = TRUE)
+    })
+  env$pt_scan_http <- h
+  # Synthetic upstream namespace, actual private parser/adapter and builder route.
+  # This is not installed soilDB formatter or native-network proof.
+  env$pt_scan_fetch <- pt_scan_make_fetch_compat(h, env$station_index$site_code,
+    upstream$fetchSCAN, site_metadata = function(ids) data.frame(Site = ids))
+  suppressMessages(env$pt_check_nrcs_endpoint())
+  env$canary <- suppressMessages(env$pt_run_scan_canary())
+  eval(named_expression("fetch_grid"), env)
+  stopifnot(identical(env$fetch_grid$site_code, 2149L))
+  eval(suppressMessages(named_expression("sms_raw")), env)
+  stopifnot(nrow(env$sms_raw) == 8L, h$snapshot()$requests == 4L,
+            length(calls) == 4L, calls[[1L]]$method == "GET",
+            identical(vapply(calls[-1L], function(x) as.integer(x$form$sitenum), integer(1)),
+                      c(2218L, 2218L, 2149L)),
+            env$scan_fetch_diag_rows[[1L]]$attempts == 2L)
+})
 test("offline builder current-WY/duplicate-depth/zero/date/age fixture", {
   raw <- pt_scan_parse_nwcc_report(report())
   # Explicit fixture at soilDB's existing SMS output boundary: original sensor
@@ -259,6 +313,7 @@ test("offline builder current-WY/duplicate-depth/zero/date/age fixture", {
   }))
   fixture$current_wy_start_date <- as.Date("2026-10-01")
   fixture$fetch_end_date <- as.Date("2026-10-05")
+  fixture$feed_build_date_local <- as.Date("2026-10-06")
   fixture$display_timezone <- "America/Los_Angeles"
   fixture$depth_style <- tibble::tibble(depth_in = c(2L, 8L), depth_order = c(1L, 2L))
   eval(named_expression("sms_clean"), fixture)
@@ -269,7 +324,7 @@ test("offline builder current-WY/duplicate-depth/zero/date/age fixture", {
             identical(out$sensor_count, c(1L, 2L)),
             out$sensor_id[2L] == "SMS.I_8, SMS.I-2_8" || out$sensor_id[2L] == "SMS.I-2_8, SMS.I_8",
             all(out$obs_date == as.Date("2026-10-01")), all(out$water_year == 2027L),
-            all(out$water_day == 1L), all(out$obs_age_days == 4L),
+            all(out$water_day == 1L), all(out$obs_age_days == 5L),
             all(out$obs_datetime_utc == "2026-10-01T20:00:00Z"))
 })
 

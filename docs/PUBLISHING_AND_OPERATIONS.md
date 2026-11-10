@@ -778,3 +778,42 @@ Nonproduction validation:
 Rollback/recovery:
 Remaining uncertainty:
 ```
+
+### SCAN finite acquire-only commissioning
+
+The manual boolean `acquire_only` defaults false to preserve existing writer
+semantics. Explicit true skips the entire write-capable publisher job, including
+on main with a successful candidate. Preparation retains read-only permission
+and validates the unchanged five-file artifact. It does not publish or activate
+a workflow. A true input also requires `acquire_only: true` in the exact
+source/run/first-attempt approval; missing, string-valued or mismatched approval
+modes refuse before provider access. Existing approvals without this field mean
+false only. Schedule declarations are not workflow-enablement evidence.
+
+Preparation uses Ubuntu 24.04, the existing R 4.6.1 action and the bounded
+provisioning mode of the existing SMS qualification runner. Its lock selects
+soilDB 2.9.2, httr 1.4.9 and curl 8.1.0; the exact runtime check remains mandatory.
+Dependency body hashes and selected transitive versions are recorded per setup;
+this is not an immutable full transitive environment. Changed production wiring
+still needs a separately authorized hosted proof. No packages are installed by
+source review. Missing supported dependencies fail before acquisition.
+
+Before a real run, approve the exact merged source SHA, one future run number,
+first attempt, current UTC window and complete request/body/time budgets. Verify
+shared-NRCS coordination, provider backoff/incident status and actual workflow
+state immediately before dispatch. The manual `source_cutoff_date` must exactly
+match the grant and be an ISO
+date in the current Pacific water year, no later than today. Acquire-only mode
+requires it. The builder independently checks `SCAN_SOURCE_CUTOFF_DATE` and
+retains only dates through that cutoff; both summaries add `source_cutoff_date`.
+An omitted cutoff preserves the prior startup-date behavior outside acquire-only.
+This declares the approved eligibility ceiling, not evidence that the provider
+has every day available. Actual first/last dates and missing observations remain
+separate. The annual provider response can include dates outside the retained
+current-WY interval.
+
+One finite approval is not standing schedule authority. Recurrence additionally
+requires durable consumed/UNKNOWN accounting, per-window incident/backoff and
+shared-provider admission, health/freshness monitoring, and reviewed renewal
+without reusing a run-number grant. First acquisition, workflow activation,
+publication/readback and recurring operations remain separate approvals.

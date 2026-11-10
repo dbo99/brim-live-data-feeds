@@ -308,7 +308,17 @@ pt_water_day <- function(date) {
 current_water_year <- pt_current_water_year(feed_build_date_local)
 current_wy_start_date <- as.Date(sprintf("%04d-10-01", current_water_year - 1L))
 fetch_start_date <- current_wy_start_date
-fetch_end_date <- feed_build_date_local
+pt_scan_cutoff_date <- function(value, today, wy_start) {
+  if (!nzchar(value)) return(today)
+  parsed <- suppressWarnings(as.Date(value, format = "%Y-%m-%d"))
+  if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value) || is.na(parsed) ||
+      format(parsed, "%Y-%m-%d") != value || parsed < wy_start || parsed > today) {
+    stop("SCAN cutoff must be an exact date in the current WY, no later than today")
+  }
+  parsed
+}
+fetch_end_date <- pt_scan_cutoff_date(Sys.getenv("SCAN_SOURCE_CUTOFF_DATE"),
+                                    feed_build_date_local, current_wy_start_date)
 fetch_years <- sort(unique(lubridate::year(seq(fetch_start_date, fetch_end_date, by = "day"))))
 
 # ---- 3. Depth style ---------------------------------------------------------
@@ -1039,7 +1049,7 @@ sms_daily <- sms_clean |>
     .groups = "drop"
   ) |>
   mutate(
-    obs_age_days = as.integer(fetch_end_date - obs_date)
+    obs_age_days = as.integer(feed_build_date_local - obs_date)
   ) |>
   left_join(depth_style, by = "depth_in") |>
   arrange(site_code, depth_order, depth_in, obs_date)
@@ -1310,6 +1320,7 @@ summary_obj <- list(
   current_wy_trace_rows = nrow(current_wy_trace),
   current_water_year = current_water_year,
   current_wy_start_date = as.character(current_wy_start_date),
+  source_cutoff_date = as.character(fetch_end_date),
   fetch_years = fetch_years,
   percentile_context_available = percentiles_available,
   percentile_rows_input = nrow(percentiles),
@@ -1336,6 +1347,7 @@ trace_summary_obj <- list(
   display_timezone = display_timezone,
   current_water_year = current_water_year,
   current_wy_start_date = as.character(current_wy_start_date),
+  source_cutoff_date = as.character(fetch_end_date),
   trace_rows = nrow(current_wy_trace),
   stations = dplyr::n_distinct(current_wy_trace$site_code),
   depth_counts = as.list(table(current_wy_trace$depth_in, useNA = "ifany")),

@@ -605,6 +605,27 @@ and producer scripts.
 
 ### SCAN soil moisture
 
+The shared three-network soil-moisture interface is the sole application target;
+producer HTML fields do not authorize reactivating a legacy SCAN controller or
+popup. A current-only application projection requires separate consumer work.
+The five-file producer shape is preserved; the two summaries add the optional
+`source_cutoff_date` retained-date ceiling, separate from observed coverage.
+A numeric `sms_pct` proves neither
+source quality nor admission to a shared `Observation`: retain raw evidence
+separately and withhold an admitted display value when provenance, identity,
+source-specific quality or consumer admission is unresolved. This includes
+numeric low-percent readings; no new numeric threshold is defined here.
+
+The existing DAILY formatter preserves agency dates and assigns its documented
+daily timestamp; that timestamp is not a retrieval clock. The producer averages
+same-depth sensors and retains sensor IDs/counts. It preserves zero and drops
+missing values after source parsing; it does not expose a per-value quality flag
+or authenticated per-row retrieval clock. Do not invent either. Generation time,
+source-date coverage and consumer admission remain distinct. All 128 historical
+reference joins remain unverified; neither seven-WY nor nine-WY context may be
+substituted as an accepted current reference. Current-only projection must omit
+unverified context, including prebuilt historical popup fields.
+
 - Latest GeoJSON is required for the live layer.
 - Current-WY trace, depth style, daily percentile, monthly and fallback CSVs
   provide optional context.
