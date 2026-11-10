@@ -782,13 +782,29 @@ Remaining uncertainty:
 ### SCAN finite acquire-only commissioning
 
 The manual boolean `acquire_only` defaults false to preserve existing writer
-semantics. Explicit true skips the entire write-capable publisher job, including
-on main with a successful candidate. Preparation retains read-only permission
-and validates the unchanged five-file artifact. It does not publish or activate
-a workflow. A true input also requires `acquire_only: true` in the exact
-source/run/first-attempt approval; missing, string-valued or mismatched approval
-modes refuse before provider access. Existing approvals without this field mean
-false only. Schedule declarations are not workflow-enablement evidence.
+semantics. True is currently **held before preparation** because no approved,
+durable private candidate/receipt delivery route is configured. A separate
+minimal job fails with a fixed non-sensitive message; it has no checkout, grant
+environment, collector or upload. The preparation job is excluded at job level,
+so its environment, collector output and failure diagnostics cannot become
+public logs in acquire-only mode. Both candidate and `always()` control-receipt
+uploads also explicitly exclude that mode. The publisher remains excluded.
+
+Normal manual false and scheduled publication retain the existing read-only
+preparation, five-file candidate artifact, receipt retention and separate
+write-capable publisher. These are publicly readable Actions surfaces, not
+private custody. The exact source/run/first-attempt/mode approval checks remain
+unchanged: missing, string-valued or mismatched modes still refuse. Existing
+approvals without the mode field mean false only. A valid grant alone cannot
+release the acquire-only custody hold. Schedule declarations do not establish
+workflow enablement or current acquisition authority.
+
+No public summary, candidate hash, ephemeral runner directory or skipped
+publisher proves recoverable private evidence. A future private commissioning
+route needs separately approved durable custody and authenticated recovery;
+otherwise an explicitly reviewed public-disclosure scope or attended local
+private route is a separate decision. This safeguard neither installs such a
+route nor authorizes acquisition, workflow activation or disclosure.
 
 Preparation uses Ubuntu 24.04, the existing R 4.6.1 action and the bounded
 provisioning mode of the existing SMS qualification runner. Its lock selects
