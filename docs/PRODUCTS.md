@@ -497,6 +497,9 @@ ownership.
   elevation in feet.
 - **Time model:** Observation UTC/Pacific, observation date/age, water year and
   feed build time.
+- **Source cutoff:** Both SCAN summaries add `source_cutoff_date`, the validated
+  retained-date ceiling. This is distinct from generation time and observed
+  trace first/last dates; missing source days are not synthesized.
 - **Freshness:** Current status is expressed in product fields and BRIM
   presentation; no formal common manifest threshold exists.
 - **QA/empty policy:** Endpoint preflight, canary requests, retry behavior,
