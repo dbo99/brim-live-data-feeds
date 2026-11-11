@@ -7,8 +7,10 @@ repository.
 ### Finite retained SCAN snapshot publication
 
 `publish-scan-retained-c11.yml` is a one-shot, manual-only bridge for the
-reviewed retained SCAN snapshot. It admits only this workflow's first run and
-first attempt, a main event whose SHA equals the operator's reviewed SHA,
+reviewed retained SCAN snapshot. Its first run failed before publication on an
+ordered-allowlist mismatch and remains spent. The corrected bridge admits only
+this workflow's second run and first attempt, a main event whose SHA equals the
+operator's reviewed SHA,
 and the immutable five-file data-only commit pinned in
 `scripts/scan_retained_candidate.py`. Its deadline is November 12, 2026,
 07:59:59 UTC, with the full publisher-job timeout reserved before admission.
@@ -18,6 +20,8 @@ Preparation executes only trusted event-source code; staging Git objects are
 read as data and never checked out or executed. Exact hashes, existing SCAN
 validation and compatibility against fresh main precede the public artifact.
 Only five approved product files and standard candidate metadata are uploaded.
+Preparation, artifact verification and the actual publisher CLI use the same
+canonical ordered allowlist; set equality alone does not satisfy the metadata contract.
 The metadata source SHA identifies the real Actions event, not original
 acquisition source. Private acquisition/custody provenance stays outside GitHub.
 The original acquisition's build time, dates, zeros, gaps and dated freshness

@@ -21,7 +21,7 @@ env:
 
 jobs:
   prepare-candidate:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 2 && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -59,7 +59,7 @@ jobs:
           retention-days: 2
 
   publish-to-main:
-    if: ${{ success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    if: ${{ success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 2 && github.run_attempt == 1 }}
     needs: prepare-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
