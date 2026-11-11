@@ -22,7 +22,22 @@ on:
 permissions: {}
 
 jobs:
+  refuse-private-acquisition:
+    if: ${{ inputs.acquire_only == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Refuse acquisition without approved private custody
+        shell: bash
+        run: |
+          printf '%s\n' 'SCAN acquire-only held: no approved durable private candidate and receipt custody route.' >&2
+          exit 1
+
   prepare-candidate:
+    # Job-level exclusion prevents grant environment and collector logs as well
+    # as artifact disclosure. Public Actions artifacts are not private custody.
+    if: ${{ inputs.acquire_only != true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -192,6 +207,7 @@ jobs:
             --allowlist docs/data/scan_depth_style.csv
 
       - name: Upload validated SCAN publication candidate
+        if: ${{ success() && inputs.acquire_only != true }}
         uses: actions/upload-artifact@v7
         with:
           name: scan-soil-moisture-candidate-${{ github.run_id }}-${{ github.run_attempt }}
@@ -201,7 +217,7 @@ jobs:
 
 
       - name: Retain bounded SCAN control and accounting receipts
-        if: ${{ always() }}
+        if: ${{ always() && inputs.acquire_only != true }}
         uses: actions/upload-artifact@v7
         with:
           name: scan-control-${{ github.run_id }}-${{ github.run_attempt }}
