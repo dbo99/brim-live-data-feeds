@@ -698,6 +698,16 @@ a separately approved test route and dispatch; neither is implemented here.
 
 ### SCAN/SNOTEL synthetic hosted qualification
 
+The ordinary SCAN writer additionally runs its SCAN-only native compatibility
+and 20-second timeout tests inside a non-root Linux loopback namespace before
+provider admission. Its distinct manual/scheduled finite policies and explicit
+public artifact selection are documented in
+[Publishing and operations](PUBLISHING_AND_OPERATIONS.md#scan-finite-hosted-commissioning-and-inactive-private-mode).
+Preparation uses actions/read for authenticated campaign-history checks and a
+SCAN-specific serial concurrency group; the contents/write publisher retains
+the unchanged shared `brim-live-main-publish` queue. No policy or workflow
+declaration alone establishes hosted or scheduled success.
+
 The selected-source integration and nonpublishing Linux test route are documented
 in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does not
 activate acquisition/publication, release real SNOTEL catalog data, or resolve

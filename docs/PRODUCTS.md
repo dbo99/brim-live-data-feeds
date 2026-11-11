@@ -483,6 +483,10 @@ ownership.
   current-water-year traces and historical context.
 - **Workflow:** [`.github/workflows/build-scan-soil-moisture-latest.yml`](../.github/workflows/build-scan-soil-moisture-latest.yml).
 - **Producer:** [`scripts/build_scan_soil_moisture_latest.R`](../scripts/build_scan_soil_moisture_latest.R).
+- **Hosted entry:** [`scripts/run_scan_operational.R`](../scripts/run_scan_operational.R)
+  calls the unchanged producer only after finite admission and native Linux
+  qualification. Manual and scheduled authority are distinct; a cron expression
+  alone does not authorize retrieval. See the SCAN operations section.
 - **Source:** USDA NRCS AWDB.
 - **Scheduled writer-managed outputs:** Latest GeoJSON, latest summary,
   current-WY trace, trace summary, and depth style.
