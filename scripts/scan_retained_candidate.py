@@ -20,6 +20,13 @@ REPOSITORY = "dbo99/brim-live-data-feeds"
 WORKFLOW = ".github/workflows/publish-scan-retained-c11.yml"
 STAGING_SHA = "ded6d52503aefc7a02f176fb1a15bc1e39d1d87a"
 EXPIRES = datetime(2026, 11, 12, 7, 59, 59, tzinfo=timezone.utc)
+ORDERED_ALLOWLIST = (
+    "docs/data/scan_soil_moisture_latest.geojson",
+    "docs/data/scan_soil_moisture_latest_summary.json",
+    "docs/data/scan_soil_moisture_current_wy_trace.csv",
+    "docs/data/scan_soil_moisture_current_wy_trace_summary.json",
+    "docs/data/scan_depth_style.csv",
+)
 EXPECTED = {
     "docs/data/scan_soil_moisture_latest.geojson": "3e3acecdfdc012acd9ca9e1498985cbaaa60dbbd890a7b1f9924f74faffba409",
     "docs/data/scan_soil_moisture_latest_summary.json": "e777b9b8d9602be119f6266df9099ed76296058d6a6f7059d642d83b2312f4c8",
@@ -47,7 +54,7 @@ def admit(env: dict[str, str], checkout_sha: str, now: datetime) -> str:
     required = {
         "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": REPOSITORY,
         "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
-        "GITHUB_REF_TYPE": "branch", "GITHUB_RUN_NUMBER": "1", "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_REF_TYPE": "branch", "GITHUB_RUN_NUMBER": "2", "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_WORKFLOW_REF": REPOSITORY + "/" + WORKFLOW + "@refs/heads/main",
         "RETAINED_STAGING_SHA": STAGING_SHA,
     }
@@ -176,7 +183,7 @@ def main() -> None:
         main_publisher.prepare_metadata(argparse.Namespace(
             candidate_root=str(artifact / "candidate"), output=str(artifact / "candidate-metadata.json"),
             product_id=scan.PRODUCT_ID, semantic_key_type="feed_build_time_utc", semantic_key=build,
-            source_event_sha=event, allowlist=sorted(EXPECTED), owned_root=None))
+            source_event_sha=event, allowlist=ORDERED_ALLOWLIST, owned_root=None))
     else:
         require(not artifact.is_symlink() and set(x.name for x in artifact.iterdir()) == {"candidate", "candidate-metadata.json"}, "artifact inventory")
         verify_candidate(artifact / "candidate")
@@ -184,7 +191,7 @@ def main() -> None:
         require(metadata.is_file() and not metadata.is_symlink() and metadata.stat().st_size < 16384, "metadata file")
         main_publisher.validate_candidate_metadata(
             root=artifact / "candidate", metadata_path=metadata,
-            product_id=scan.PRODUCT_ID, allowlist=sorted(EXPECTED), expected_source_sha=event)
+            product_id=scan.PRODUCT_ID, allowlist=ORDERED_ALLOWLIST, expected_source_sha=event)
     print("Verified the pinned five-file public snapshot; no acquisition performed.")
 
 
