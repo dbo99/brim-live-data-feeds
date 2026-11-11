@@ -810,7 +810,7 @@ Rollback/recovery:
 Remaining uncertainty:
 ```
 
-### SCAN finite acquire-only commissioning
+### SCAN finite hosted commissioning and inactive private mode
 
 The manual boolean `acquire_only` defaults false to preserve existing writer
 semantics. True is currently **held before preparation** because no approved,
@@ -821,14 +821,13 @@ so its environment, collector output and failure diagnostics cannot become
 public logs in acquire-only mode. Both candidate and `always()` control-receipt
 uploads also explicitly exclude that mode. The publisher remains excluded.
 
-Normal manual false and scheduled publication retain the existing read-only
-preparation, five-file candidate artifact, receipt retention and separate
-write-capable publisher. These are publicly readable Actions surfaces, not
-private custody. The exact source/run/first-attempt/mode approval checks remain
-unchanged: missing, string-valued or mismatched modes still refuse. Existing
-approvals without the mode field mean false only. A valid grant alone cannot
-release the acquire-only custody hold. Schedule declarations do not establish
-workflow enablement or current acquisition authority.
+Normal manual false and scheduled publication retain the five-file candidate
+artifact and separate write-capable publisher. Preparation has contents/read
+and actions/read, the latter only for authenticated run-history checks. These
+are publicly readable Actions surfaces, not private custody. The finite
+`scan-c13r-finite-1` policy requires explicit false `acquire_only`; missing,
+string-valued or mismatched modes refuse. Old grants do not authorize this
+route. A valid grant cannot release the private-mode custody hold.
 
 No public summary, candidate hash, ephemeral runner directory or skipped
 publisher proves recoverable private evidence. A future private commissioning
@@ -840,27 +839,61 @@ route nor authorizes acquisition, workflow activation or disclosure.
 Preparation uses Ubuntu 24.04, the existing R 4.6.1 action and the bounded
 provisioning mode of the existing SMS qualification runner. Its lock selects
 soilDB 2.9.2, httr 1.4.9 and curl 8.1.0; the exact runtime check remains mandatory.
-Dependency body hashes and selected transitive versions are recorded per setup;
-this is not an immutable full transitive environment. Changed production wiring
-still needs a separately authorized hosted proof. No packages are installed by
-source review. Missing supported dependencies fail before acquisition.
+Dependency body hashes and selected transitive versions are recorded per setup.
+The manual cycle records its resolved runtime signature; scheduled cycles must
+match that signature, including reused platform versions. Missing or changed
+dependencies refuse before acquisition. The actual Linux process must pass
+contained SCAN formatter/transport/timeout tests with non-loopback egress denied
+before production admission. Preliminary Mac tests do not establish that pass.
 
-Before a real run, approve the exact merged source SHA, one future run number,
-first attempt, current UTC window and complete request/body/time budgets. Verify
-shared-NRCS coordination, provider backoff/incident status and actual workflow
-state immediately before dispatch. The manual `source_cutoff_date` must exactly
-match the grant and be an ISO
-date in the current Pacific water year, no later than today. Acquire-only mode
-requires it. The builder independently checks `SCAN_SOURCE_CUTOFF_DATE` and
-retains only dates through that cutoff; both summaries add `source_cutoff_date`.
-An omitted cutoff preserves the prior startup-date behavior outside acquire-only.
-This declares the approved eligibility ceiling, not evidence that the provider
-has every day available. Actual first/last dates and missing observations remain
-separate. The annual provider response can include dates outside the retained
-current-WY interval.
+The manual `SCAN_LIVE_APPROVAL_JSON` binds the exact merged source SHA, future
+run number, first attempt, current UTC acquisition/release windows and complete
+code hashes/budgets. `SCAN_PROVIDER_HOLD` must explicitly be `false`; it is a
+local operational hold switch, not worldwide provider clearance. Obtain fresh
+shared-NRCS coordination and report unknown incident/backoff coverage honestly.
+The first metered endpoint/canary checks remain part of the same campaign.
+`Retry-After`, refusal, malformed/unknown transport or exhausted budgets stop it.
+The cutoff must be the preceding Pacific calendar date; the builder retains
+only eligible current-WY dates through that bound without filling missing days.
+No new observation or reference acceptance is implied by a cutoff.
 
-One finite approval is not standing schedule authority. Recurrence additionally
-requires durable consumed/UNKNOWN accounting, per-window incident/backoff and
-shared-provider admission, health/freshness monitoring, and reviewed renewal
-without reusing a run-number grant. First acquisition, workflow activation,
-publication/readback and recurring operations remain separate approvals.
+The separate `SCAN_DAILY_PILOT_JSON` is schedule-only: November 13–19, 2026,
+existing 14:30 UTC cron, no more than one first-attempt campaign per date.
+It binds the complete named executable/runtime/test/input closure in
+`scan_operational_guard.py`, rather than a static main commit. Data-only commits
+can advance; changed code, roster or runtime cannot. It requires the recorded
+successful manual run and every preceding pilot date to have exactly one
+successful completed run. Missing, duplicate, failed, cancelled or UNKNOWN runs
+hold subsequent retrieval. Authenticated history must be complete within its
+100-entry cap. The preparation concurrency group serializes SCAN campaigns;
+the original shared publication queue is unchanged. This does not serialize
+unrelated NRCS consumers or claim their absence.
+
+Each campaign reserves before launch and retains sanitized accounting. Bounds
+are 87 physical attempts, 20 seconds native and 1,200 seconds acquisition. Source
+retries are disabled; the expected complete run is one GET plus 28 POSTs,
+including a reused successful canary. Internal decoded-body caps are one byte
+below 2 MiB/174 MiB to include the existing transport's possible EOF-probe byte
+inside those approved ceilings. Incomplete accounts cannot publish.
+Raw child/provider logs stay off public logs/artifacts. Candidate upload requires
+exactly the five products plus publisher metadata; control uploads use explicit
+safe paths. No private acquisition evidence is imported.
+
+Initial fit reserves 60 minutes for setup/provisioning/qualification, 20 for
+acquisition, 15 for publication and 30 for queue/delivery/closure. Fit is checked
+again before acquisition and publication; bounds are not runtime predictions.
+Preparation is capped at 90 minutes and publication at 15. Existing sampled
+memory supervision retains its 3 GiB trigger/4 GiB ceiling. Child files have a
+256 MiB limit, logs a 16 MiB sampled trigger, and runner scratch an 8 GiB sampled
+allocated-byte trigger with at least 12 GiB disk headroom before work. Sampling
+does not prove an instantaneous aggregate disk or memory cap. Explicit package
+downloads retain their shared 4 GiB body bound; platform-managed setup is
+separately covered by step/job limits and headroom, not those body counters.
+
+Only manual publication plus same-generation Pages verification can justify
+installing the pilot policy, after a separate coordination check. The first
+scheduled run remains PENDING until observed. At November 20 08:00 UTC, the
+guard reports `INACTIVE_EXPIRED` before provider traffic: workflow state may
+remain enabled but fail-closed, not automatically disabled. The owner must
+disable it or separately approve a reviewed successor policy; no extension,
+rerun, background monitoring or indefinite steady-state acceptance is implied.
