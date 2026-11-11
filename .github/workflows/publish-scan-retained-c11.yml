@@ -1,0 +1,107 @@
+name: Publish the approved retained SCAN snapshot
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact reviewed main event SHA
+        required: true
+        type: string
+      staging_sha:
+        description: Exact approved public data-only commit SHA
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  RETAINED_EVENT_SHA: ${{ inputs.expected_source_sha }}
+  RETAINED_STAGING_SHA: ${{ inputs.staging_sha }}
+
+jobs:
+  prepare-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Admit one finite publication
+        run: python3 scripts/scan_retained_candidate.py admit
+      - name: Read pinned data objects and fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin ded6d52503aefc7a02f176fb1a15bc1e39d1d87a
+          git fetch --no-tags origin main
+          prior_sha="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/scan_retained_candidate.py prepare \
+            --artifact "${RUNNER_TEMP}/scan-retained-candidate" \
+            --prior-sha "$prior_sha"
+      - name: Retain only the approved public product artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: scan-retained-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/scan-retained-candidate/candidate/docs/data/scan_soil_moisture_latest.geojson
+            ${{ runner.temp }}/scan-retained-candidate/candidate/docs/data/scan_soil_moisture_latest_summary.json
+            ${{ runner.temp }}/scan-retained-candidate/candidate/docs/data/scan_soil_moisture_current_wy_trace.csv
+            ${{ runner.temp }}/scan-retained-candidate/candidate/docs/data/scan_soil_moisture_current_wy_trace_summary.json
+            ${{ runner.temp }}/scan-retained-candidate/candidate/docs/data/scan_depth_style.csv
+            ${{ runner.temp }}/scan-retained-candidate/candidate-metadata.json
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    needs: prepare-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Recheck finite authority after entering the shared queue
+        run: python3 scripts/scan_retained_candidate.py admit
+      - name: Download this run's public candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: scan-retained-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scan-retained-candidate
+      - name: Verify pinned bytes and publish through the unchanged transaction
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+          artifact="${RUNNER_TEMP}/scan-retained-candidate"
+          python3 scripts/scan_retained_candidate.py verify-artifact --artifact "$artifact"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "$artifact/candidate" \
+            --metadata "$artifact/candidate-metadata.json" \
+            --product-id scan-soil-moisture-latest \
+            --target-ref refs/heads/main \
+            --commit-subject "Publish the approved retained SCAN snapshot" \
+            --allowlist docs/data/scan_soil_moisture_latest.geojson \
+            --allowlist docs/data/scan_soil_moisture_latest_summary.json \
+            --allowlist docs/data/scan_soil_moisture_current_wy_trace.csv \
+            --allowlist docs/data/scan_soil_moisture_current_wy_trace_summary.json \
+            --allowlist docs/data/scan_depth_style.csv \
+            --candidate-validator scripts/scan_soil_moisture_publisher.py \
+            --reconcile-callback scripts/scan_soil_moisture_publisher.py \
+            --staged-validator scripts/scan_soil_moisture_publisher.py
