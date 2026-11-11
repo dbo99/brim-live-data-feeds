@@ -4,6 +4,33 @@ This runbook describes current GitHub Actions publication, last-known-good
 behavior, incident response, rollback and recovery for the public live-feed
 repository.
 
+### Finite retained SCAN snapshot publication
+
+`publish-scan-retained-c11.yml` is a one-shot, manual-only bridge for the
+reviewed retained SCAN snapshot. It admits only this workflow's first run and
+first attempt, a main event whose SHA equals the operator's reviewed SHA,
+and the immutable five-file data-only commit pinned in
+`scripts/scan_retained_candidate.py`. Its deadline is November 12, 2026,
+07:59:59 UTC, with the full publisher-job timeout reserved before admission.
+Redispatch, rerun, wrong source/ref, changed data, extra files and symlinks refuse.
+
+Preparation executes only trusted event-source code; staging Git objects are
+read as data and never checked out or executed. Exact hashes, existing SCAN
+validation and compatibility against fresh main precede the public artifact.
+Only five approved product files and standard candidate metadata are uploaded.
+The metadata source SHA identifies the real Actions event, not original
+acquisition source. Private acquisition/custody provenance stays outside GitHub.
+The original acquisition's build time, dates, zeros, gaps and dated freshness
+classifications are not rewritten; historical reference joins remain unverified.
+
+The write-capable job enters the unchanged `brim-live-main-publish` queue,
+rechecks finite admission and data hashes, and invokes the existing shared
+publisher and SCAN callbacks. Fresh-main validation, stale/same handling,
+ordinary non-force push and the shared bounded non-fast-forward reconciliation
+remain intact. A successful snapshot does not enable recurring SCAN acquisition;
+the scheduled SCAN workflow stays disabled. This bridge has no provider client,
+schedule, reusable grant, new credential or application integration authority.
+
 It distinguishes observed controls from recommended future controls. Following
 this document does not grant permission to dispatch a production writer,
 publish a product, merge a pull request or change repository settings.
