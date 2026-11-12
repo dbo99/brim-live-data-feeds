@@ -63,6 +63,14 @@ has a 120-second alarm in addition to parent supervision. Runtime source bytes,
 TLS verification, exact request identities, full-prefix science and the unchanged
 publisher callbacks remain mandatory.
 
+SNOTEL preparation and saved-only rebuild retain the actual subsecond UTC build
+clock, matching the precision supported by native retrieval receipts. A build
+clock is never rounded up, substituted for a receipt, or allowed to precede a
+capture. This corrects a reproducible whole-second truncation failure; it does
+not establish the inaccessible original R9 failure. Held results include a
+fixed phase label and exception type; detailed exception text stays private.
+R8 and R9 grants remain spent, and this correction grants no new hosted run.
+
 Only the validated two-file product and minimal shared candidate metadata can be
 uploaded. Raw responses, run/grant files and private failure streams stay in
 runner-local storage and are not promised as permanent evidence after runner

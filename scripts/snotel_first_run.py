@@ -195,7 +195,8 @@ def main():
         receipt = supervise(argv, root)
         result = json.loads((root/'result.json').read_bytes()) if (root/'result.json').is_file() else {}
         summary = {k: result.get(k) for k in ('status', 'candidate_ready', 'synthetic', 'attempts',
-            'consumed_body_bytes', 'completed_stations', 'station_call_seconds', 'source_check', 'latest_measurement')}
+            'consumed_body_bytes', 'completed_stations', 'station_call_seconds', 'source_check', 'latest_measurement',
+            'failure_phase', 'error_type')}
         summary.update(child_exit=receipt['child_exit'], supervision_reason=receipt['reason'])
         print(json.dumps(summary, sort_keys=True))
         require(receipt['reason'] is None and receipt['child_exit'] == 0 and
