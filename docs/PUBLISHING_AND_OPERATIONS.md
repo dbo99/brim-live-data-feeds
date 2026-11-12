@@ -881,8 +881,12 @@ safe paths. No private acquisition evidence is imported.
 
 The SCAN wrapper records fixed outcomes `BUILDER_EXCEPTION`,
 `ACCOUNT_REJECTED`, `RUNTIME_RECEIPT_FAILURE`, or `BUILT_ACCOUNT_COMPLETE`.
-The accounting predicate is unchanged; full-precision numeric operands are
-retained instead of rounding diagnostic timeout values. Only enumerated phases,
+Deadline subtraction can round an advertised request duration above its explicit
+limit. The meter conservatively clips that duration to the requested and configured
+limits while retaining both absolute deadlines; the strict 20-second predicate is
+not relaxed. A fixed `account_refusal` code identifies the first failed clause on
+the original in-memory operands, before JSON serialization. JSON numbers do not
+preserve proof of original R types, attributes or floating-point bits. Only enumerated phases,
 allowlisted exception categories and projected numeric/enum accounting fields
 are public. Raw messages, arbitrary error classes and child output are not.
 Builder return and account acceptance remain separate facts, neither of which

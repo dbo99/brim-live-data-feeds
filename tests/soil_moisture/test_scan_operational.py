@@ -83,7 +83,7 @@ class FiniteTests(unittest.TestCase):
             root=pathlib.Path(tmp)/'artifact';(root/'candidate/docs/data').mkdir(parents=True)
             for name in runner.PRODUCTS:(root/'candidate/docs/data'/name).write_text('{}')
             (root/'candidate-metadata.json').write_text('{}');account=pathlib.Path(tmp)/'account.json'
-            account.write_text(json.dumps({'status':'BUILT_ACCOUNT_COMPLETE','account':{'requests':29},'raw_provider_errors_disclosed':False}))
+            account.write_text(json.dumps({'status':'BUILT_ACCOUNT_COMPLETE','account_refusal':'NONE','account_predicate':True,'account':{'requests':29},'raw_provider_errors_disclosed':False}))
             runner.audit_candidate(root,account)
             for name in ('raw-provider-error.txt','private-c9-receipt.json','config.json'):
                 bad=root/name;bad.write_text('SYNTHETIC_PRIVATE_SENTINEL')

@@ -7,6 +7,11 @@ PRODUCTS=("scan_soil_moisture_latest.geojson","scan_soil_moisture_latest_summary
 R_OUTCOMES={'BUILDER_EXCEPTION','ACCOUNT_REJECTED','RUNTIME_RECEIPT_FAILURE','BUILT_ACCOUNT_COMPLETE'}
 PHASES={'RUNTIME_ADMISSION','BUILDER','ACCOUNT_SNAPSHOT','ACCOUNT_PREDICATE','RECEIPT_WRITE','COMPLETE'}
 ERRORS={'NONE','SCAN_FATAL','SIMPLE_ERROR','OTHER_ERROR'}
+ACCOUNT_REFUSALS={'NONE','NOT_EVALUATED','ACCOUNT_SHAPE','FATAL_PRESENT','REQUEST_COUNT_TYPE',
+                 'RECEIPT_COUNT_TYPE','RECEIPT_SHAPE','RECEIPT_STATE','RECEIPT_STATUS',
+                 'RECEIPT_ATTEMPT','RECEIPT_METHOD','RECEIPT_BYTES','TIMEOUT_NONFINITE_TYPE',
+                 'TIMEOUT_LIMIT','TOTAL_BYTES','BYTE_SUM','SNAPSHOT_EXCEPTION',
+                 'PREDICATE_EXCEPTION','RECEIPT_EXCEPTION'}
 
 def diagnostic_json(path):
     # Never return arbitrary file content in an exception or public diagnostic.
@@ -38,20 +43,22 @@ def finalize(root,build,validation,metadata):
     status=status if isinstance(status,str) and status in R_OUTCOMES else 'UNVERIFIED'
     phase=runtime.get('phase');phase=phase if isinstance(phase,str) and phase in PHASES else 'UNVERIFIED'
     error=runtime.get('exception_class');error=error if isinstance(error,str) and error in ERRORS else 'UNVERIFIED'
+    refusal=runtime.get('account_refusal')
+    refusal=refusal if isinstance(refusal,str) and refusal in ACCOUNT_REFUSALS else 'UNVERIFIED'
     supervised=bounded_state(root,'scan-acquisition-bounded')
     if build=='skipped':outcome='NOT_RUN'
     elif supervised in {'MISSING','SUPERVISOR_FAILURE'} or build=='cancelled':outcome='SUPERVISOR_FAILURE'
     elif build=='failure' and status in R_OUTCOMES-{'BUILT_ACCOUNT_COMPLETE'} and supervised=='CHILD_FAILURE':outcome=status
     elif build=='failure' and status=='UNVERIFIED' and supervised=='CHILD_FAILURE':outcome='RUNTIME_RECEIPT_FAILURE'
     elif build!='success' or supervised!='SUCCESS':outcome='SUPERVISOR_FAILURE'
-    elif status!='BUILT_ACCOUNT_COMPLETE':outcome='RUNTIME_RECEIPT_FAILURE'
+    elif status!='BUILT_ACCOUNT_COMPLETE' or refusal!='NONE' or runtime.get('account_predicate') is not True:outcome='RUNTIME_RECEIPT_FAILURE'
     elif validation!='success' or bounded_state(root,'scan-validation-bounded')!='SUCCESS':
         outcome='VALIDATION_FAILURE' if validation=='failure' and bounded_state(root,'scan-validation-bounded')=='CHILD_FAILURE' else 'SUPERVISOR_FAILURE'
     elif bounded_state(root,'scan-metadata-bounded') in {'MISSING','SUPERVISOR_FAILURE'}:outcome='SUPERVISOR_FAILURE'
     elif metadata!='success' or bounded_state(root,'scan-metadata-bounded')!='SUCCESS':outcome='RUNTIME_RECEIPT_FAILURE'
     else:outcome='VALIDATED_CANDIDATE'
     record=dict(schema='scan-safe-failure-1',outcome=outcome,runtime_status=status,
-                phase=phase,exception_class=error,build_step=build,
+                phase=phase,exception_class=error,account_refusal=refusal,build_step=build,
                 validation_step=validation,metadata_step=metadata,
                 acquisition_supervision=supervised,raw_logs_public=False)
     control=root/'scan-control';control.mkdir(exist_ok=True)
@@ -68,6 +75,7 @@ def audit_candidate(root,account):
     assert sum(p.stat().st_size for p in entries if p.is_file())<=64*1024**2,'Artifact byte limit'
     value=json.loads(account.read_text())
     assert value['status']=='BUILT_ACCOUNT_COMPLETE' and value['account']['requests']==29
+    assert value['account_refusal']=='NONE' and value['account_predicate'] is True
     assert value['raw_provider_errors_disclosed'] is False
 
 

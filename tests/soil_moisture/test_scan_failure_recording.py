@@ -13,13 +13,13 @@ class FailureTests(unittest.TestCase):
         return runner.bounded([sys.executable,'-c',code],root/name,[root],limits.pop('seconds',5),**limits)
     def receipt(self,root,status='BUILT_ACCOUNT_COMPLETE',**values):
         control=root/'scan-control';control.mkdir(exist_ok=True)
-        (control/'runtime-account.json').write_text(json.dumps(dict(status=status,phase='COMPLETE',exception_class='NONE',**values)))
+        (control/'runtime-account.json').write_text(json.dumps(dict(dict(status=status,phase='COMPLETE',exception_class='NONE',account_refusal='NONE',account_predicate=True),**values)))
     def final(self,root,build='success',validation='success',metadata='success'):
         p=subprocess.run([sys.executable,'-B',str(ROOT/'scripts/run_scan_operational.py'),'finalize',str(root),build,validation,metadata],capture_output=True,timeout=5)
         body=(root/'scan-control/failure-summary.json').read_bytes()
         self.assertNotIn(SENTINEL.encode(),body+p.stdout+p.stderr)
         self.assertEqual(p.stderr,b'')
-        result=json.loads(body);self.assertEqual(set(result),{'schema','outcome','runtime_status','phase','exception_class','build_step','validation_step','metadata_step','acquisition_supervision','raw_logs_public'})
+        result=json.loads(body);self.assertEqual(set(result),{'schema','outcome','runtime_status','phase','exception_class','account_refusal','build_step','validation_step','metadata_step','acquisition_supervision','raw_logs_public'})
         self.assertEqual(p.returncode,0 if result['outcome']=='VALIDATED_CANDIDATE' else 1)
         return result
     def test_actual_builder_and_account_failure_and_missing_receipt(self):
@@ -74,6 +74,37 @@ class FailureTests(unittest.TestCase):
             p=root/'scan-control/runtime-account.json';value=json.loads(p.read_text());value.update(phase=SENTINEL,exception_class=[SENTINEL]);p.write_text(json.dumps(value))
             self.child(root,'scan-acquisition-bounded','raise SystemExit(1)')
             self.assertEqual(self.final(root,'failure','skipped','skipped')['outcome'],'RUNTIME_RECEIPT_FAILURE')
+    def test_refusal_missing_unknown_or_conflicting_never_passes(self):
+        for code in [None,SENTINEL,['NONE'],'TIMEOUT_LIMIT']:
+            with self.subTest(code=code),tempfile.TemporaryDirectory() as t:
+                root=pathlib.Path(t);self.receipt(root,account_refusal=code)
+                self.child(root,'scan-acquisition-bounded','pass')
+                result=self.final(root)
+                self.assertEqual(result['outcome'],'RUNTIME_RECEIPT_FAILURE')
+                self.assertEqual(result['account_refusal'],'TIMEOUT_LIMIT' if code=='TIMEOUT_LIMIT' else 'UNVERIFIED')
+    def test_actual_R_serialized_refusals_reach_independent_finalizer(self):
+        directory=os.environ.get('SCAN_R_RECEIPT_TEST_DIR')
+        if not directory:self.skipTest('Run after the confined R receipt suite for cross-process evidence')
+        paths=list(pathlib.Path(directory).glob('clause-*.json'))
+        self.assertEqual(len(paths),14)
+        paths += [pathlib.Path(directory)/(n+'.json') for n in ['snapshot','predicate-exception','corrected-meter']]
+        for path in paths:
+            with self.subTest(name=path.name),tempfile.TemporaryDirectory() as t:
+                root=pathlib.Path(t);control=root/'scan-control';control.mkdir()
+                body=path.read_bytes();(control/'runtime-account.json').write_bytes(body);runtime=json.loads(body)
+                good=runtime['status']=='BUILT_ACCOUNT_COMPLETE'
+                self.child(root,'scan-acquisition-bounded','pass' if good else 'raise SystemExit(1)')
+                if good:
+                    self.child(root,'scan-validation-bounded','pass');self.child(root,'scan-metadata-bounded','pass')
+                result=self.final(root,'success' if good else 'failure','success' if good else 'skipped','success' if good else 'skipped')
+                self.assertEqual(result['account_refusal'],runtime['account_refusal'])
+                self.assertEqual(result['outcome'],'VALIDATED_CANDIDATE' if good else runtime['status'])
+    def test_metadata_failure_cannot_publish(self):
+        with tempfile.TemporaryDirectory() as t:
+            root=pathlib.Path(t);self.receipt(root)
+            self.child(root,'scan-acquisition-bounded','pass');self.child(root,'scan-validation-bounded','pass')
+            self.child(root,'scan-metadata-bounded','raise SystemExit(1)')
+            self.assertEqual(self.final(root,metadata='failure')['outcome'],'RUNTIME_RECEIPT_FAILURE')
     def test_absent_supervisor_cannot_be_success(self):
         with tempfile.TemporaryDirectory() as t:
             root=pathlib.Path(t);self.receipt(root)

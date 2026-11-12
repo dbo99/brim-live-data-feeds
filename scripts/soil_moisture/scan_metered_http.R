@@ -89,7 +89,10 @@ pt_scan_make_http <- function(max_requests, response_bytes, total_bytes,
     if (requests >= max_requests || consumed >= total_bytes) fail("SCAN request/body budget exhausted", "scan_budget_exhausted")
     admitted <- clock()
     request_deadline <- min(deadline, admitted + timeout, admitted + request_seconds)
-    remaining <- request_deadline - admitted
+    # Deadline subtraction can round upward by an ULP. Never advertise or
+    # hand the backend more than either explicit duration; the absolute
+    # request/campaign deadlines remain unchanged and independently checked.
+    remaining <- min(timeout, request_seconds, request_deadline - admitted)
     if (remaining < .001) fail("SCAN deadline leaves no dispatch time", "scan_deadline_exceeded")
     # Reserve BEFORE invoking the physical backend. Failed/unknown work stays spent.
     requests <<- requests + 1L
