@@ -665,7 +665,7 @@ At minimum:
 10. Test private BRIM when path/schema/time/unit/fallback behavior changed.
 11. Record remaining uncertainty and obtain explicit publication approval.
 
-### SNOTEL current-WY Phase B candidate (not released)
+### SNOTEL current-WY manual finite commissioning
 
 `build-snotel-sms-current-wy.yml` is a separate manual-only source candidate;
 `qa-snotel-sms-saved-replay.yml` keeps its behavior with its corrected display title.
@@ -674,7 +674,12 @@ false, contradictory modes fail, and a default dispatch performs no checkout,
 provider retrieval or publication. Future explicit preparation has read-only
 repository permission and a 60-minute timeout. Both jobs check out `github.sha`;
 actual checked-out source is bound to integrity metadata and the public catalog.
-There is no real catalog in this change and no standing acquisition authority.
+The accepted catalog is now committed; it grants no standing acquisition authority.
+The Ubuntu 24.04 route requires an exact finite source/run/attempt grant,
+pre-opener offline qualification in a network namespace, and owned preparation
+supervision through `scripts/snotel_first_run.py`. Both preparation and publication
+repeat finite admission. See the current first-product controls in
+[soil operations](SOIL_MOISTURE_OPERATIONS.md).
 
 Artifacts positively allow only `candidate/docs/data/snotel-sms/index.json`,
 `candidate/docs/data/snotel-sms/current-wy.json` and `candidate-metadata.json`.

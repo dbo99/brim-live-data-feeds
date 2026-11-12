@@ -3,9 +3,9 @@
 This page describes implemented source and offline validation, not deployed or
 standing acquisition authority. The intended live ownership is exactly
 `docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`.
-No real catalog or product is installed by this source change. Public catalog and
-native-field disclosure, consumer acceptance, hosted validation, acquisition,
-publication and scheduling remain separate maintainer decisions.
+The accepted catalog is committed separately. Observation acquisition, conditional
+first publication, hosted delivery and consumer acceptance remain distinct
+transitions; no standing acquisition or scheduling authority is implied.
 
 Native NRCS `DAILY/END` preserves each exact station triplet, signed SMS depth,
 ordinal and native `pct` value. Provider date D has source boundary D+1 08:00Z
@@ -26,6 +26,40 @@ does not validate the new snapshot, prior-product importer, transport or publish
 The older QA replay also does not establish Phase A/B hosted readiness. A meaningful
 hosted saved-input test of those paths requires a separate source/dispatch decision;
 no such route is added here.
+
+## Finite first-product commissioning
+
+The public `data/input/snotel_sms_catalog.json` is the source-authenticated
+32-station/98-sensor catalog released by PR #60. Its presence grants no provider
+traffic. The manual operating workflow now uses Ubuntu 24.04 and first runs the
+focused synthetic integration tests unprivileged in a network namespace with no
+external route. It installs no packages. This is a prerequisite in the same job,
+not a second real campaign or standing schedule.
+
+`scripts/snotel_first_run.py` requires `SNOTEL_SMS_FIRST_RUN_JSON` with the exact
+reviewed source SHA, workflow run number, first attempt, catalog/roster pins,
+unchanged budgets and finite matching `window_end`. Only the R8 first-product
+approval identity is admitted, expiring no later than November 15, 2026 07:59:59
+UTC. Acquisition, publication and bootstrap must all be explicit; the source
+and fresh-main product checks still require complete absence for bootstrap.
+Wrong event/ref/workflow/run/source, missing grant, rerun, or insufficient full
+setup/acquisition/publication/readback headroom refuses before an opener.
+
+One owned preparation child has separate preflight, acquisition and finalization
+deadlines. Private phase markers never grant a restart. A killed or incomplete
+native reservation remains UNKNOWN; no next station or redispatch follows.
+The native 60-second attempt control remains unchanged, and final construction
+has a 120-second alarm in addition to parent supervision. Runtime source bytes,
+TLS verification, exact request identities, full-prefix science and the unchanged
+publisher callbacks remain mandatory.
+
+Only the validated two-file product and minimal shared candidate metadata can be
+uploaded. Raw responses, run/grant files and private failure streams stay in
+runner-local storage and are not promised as permanent evidence after runner
+loss. The public log uses an explicit accounting-field allowlist. First-product
+release and Pages verification remain execution outcomes, not claims made by
+this source change. Application acceptance and any later acquisition require
+separate authority; there is no SNOTEL schedule.
 
 ### Current-WY SNOTEL replacement (offline Phase A)
 

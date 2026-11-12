@@ -373,7 +373,10 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
             ss.check_run_year(plan, current)
             ops.require(ops.time(current) < ops.time(window_end), 'Acquisition window closed')
             return epoch
+        acquisition_started = monotonic()
+        snotel_write(root/'acquisition-started.json', ss.h.canonical(dict(started_monotonic=acquisition_started)))
         for i, (g, request) in enumerate(zip(groups, plan['requests'])):
+            ops.require(monotonic()-acquisition_started < budget['total_seconds'], 'Acquisition wall deadline')
             current = clock(); ss.check_run_year(plan, current)
             remaining = (ops.time(window_end)-ops.time(current)).total_seconds()
             ops.require(remaining >= (32-i)*60+120, 'Acquisition/finalization headroom exhausted')
@@ -404,6 +407,8 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
                 receipt_sha256=capture['receipt_sha256'], request_sha256=ss.h.sha256(ss.h.canonical(request)),
                 cumulative_attempts=report['attempts'], cumulative_bytes=report['consumed_body_bytes'],
                 cumulative_station_call_seconds=report['station_call_seconds'])))
+        ops.require(monotonic()-acquisition_started <= budget['total_seconds'], 'Acquisition wall deadline')
+        snotel_write(root/'acquisition-completed.json', ss.h.canonical(dict(completed_monotonic=monotonic())))
         build_clock = clock()
         capture_manifest = ss.h.canonical(dict(run_sha256=report['run_sha256'],
             receipt_sha256s=[c['receipt_sha256'] for c in captures],
@@ -412,7 +417,8 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
         report['capture_manifest_sha256'] = ss.h.sha256(capture_manifest)
         ops.require((ops.time(window_end)-ops.time(build_clock)).total_seconds() >= 120,
                     'Finalization window margin exhausted')
-        d = _snotel_finish(root, root/'transfer', groups, plan, captures, prior, trust, source_sha, build_clock)
+        with st._deadline(budget['finalization_seconds']):
+            d = _snotel_finish(root, root/'transfer', groups, plan, captures, prior, trust, source_sha, build_clock)
         ss.check_run_year(plan, clock())
         report.update(status='CANDIDATE_READY', candidate_ready=True,
             source_check=max(c['receipt']['retrieved_at_utc'] for c in captures),
