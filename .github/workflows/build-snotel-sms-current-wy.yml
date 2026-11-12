@@ -57,18 +57,26 @@ jobs:
       - name: Qualify this runner offline before provider admission
         if: ${{ inputs.acquire }}
         shell: bash
+        env:
+          CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
+          ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
         run: |
           set -euo pipefail
           umask 077
           test "$(python3 -c 'import sys; print(sys.version_info >= (3,12))')" = True
-          # The actual source-bound tests run unprivileged with no network route.
-          # No package installation, provider probe or private artifact upload.
           timeout --signal=KILL 180s sudo unshare --net -- \
             runuser -u "$(id -un)" -- env -i PATH="$PATH" TMPDIR="$RUNNER_TEMP" \
             PYTHONDONTWRITEBYTECODE=1 \
-            python3 -B tests/soil_moisture/test_snotel_first_run.py \
+            python3 -B tests/soil_moisture/test_snotel_origin.py \
             > "$RUNNER_TEMP/snotel-offline-qualification.log" 2>&1
-          echo 'SNOTEL_ACTUAL_RUNNER_OFFLINE_QUALIFICATION_PASS'
+          echo 'SNOTEL_FOCUSED_ORIGIN_QUALIFICATION_PASS'
+          # Actual event checkout and Git objects, not an injected Git fixture.
+          timeout --signal=KILL 120s sudo unshare --net -- \
+            runuser -u "$(id -un)" -- env -i PATH="$PATH" RUNNER_TEMP="$RUNNER_TEMP" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" CATALOG_PIN="$CATALOG_PIN" \
+            ROSTER_PIN="$ROSTER_PIN" PYTHONDONTWRITEBYTECODE=1 \
+            python3 -B scripts/snotel_first_run.py check-source
 
       - name: Prepare complete bounded current-WY candidate
         id: prepare
@@ -76,7 +84,9 @@ jobs:
         shell: bash
         env:
           ACQUIRE: ${{ inputs.acquire }}
-          SNOTEL_SMS_FIRST_RUN_JSON: ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON }}
+          R9_GRANT_EXACT_MATCH: >-
+            ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
+          GRANT_ACTIVATED_AT: ${{ fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc }}
           PUBLISH: ${{ inputs.publish }}
           BOOTSTRAP: ${{ inputs.bootstrap }}
           WINDOW_END: ${{ inputs.window_end }}
@@ -128,7 +138,10 @@ jobs:
 
       - name: Publish through the unchanged shared owner
         env:
-          SNOTEL_SMS_FIRST_RUN_JSON: ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON }}
+          R9_GRANT_EXACT_MATCH: >-
+            ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
+          GRANT_ACTIVATED_AT: ${{ fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc }}
+          WINDOW_END: ${{ inputs.window_end }}
           BRIM_LIVE_MAIN_PUBLISH: "true"
           SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source_sha }}
           CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}

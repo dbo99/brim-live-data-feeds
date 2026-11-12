@@ -171,7 +171,8 @@ class SnotelGitReader:
         self.test_stub = git is not None
         self.git = git or self._git
         origin = self.git(['remote', 'get-url', 'origin']).decode().strip()
-        ops.require(origin in ('https://github.com/dbo99/brim-live-data-feeds.git',
+        ops.require(origin in ('https://github.com/dbo99/brim-live-data-feeds',
+                               'https://github.com/dbo99/brim-live-data-feeds.git',
                                'git@github.com:dbo99/brim-live-data-feeds.git'),
                     'Unexpected SNOTEL repository origin')
 

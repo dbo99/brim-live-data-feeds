@@ -33,14 +33,24 @@ The public `data/input/snotel_sms_catalog.json` is the source-authenticated
 32-station/98-sensor catalog released by PR #60. Its presence grants no provider
 traffic. The manual operating workflow now uses Ubuntu 24.04 and first runs the
 focused synthetic integration tests unprivileged in a network namespace with no
-external route. It installs no packages. This is a prerequisite in the same job,
+external route, followed by the non-stub Git reader against the actual event
+checkout, catalog, roster and complete product absence. Its source/run-bound
+proof must be no older than five minutes before preparation. The exact canonical
+Actions HTTPS origin without `.git` and the two existing `.git` origins are
+accepted; near matches remain refused. It installs no packages. This is a prerequisite in the same job,
 not a second real campaign or standing schedule.
 
 `scripts/snotel_first_run.py` requires `SNOTEL_SMS_FIRST_RUN_JSON` with the exact
 reviewed source SHA, workflow run number, first attempt, catalog/roster pins,
-unchanged budgets and finite matching `window_end`. Only the R8 first-product
-approval identity is admitted, expiring no later than November 15, 2026 07:59:59
-UTC. Acquisition, publication and bootstrap must all be explicit; the source
+unchanged budgets and finite matching `window_end`. Only the separately approved
+R9 identity and run number 2/attempt 1 are admitted, with an activation-to-expiry
+interval of at most four hours and absolute expiry no later than November 14,
+2026 07:59:59 UTC. R8 remains closed and spent with UNKNOWN provider accounting.
+The workflow compares the canonical grant internally, passing only the result
+and public pins/clocks to steps so the full private grant is not echoed in logs.
+GitHub string equality is case-insensitive; the Python admission independently
+enforces the fixed approval, exact event source, pins and finite limits.
+Acquisition, publication and bootstrap must all be explicit; the source
 and fresh-main product checks still require complete absence for bootstrap.
 Wrong event/ref/workflow/run/source, missing grant, rerun, or insufficient full
 setup/acquisition/publication/readback headroom refuses before an opener.

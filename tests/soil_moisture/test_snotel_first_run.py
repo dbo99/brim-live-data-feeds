@@ -18,12 +18,12 @@ from test_snotel_snapshot import fixture
 class GrantTests(unittest.TestCase):
     def setUp(self):
         self.grant = dict(version='snotel-first-run-1',
-            approval_id='L11-SNOTEL-SMS-R8-FIRST-REAL-CURRENT-WY-20261112', source_sha='a'*40,
-            run_number=1, window_end='2026-11-12T21:30:00Z', catalog_sha256='b'*64,
+            approval_id=f.APPROVAL, source_sha='a'*40,
+            run_number=2, activated_at_utc='2026-11-12T19:00:00Z', window_end='2026-11-12T21:30:00Z', catalog_sha256='b'*64,
             roster_sha256='c'*64, limits=dict(f.LIMITS))
         self.env = dict(GITHUB_REPOSITORY=f.REPO, GITHUB_EVENT_NAME='workflow_dispatch',
             GITHUB_REF='refs/heads/main', GITHUB_WORKFLOW_REF=f.REPO+'/'+f.WORKFLOW+'@refs/heads/main',
-            GITHUB_RUN_ATTEMPT='1', GITHUB_RUN_NUMBER='1', GITHUB_RUN_ID='123', GITHUB_SHA='a'*40,
+            GITHUB_RUN_ATTEMPT='1', GITHUB_RUN_NUMBER='2', GITHUB_RUN_ID='123', GITHUB_SHA='a'*40,
             CATALOG_PIN='b'*64, ROSTER_PIN='c'*64, RELEASE_APPROVED='true',
             ACQUIRE='true', PUBLISH='true', BOOTSTRAP='true', WINDOW_END=self.grant['window_end'])
         self.clock = f.utc('2026-11-12T19:30:00Z')
@@ -39,7 +39,7 @@ class GrantTests(unittest.TestCase):
     def test_environment_refusals(self):
         for key, value in dict(GITHUB_REPOSITORY='other/repo',GITHUB_EVENT_NAME='schedule',
                 GITHUB_REF='refs/heads/test', GITHUB_WORKFLOW_REF='other', GITHUB_RUN_ATTEMPT='2',
-                GITHUB_RUN_ID='', GITHUB_RUN_NUMBER='2', GITHUB_SHA='d'*40, CATALOG_PIN='d'*64,
+                GITHUB_RUN_ID='', GITHUB_RUN_NUMBER='3', GITHUB_SHA='d'*40, CATALOG_PIN='d'*64,
                 ROSTER_PIN='d'*64, RELEASE_APPROVED='false', ACQUIRE='false', PUBLISH='false',
                 BOOTSTRAP='false', WINDOW_END='2026-11-12T22:30:00Z').items():
             with self.subTest(key=key), self.assertRaises(ValueError):self.auth(env={key:value})
@@ -48,7 +48,7 @@ class GrantTests(unittest.TestCase):
         cases=[]
         for key in self.grant:
             bad=copy.deepcopy(self.grant);del bad[key];cases.append(bad)
-        for key,value in [('run_number',True),('source_sha','main'),('window_end',f.EXPIRY.replace('15','16',1)),
+        for key,value in [('run_number',True),('source_sha','main'),('window_end','2026-11-15T07:59:59Z'),
                           ('window_end','2026-11-12T20:00:00Z'),('approval_id','other')]:
             bad=copy.deepcopy(self.grant);bad[key]=value;cases.append(bad)
         for key in f.LIMITS:
