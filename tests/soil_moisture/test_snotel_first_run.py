@@ -141,7 +141,7 @@ class FirstPrefixTests(WorkflowTests):
         import soil_network_workflow as w
         self.git.trees[PRIOR]={}
         limits=dict(w.SNOTEL_LIMITS,finalization_seconds=.02)
-        with patch.object(w,'SNOTEL_LIMITS',limits), patch.object(w,'_snotel_finish',side_effect=lambda *a:time.sleep(1)):
+        with patch.object(w,'SNOTEL_LIMITS',limits), patch.object(w,'_snotel_finish',side_effect=lambda *a,**kw:time.sleep(1)):
             result=self.run_candidate(bootstrap=True,budget=limits)
         self.assertEqual((result['status'],result['attempts'],result['completed_stations']),('HELD',32,32))
         self.assertFalse((self.runroot/'transfer').exists())

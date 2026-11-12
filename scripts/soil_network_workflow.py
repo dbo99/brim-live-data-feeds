@@ -21,6 +21,10 @@ HERE=Path(__file__).resolve().parent
 SCAN_ENV={'SCAN_STATION_INDEX_CSV':'scan_station_index.csv','SCAN_SMS_PERCENTILES_CSV':'scan_sms_waterday_percentiles.csv','SCAN_DEPTH_STYLE_CSV':'scan_depth_style.csv'}
 SCAN_BOUNDS={'SCAN_NWCC_PREFLIGHT_RETRIES':'3','SCAN_NWCC_PREFLIGHT_PAUSE_SEC':'10','SCAN_NWCC_PREFLIGHT_TIMEOUT_SEC':'20','SCAN_FETCH_RETRIES':'3','SCAN_FETCH_RETRY_PAUSE_SEC':'6','SCAN_FETCH_TIMEOUT_SEC':'60','SCAN_SMS_REQUEST_PAUSE_SEC':'0.35'}
 def now():return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+def snotel_now():
+    # Native receipts retain subsecond retrieval clocks. Never floor a later
+    # build clock below a receipt or manufacture a replacement receipt time.
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 def command(args,*,cwd=None,env=None):
     p=subprocess.run(list(map(str,args)),cwd=cwd,env=env,capture_output=True,text=True,timeout=1500)
     if p.returncode:raise RuntimeError((p.stdout+p.stderr)[-6000:])
@@ -304,18 +308,23 @@ def _snotel_capture(group, request, client, captures):
     return c
 
 
-def _snotel_finish(root, destination, groups, plan, captures, prior, trust, source_sha, built_at):
+def _snotel_finish(root, destination, groups, plan, captures, prior, trust, source_sha, built_at, *, phase=None):
+    phase = phase or (lambda name: None)
+    phase('snapshot_construction')
     ss.check_run_year(plan, built_at)
     files = ss.build_saved_snapshot(groups, iter(captures), year=plan['water_year'],
         start=plan['start'], end=plan['end'], as_of=plan['as_of'], built_at=built_at,
         expected_roster_sha256=plan['roster_sha256'],
         expected_capture_sha256s=[c['receipt_sha256'] for c in captures], prior_files=prior, trusted_prior=trust)
+    phase('candidate_validation')
     d = ss.h._json(files[ss.PATHS[1]]); ss.validate_routine_candidate(d)
     transfer = snotel_plain(destination)
     ops.require(not transfer.exists(), 'Fresh candidate transfer required')
+    phase('candidate_persistence')
     transfer.mkdir(mode=0o700)
     ss.write_new_product(transfer/'candidate', files)
     sp.validate_product(transfer/'candidate', candidate=True)
+    phase('publisher_metadata')
     mp.prepare_metadata(argparse.Namespace(candidate_root=transfer/'candidate',
         output=transfer/'candidate-metadata.json', product_id=ss.PRODUCT, allowlist=list(ss.PATHS),
         owned_root=[], semantic_key_type='generation', semantic_key=d['generation'], source_event_sha=source_sha))
@@ -324,7 +333,7 @@ def _snotel_finish(root, destination, groups, plan, captures, prior, trust, sour
 
 def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, roster_sha256,
                    acquire=False, publish=False, bootstrap=False, release_approved=False,
-                   budget=None, window_end=None, clock=now, monotonic=time.monotonic,
+                   budget=None, window_end=None, clock=snotel_now, monotonic=time.monotonic,
                    opener=None, transport_wall=time.time):
     """Only the injected opener seam permits synthetic execution; CLI has no such switch.
 
@@ -342,6 +351,10 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
                   station_call_seconds=0.0, source_commit=source_sha, source_check=None,
                   latest_measurement=None, candidate_generation=None, publication_acknowledgment=None)
     error = None; plan = None; captures = []; prior = trust = None
+    stage = 'admission'
+    def phase(name):
+        nonlocal stage
+        stage = name
     try:
         if not acquire: return report
         ops.require(os.environ.get('GITHUB_RUN_ATTEMPT', '1') == '1',
@@ -386,6 +399,7 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
                 report['station_call_seconds']+(32-i)*60 <= budget['total_seconds'],
                 'Aggregate acquisition budget exhausted')
             # Durable native reservation happens in collect(), before the injected/real opener.
+            phase('station_acquisition')
             client = _snotel_lane(root/f'station-{i+1:02d}', g, request,
                 live=not synthetic, opener=opener, wall=guarded_wall)
             t0 = monotonic()
@@ -399,7 +413,9 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
                     if report['consumed_body_bytes'] is None or any(type(n) is not int for n in amounts):
                         report['consumed_body_bytes'] = None
                     else: report['consumed_body_bytes'] += sum(amounts)
+            phase('station_capture_validation')
             capture = _snotel_capture(g, request, client, saved)
+            phase('acquisition_accounting')
             ops.require(report['station_call_seconds'] <= budget['total_seconds']
                         and report['consumed_body_bytes'] is not None
                         and report['consumed_body_bytes'] <= budget['total_bytes'], 'Cumulative acquisition limit')
@@ -408,6 +424,7 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
                 receipt_sha256=capture['receipt_sha256'], request_sha256=ss.h.sha256(ss.h.canonical(request)),
                 cumulative_attempts=report['attempts'], cumulative_bytes=report['consumed_body_bytes'],
                 cumulative_station_call_seconds=report['station_call_seconds'])))
+        phase('capture_manifest')
         ops.require(monotonic()-acquisition_started <= budget['total_seconds'], 'Acquisition wall deadline')
         snotel_write(root/'acquisition-completed.json', ss.h.canonical(dict(completed_monotonic=monotonic())))
         build_clock = clock()
@@ -419,7 +436,8 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
         ops.require((ops.time(window_end)-ops.time(build_clock)).total_seconds() >= 120,
                     'Finalization window margin exhausted')
         with st._deadline(budget['finalization_seconds']):
-            d = _snotel_finish(root, root/'transfer', groups, plan, captures, prior, trust, source_sha, build_clock)
+            d = _snotel_finish(root, root/'transfer', groups, plan, captures, prior, trust, source_sha, build_clock, phase=phase)
+        phase('final_admission')
         ss.check_run_year(plan, clock())
         report.update(status='CANDIDATE_READY', candidate_ready=True,
             source_check=max(c['receipt']['retrieved_at_utc'] for c in captures),
@@ -428,7 +446,7 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
             coverage=d['coverage'], candidate_bytes=sum((root/'transfer/candidate'/p).stat().st_size for p in ss.PATHS),
             science_changed=any(d['coverage']['admission_counts'][x] for x in ('OBSERVED_ACCEPTED','ACCEPTED_REVISION')))
     except Exception as exc:
-        report.update(status='HELD', candidate_ready=False)
+        report.update(status='HELD', candidate_ready=False, failure_phase=stage, error_type=type(exc).__name__)
         error = type(exc).__name__+': '+str(exc)
         snotel_write(root/'failure.txt', error.encode())
     finally:
@@ -442,7 +460,7 @@ def snotel_prepare(reader, root, *, source_sha, prior_commit, catalog_sha256, ro
     return report
 
 
-def snotel_rebuild(reader, root, destination, *, run_sha256, capture_manifest_sha256, clock=now):
+def snotel_rebuild(reader, root, destination, *, run_sha256, capture_manifest_sha256, clock=snotel_now):
     """Fresh-process saved-only rebuild. Never calls collect or creates missing lanes."""
     destination = snotel_plain(destination)
     ops.require(destination != reader.repo and reader.repo not in destination.parents,
