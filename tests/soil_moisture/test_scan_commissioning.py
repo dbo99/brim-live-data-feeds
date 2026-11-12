@@ -75,7 +75,7 @@ class ScanCommissioningTests(unittest.TestCase):
             ('scan-soil-moisture-candidate-${{ github.run_id }}-${{ github.run_attempt }}',
              '${{ runner.temp }}/scan-soil-moisture-candidate', 'error', 2),
             ('scan-control-${{ github.run_id }}-${{ github.run_attempt }}',
-             '\n'.join('${{ runner.temp }}/scan-control/'+n+'.json' for n in ('approval-initial','approval-pre-acquisition','campaign-reservation','hosted-qualification','runtime-lock','runtime-account'))+'\n', 'warn', 14),
+             '\n'.join('${{ runner.temp }}/scan-control/'+n+'.json' for n in ('approval-initial','approval-pre-acquisition','campaign-reservation','hosted-qualification','runtime-lock','runtime-account','failure-summary'))+'\n', 'warn', 14),
         ]
         for step, (name, path, missing, retention) in zip(uploads, expected):
             self.assertEqual(step['uses'], 'actions/upload-artifact@v7')
@@ -105,7 +105,10 @@ class ScanCommissioningTests(unittest.TestCase):
         self.assertEqual(step['shell'], 'bash')
         for step in prepare['steps']:
             if not step.get('uses', '').startswith('actions/upload-artifact@'):
-                self.assertNotIn('if', step)
+                if step['name']=='Record fixed-label SCAN outcome':
+                    self.assertEqual(step['if'],'${{ always() && inputs.acquire_only != true }}')
+                    self.assertIn('run_scan_operational.py finalize',step['run'])
+                else:self.assertNotIn('if', step)
                 self.assertFalse(step.get('continue-on-error', False))
         # A failed or refused preparation cannot make the dependent publisher run.
         self.assertEqual(jobs['publish-to-main']['needs'], 'prepare-candidate')

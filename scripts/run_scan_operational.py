@@ -4,6 +4,62 @@ import argparse, json, os, pathlib, resource, signal, stat, subprocess, time
 PRODUCTS=("scan_soil_moisture_latest.geojson","scan_soil_moisture_latest_summary.json",
           "scan_soil_moisture_current_wy_trace.csv","scan_soil_moisture_current_wy_trace_summary.json","scan_depth_style.csv")
 
+R_OUTCOMES={'BUILDER_EXCEPTION','ACCOUNT_REJECTED','RUNTIME_RECEIPT_FAILURE','BUILT_ACCOUNT_COMPLETE'}
+PHASES={'RUNTIME_ADMISSION','BUILDER','ACCOUNT_SNAPSHOT','ACCOUNT_PREDICATE','RECEIPT_WRITE','COMPLETE'}
+ERRORS={'NONE','SCAN_FATAL','SIMPLE_ERROR','OTHER_ERROR'}
+
+def diagnostic_json(path):
+    # Never return arbitrary file content in an exception or public diagnostic.
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>65536:
+        return None
+    try:
+        value=json.loads(path.read_text())
+        return value if isinstance(value,dict) else None
+    except (OSError,ValueError):
+        return None
+
+def bounded_state(root,name):
+    value=diagnostic_json(root/name/'bounded.json')
+    if value is None:return 'MISSING'
+    if value.get('reason') is not None or value.get('remaining_owned_processes')!=[]:
+        return 'SUPERVISOR_FAILURE'
+    code=value.get('returncode')
+    if type(code) is not int:return 'MISSING'
+    return 'SUCCESS' if code==0 else 'CHILD_FAILURE'
+
+def finalize(root,build,validation,metadata):
+    """Independent always-step. Raw child logs are never opened or uploaded."""
+    states={'success','failure','cancelled','skipped'}
+    build=build if build in states else 'unverified'
+    validation=validation if validation in states else 'unverified'
+    metadata=metadata if metadata in states else 'unverified'
+    runtime=diagnostic_json(root/'scan-control/runtime-account.json') or {}
+    status=runtime.get('status')
+    status=status if isinstance(status,str) and status in R_OUTCOMES else 'UNVERIFIED'
+    phase=runtime.get('phase');phase=phase if isinstance(phase,str) and phase in PHASES else 'UNVERIFIED'
+    error=runtime.get('exception_class');error=error if isinstance(error,str) and error in ERRORS else 'UNVERIFIED'
+    supervised=bounded_state(root,'scan-acquisition-bounded')
+    if build=='skipped':outcome='NOT_RUN'
+    elif supervised in {'MISSING','SUPERVISOR_FAILURE'} or build=='cancelled':outcome='SUPERVISOR_FAILURE'
+    elif build=='failure' and status in R_OUTCOMES-{'BUILT_ACCOUNT_COMPLETE'} and supervised=='CHILD_FAILURE':outcome=status
+    elif build=='failure' and status=='UNVERIFIED' and supervised=='CHILD_FAILURE':outcome='RUNTIME_RECEIPT_FAILURE'
+    elif build!='success' or supervised!='SUCCESS':outcome='SUPERVISOR_FAILURE'
+    elif status!='BUILT_ACCOUNT_COMPLETE':outcome='RUNTIME_RECEIPT_FAILURE'
+    elif validation!='success' or bounded_state(root,'scan-validation-bounded')!='SUCCESS':
+        outcome='VALIDATION_FAILURE' if validation=='failure' and bounded_state(root,'scan-validation-bounded')=='CHILD_FAILURE' else 'SUPERVISOR_FAILURE'
+    elif bounded_state(root,'scan-metadata-bounded') in {'MISSING','SUPERVISOR_FAILURE'}:outcome='SUPERVISOR_FAILURE'
+    elif metadata!='success' or bounded_state(root,'scan-metadata-bounded')!='SUCCESS':outcome='RUNTIME_RECEIPT_FAILURE'
+    else:outcome='VALIDATED_CANDIDATE'
+    record=dict(schema='scan-safe-failure-1',outcome=outcome,runtime_status=status,
+                phase=phase,exception_class=error,build_step=build,
+                validation_step=validation,metadata_step=metadata,
+                acquisition_supervision=supervised,raw_logs_public=False)
+    control=root/'scan-control';control.mkdir(exist_ok=True)
+    with (control/'failure-summary.json').open('x') as f:
+        json.dump(record,f,sort_keys=True);f.write('\n');f.flush();os.fsync(f.fileno())
+    print('SCAN diagnostic '+outcome)
+    return 0 if outcome=='VALIDATED_CANDIDATE' else 1
+
 def audit_candidate(root,account):
     expected={'candidate/docs/data/'+p for p in PRODUCTS}|{'candidate-metadata.json'}
     entries=list(root.rglob('*'))
@@ -60,9 +116,22 @@ def bounded(argv,out,roots,seconds,file_limit=256*1024**2,trigger=8*1024**3):
     print('SCAN bounded child '+('PASS' if p.returncode==0 and reason is None and not alive else 'FAILED'))
     return p.returncode if reason is None and not alive else 125
 
-if __name__=='__main__':
+def main():
     import sys
+    if len(sys.argv)==6 and sys.argv[1]=='finalize':
+        try:code=finalize(pathlib.Path(sys.argv[2]),*sys.argv[3:])
+        except Exception:
+            print('SCAN diagnostic RUNTIME_RECEIPT_FAILURE');code=1
+        raise SystemExit(code)
     if len(sys.argv)==4 and sys.argv[1]=='audit-candidate':
         audit_candidate(pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[3]));raise SystemExit(0)
     p=argparse.ArgumentParser();p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--root',type=pathlib.Path,action='append',required=True);p.add_argument('--seconds',type=int,required=True);p.add_argument('command',nargs=argparse.REMAINDER);a=p.parse_args();assert 0<a.seconds<=3300
     assert a.command[0]=='--';raise SystemExit(bounded(a.command[1:],a.output,a.root,a.seconds))
+
+if __name__=='__main__':
+    try:main()
+    except Exception:
+        # Launch, audit, filesystem and supervisor exception text can contain
+        # private paths or provider content. Detailed child logs stay local.
+        print('SCAN wrapper RUNTIME_RECEIPT_FAILURE')
+        raise SystemExit(1)
