@@ -1,0 +1,101 @@
+name: Publish the approved retained SNOTEL snapshot
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact reviewed main event SHA
+        required: true
+        type: string
+      staging_sha:
+        description: Exact approved public data-only commit SHA
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  RETAINED_EVENT_SHA: ${{ inputs.expected_source_sha }}
+  RETAINED_STAGING_SHA: ${{ inputs.staging_sha }}
+
+jobs:
+  prepare-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Admit one finite publication
+        run: python3 scripts/snotel_retained_candidate.py admit
+      - name: Read pinned data objects and fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin d09d1e20d7a6ac23f0581e1a83d788e3135f2ca7
+          git fetch --no-tags origin main
+          prior_sha="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/snotel_retained_candidate.py prepare \
+            --artifact "${RUNNER_TEMP}/snotel-retained-r11-candidate" \
+            --prior-sha "$prior_sha"
+      - name: Retain only the approved public product artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: snotel-retained-r11-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/snotel-retained-r11-candidate/candidate/docs/data/snotel-sms/index.json
+            ${{ runner.temp }}/snotel-retained-r11-candidate/candidate/docs/data/snotel-sms/current-wy.json
+            ${{ runner.temp }}/snotel-retained-r11-candidate/candidate-metadata.json
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    needs: prepare-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Recheck finite authority after entering the shared queue
+        run: python3 scripts/snotel_retained_candidate.py admit
+      - name: Download this run's public candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: snotel-retained-r11-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snotel-retained-r11-candidate
+      - name: Verify pinned bytes and publish through the unchanged transaction
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+          artifact="${RUNNER_TEMP}/snotel-retained-r11-candidate"
+          python3 scripts/snotel_retained_candidate.py verify-artifact --artifact "$artifact"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "$artifact/candidate" \
+            --metadata "$artifact/candidate-metadata.json" \
+            --product-id snotel-sms-current-wy \
+            --target-ref refs/heads/main \
+            --commit-subject "Publish the approved retained SNOTEL snapshot" \
+            --allowlist docs/data/snotel-sms/index.json \
+            --allowlist docs/data/snotel-sms/current-wy.json \
+            --candidate-validator scripts/snotel_sms_publisher.py \
+            --reconcile-callback scripts/snotel_sms_publisher.py \
+            --staged-validator scripts/snotel_sms_publisher.py
