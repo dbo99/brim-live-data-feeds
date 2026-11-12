@@ -112,6 +112,7 @@ jobs:
         run: python3 -B scripts/scan_operational_guard.py pre-acquisition
 
       - name: Build SCAN soil moisture latest feed
+        id: build
         timeout-minutes: 21
         shell: bash
         working-directory: ${{ runner.temp }}/scan-soil-moisture-candidate/candidate
@@ -136,16 +137,29 @@ jobs:
               --output "${RUNNER_TEMP}/scan-acquisition-bounded" --root "${RUNNER_TEMP}" --seconds 1170 -- \
               Rscript --vanilla "$GITHUB_WORKSPACE/scripts/run_scan_operational.R"
 
-      - name: Validate and describe SCAN candidate artifact
+      - name: Validate SCAN candidate
+        id: validation
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
+          python3 scripts/run_scan_operational.py \
+            --output "${RUNNER_TEMP}/scan-validation-bounded" --root "${RUNNER_TEMP}" --seconds 90 -- \
+            python3 scripts/scan_soil_moisture_publisher.py validate \
+              --root "${RUNNER_TEMP}/scan-soil-moisture-candidate/candidate"
+
+      - name: Describe SCAN candidate artifact
+        id: candidate_metadata
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/run_scan_operational.py \
+            --output "${RUNNER_TEMP}/scan-metadata-bounded" --root "${RUNNER_TEMP}" --seconds 90 -- \
+            bash --noprofile --norc -euo pipefail -s <<'SCAN_METADATA'
 
           candidate_artifact_root="${RUNNER_TEMP}/scan-soil-moisture-candidate"
           candidate_root="${candidate_artifact_root}/candidate"
-
-          python3 scripts/scan_soil_moisture_publisher.py validate \
-            --root "${candidate_root}"
 
           semantic_time="$(jq -er '.feed_build_time_utc' \
             "${candidate_root}/docs/data/scan_soil_moisture_latest_summary.json")"
@@ -165,6 +179,18 @@ jobs:
 
           python3 scripts/run_scan_operational.py audit-candidate \
             "${candidate_artifact_root}" "${RUNNER_TEMP}/scan-control/runtime-account.json"
+          SCAN_METADATA
+
+      - name: Record fixed-label SCAN outcome
+        if: ${{ always() && inputs.acquire_only != true }}
+        timeout-minutes: 1
+        env:
+          SCAN_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          SCAN_VALIDATION_OUTCOME: ${{ steps.validation.outcome }}
+          SCAN_METADATA_OUTCOME: ${{ steps.candidate_metadata.outcome }}
+        run: |
+          python3 scripts/run_scan_operational.py finalize "${RUNNER_TEMP}" \
+            "${SCAN_BUILD_OUTCOME}" "${SCAN_VALIDATION_OUTCOME}" "${SCAN_METADATA_OUTCOME}"
 
       - name: Upload validated SCAN publication candidate
         if: ${{ success() && inputs.acquire_only != true }}
@@ -188,6 +214,7 @@ jobs:
             ${{ runner.temp }}/scan-control/hosted-qualification.json
             ${{ runner.temp }}/scan-control/runtime-lock.json
             ${{ runner.temp }}/scan-control/runtime-account.json
+            ${{ runner.temp }}/scan-control/failure-summary.json
           if-no-files-found: warn
           retention-days: 14
 

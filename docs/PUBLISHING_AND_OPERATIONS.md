@@ -879,6 +879,32 @@ Raw child/provider logs stay off public logs/artifacts. Candidate upload require
 exactly the five products plus publisher metadata; control uploads use explicit
 safe paths. No private acquisition evidence is imported.
 
+The SCAN wrapper records fixed outcomes `BUILDER_EXCEPTION`,
+`ACCOUNT_REJECTED`, `RUNTIME_RECEIPT_FAILURE`, or `BUILT_ACCOUNT_COMPLETE`.
+The accounting predicate is unchanged; full-precision numeric operands are
+retained instead of rounding diagnostic timeout values. Only enumerated phases,
+allowlisted exception categories and projected numeric/enum accounting fields
+are public. Raw messages, arbitrary error classes and child output are not.
+Builder return and account acceptance remain separate facts, neither of which
+proves a valid product. The unchanged five-file validator runs separately with
+its output captured locally. Metadata preparation keeps the canonical CLI
+allowlist order and runs with captured output as well.
+
+An independent `always()` finalizer records `failure-summary.json` from bounded
+receipts and actual step outcomes, without reading raw logs. It distinguishes
+`VALIDATION_FAILURE` and `SUPERVISOR_FAILURE`; missing or inconsistent evidence
+cannot become `VALIDATED_CANDIDATE`. A filesystem failure can prevent a receipt
+write, and runner loss can prevent even the finalizer from executing. Such
+absence remains unverified, not successful. Only this exact additional safe
+JSON path is uploaded; local bounded directories and raw logs remain excluded.
+The finalizer cannot clear a failed step or authorize publication. Private
+acquire-only mode remains excluded from preparation and all these uploads.
+
+The earlier post-transport incident's `FAILED_OR_UNKNOWN` receipt does not
+identify the original builder/accounting cause. Evaluating a serialized account
+does not reconstruct its original in-memory precision or recover lost logs.
+Adding diagnostics does not release the provider hold or authorize another run.
+
 Initial fit reserves 60 minutes for setup/provisioning/qualification, 20 for
 acquisition, 15 for publication and 30 for queue/delivery/closure. Fit is checked
 again before acquisition and publication; bounds are not runtime predictions.
