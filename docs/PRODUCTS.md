@@ -1212,12 +1212,16 @@ publish repository data.
 
 These workflows must not be described as additional product families.
 
-### SNOTEL SMS current-WY snapshot (inactive, offline implementation)
+<a id="snotel-sms-current-wy-snapshot-inactive-offline-implementation"></a>
+
+### SNOTEL SMS current-WY snapshot (manual first-product commissioning)
 
 `scripts/soil_moisture/snotel_snapshot.py` implements the additive, versioned
 `snotel-sms-current-wy-1` saved-input product. Its future closed ownership is
 `docs/data/snotel-sms/index.json` plus `docs/data/snotel-sms/current-wy.json`.
-No product files, real catalog or values are installed by the offline gate.
+The accepted 32-station/98-sensor catalog is committed at
+`data/input/snotel_sms_catalog.json`. The first-product commissioning route is
+manual and finite; catalog presence is not observation acquisition or publication.
 The source-specific `scripts/snotel_sms_publisher.py` supplies pure validation,
 fresh-main reconciliation and staged-validation callbacks for the unchanged
 shared publisher. The local Phase B candidate adds a separately gated operating
@@ -1249,8 +1253,12 @@ The proposed `.github/workflows/build-snotel-sms-current-wy.yml` has only
 `prepare-candidate` job invokes `soil_network_workflow.py snotel-prepare` against
 the exact checked-out source commit and a separately release-approved, pinned
 public catalog. It reads prior product blobs from that explicit commit; absence
-requires explicit bootstrap and a partial/corrupt pair holds. No real catalog is
-included. At most 32 serial station requests use the unchanged transport, each
+requires explicit bootstrap and a partial/corrupt pair holds. The source-bound
+`snotel_first_run.py` host guard requires one exact finite
+source/run/attempt grant and an actual offline runner qualification before any
+provider call; see the finite first-product commissioning section in
+[soil operations](SOIL_MOISTURE_OPERATIONS.md). At most 32 serial station requests
+use the unchanged transport, each
 with one attempt, zero retries/redirects, 1 MiB body-read allowance and 60 seconds
 acquisition; aggregate ceilings are 32 MiB and 1,920 seconds. A station failure or
 Retry-After holds the whole candidate. Only the two validated product files and

@@ -24,7 +24,7 @@ permissions: {}
 
 jobs:
   prepare-candidate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -54,11 +54,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Qualify this runner offline before provider admission
+        if: ${{ inputs.acquire }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(python3 -c 'import sys; print(sys.version_info >= (3,12))')" = True
+          # The actual source-bound tests run unprivileged with no network route.
+          # No package installation, provider probe or private artifact upload.
+          timeout --signal=KILL 180s sudo unshare --net -- \
+            runuser -u "$(id -un)" -- env -i PATH="$PATH" TMPDIR="$RUNNER_TEMP" \
+            PYTHONDONTWRITEBYTECODE=1 \
+            python3 -B tests/soil_moisture/test_snotel_first_run.py \
+            > "$RUNNER_TEMP/snotel-offline-qualification.log" 2>&1
+          echo 'SNOTEL_ACTUAL_RUNNER_OFFLINE_QUALIFICATION_PASS'
+
       - name: Prepare complete bounded current-WY candidate
         id: prepare
         if: ${{ inputs.acquire }}
         shell: bash
         env:
+          ACQUIRE: ${{ inputs.acquire }}
+          SNOTEL_SMS_FIRST_RUN_JSON: ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON }}
           PUBLISH: ${{ inputs.publish }}
           BOOTSTRAP: ${{ inputs.bootstrap }}
           WINDOW_END: ${{ inputs.window_end }}
@@ -70,24 +88,7 @@ jobs:
           source_sha="$(git --no-optional-locks rev-parse HEAD)"
           test "$source_sha" = "$GITHUB_SHA"
           test "$RELEASE_APPROVED" = true
-          flags=(--acquire --release-approved)
-          if [[ "$PUBLISH" == true ]]; then flags+=(--publish); fi
-          if [[ "$BOOTSTRAP" == true ]]; then flags+=(--bootstrap); fi
-          python3 -B scripts/soil_network_workflow.py snotel-prepare \
-            --repo . --root "$RUNNER_TEMP/snotel-run" \
-            --source-sha "$source_sha" --prior-commit "$source_sha" \
-            --catalog-sha256 "$CATALOG_PIN" --roster-sha256 "$ROSTER_PIN" \
-            --window-end "$WINDOW_END" \
-            --budget-json '{"attempts":32,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920,"finalization_seconds":120}' \
-            "${flags[@]}"
-          python3 -B - <<'PY'
-          import json, os
-          from pathlib import Path
-          r=json.loads((Path(os.environ['RUNNER_TEMP'])/'snotel-run/result.json').read_bytes())
-          ready=r['candidate_ready'] and not r['synthetic'] and r['status']=='CANDIDATE_READY'
-          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-              f.write('candidate_ready='+str(ready).lower()+'\nsource_sha='+r['source_commit']+'\n')
-          PY
+          python3 -B scripts/snotel_first_run.py prepare
 
       - name: Upload only the validated public candidate
         if: ${{ steps.prepare.outputs.candidate_ready == 'true' }}
@@ -95,16 +96,16 @@ jobs:
         with:
           name: snotel-current-wy-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/snotel-run/transfer/candidate/docs/data/snotel-sms/index.json
-            ${{ runner.temp }}/snotel-run/transfer/candidate/docs/data/snotel-sms/current-wy.json
-            ${{ runner.temp }}/snotel-run/transfer/candidate-metadata.json
+            ${{ runner.temp }}/snotel-private/run/transfer/candidate/docs/data/snotel-sms/index.json
+            ${{ runner.temp }}/snotel-private/run/transfer/candidate/docs/data/snotel-sms/current-wy.json
+            ${{ runner.temp }}/snotel-private/run/transfer/candidate-metadata.json
           if-no-files-found: error
           retention-days: 2
 
   publish-to-main:
     needs: prepare-candidate
     if: ${{ inputs.acquire && inputs.publish && github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.candidate_ready == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
@@ -127,6 +128,7 @@ jobs:
 
       - name: Publish through the unchanged shared owner
         env:
+          SNOTEL_SMS_FIRST_RUN_JSON: ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON }}
           BRIM_LIVE_MAIN_PUBLISH: "true"
           SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source_sha }}
           CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
@@ -137,6 +139,7 @@ jobs:
           test "$(git --no-optional-locks rev-parse HEAD)" = "$SOURCE_SHA"
           test "$SOURCE_SHA" = "$GITHUB_SHA"
           test "$RELEASE_APPROVED" = true
+          python3 -B scripts/snotel_first_run.py publish
           python3 -B scripts/soil_network_workflow.py snotel-publish \
             --repo . --transfer "$RUNNER_TEMP/snotel-transfer" \
             --catalog-sha256 "$CATALOG_PIN" --roster-sha256 "$ROSTER_PIN"
