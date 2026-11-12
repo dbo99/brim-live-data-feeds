@@ -19,6 +19,15 @@ Sys.setenv(SCAN_HTTP_CAMPAIGN_SECONDS="0.9")
 h <- pt_scan_http_from_env(); Sys.sleep(.15)
 h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
 stopifnot(length(seen)==2L,seen[[2]]$timeout_ms<=750L,seen[[2]]$timeout_ms>0L)
+# Reproduced subtraction edge through the actual native backend, plus a
+# non-20-second request. No tolerance or minimum-duration inflation is allowed.
+backend<-getOption("brim.scan.http.backend")
+h<-pt_scan_make_http(87,2097151,182452223,1200,20,backend=backend,clock=function()12.078)
+h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
+stopifnot(h$snapshot()$receipts[[1]]$timeout_seconds==20,seen[[3]]$timeout_ms==20000L,seen[[3]]$connecttimeout_ms==20000L)
+h<-pt_scan_make_http(87,2097151,182452223,1200,3,backend=backend)
+h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
+stopifnot(seen[[4]]$timeout_ms<=3000L,seen[[4]]$timeout_ms>0L,seen[[4]]$connecttimeout_ms<=3000L)
 untrace("handle_setopt",where=asNamespace("curl"))
 # Same environment factory, 87 admitted in-process physical-backend invocations;
 # request 88 refuses before the backend. No external or loopback traffic here.
@@ -32,7 +41,7 @@ stopifnot(inherits(e,"scan_budget_exhausted"),calls==87L,h$snapshot()$requests==
 # Evaluate only the actual pure accounting predicate; never source the real
 # entry point or substitute synthetic provenance for a production campaign.
 expressions <- parse("scripts/run_scan_operational.R")
-for(expr in expressions)if(is.call(expr) && identical(expr[[1]],as.name("<-")) && identical(expr[[2]],as.name("scan_account_complete")))eval(expr)
+for(expr in expressions)if(is.call(expr) && identical(expr[[1]],as.name("<-")) && as.character(expr[[2]]) %in% c("scan_account_refusal","scan_account_complete"))eval(expr)
 a<-list(requests=29L,body_bytes=29,fatal=NULL,receipts=lapply(seq_len(29),function(i)list(attempt=i,method=if(i==1)"GET" else "POST",state="COMPLETE",body_bytes=1,timeout_seconds=20,status=200)))
 stopifnot(scan_account_complete(a),!scan_account_complete(NULL))
 for(field in c("state","body_bytes","status","method","timeout_seconds")){
