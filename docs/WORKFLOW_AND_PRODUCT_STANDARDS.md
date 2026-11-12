@@ -717,3 +717,11 @@ The selected-source integration and nonpublishing Linux test route are documente
 in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does not
 activate acquisition/publication, release real SNOTEL catalog data, or resolve
 the held history joins. Production and consumer readiness remain separate.
+
+The separate retained R11 bridge has only a manual trigger, one admitted first
+run/attempt, a 10-minute contents-read preparation job and a 15-minute
+contents-write job in the unchanged shared publication queue. Its artifact is
+exactly the approved two-file product plus new standard metadata. Source and
+staging identities are distinct; staging content is never executable. No provider
+opener, schedule or acquisition route is present. See
+[finite retained publication](PUBLISHING_AND_OPERATIONS.md#finite-retained-snotel-r11-publication).

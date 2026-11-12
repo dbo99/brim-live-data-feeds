@@ -4,6 +4,33 @@ This runbook describes current GitHub Actions publication, last-known-good
 behavior, incident response, rollback and recovery for the public live-feed
 repository.
 
+### Finite retained SNOTEL R11 publication
+
+`publish-snotel-retained-r11.yml` is manual-only and admits exactly run 1,
+attempt 1, on the reviewed main event SHA, before November 18, 2026 00:00 UTC.
+Admission reserves 10 minutes for preparation plus the complete 15-minute
+publisher timeout. It cannot acquire provider observations or enable a schedule.
+
+The provider-free `scripts/snotel_retained_candidate.py` binds one immutable
+root data-only commit, the exact two original product hashes, accepted catalog,
+roster, original generation, null parent, coverage cutoff and native clocks.
+Staging objects are never checked out or executed. Complete prior-subtree absence
+is required during preparation. Unexpected prior content holds the bridge.
+
+The public staging ref contains only `docs/data/snotel-sms/index.json` and
+`docs/data/snotel-sms/current-wy.json`. The short-lived Actions artifact adds only
+new standard candidate metadata, bound to the genuine Actions event SHA. That
+preparation clock does not replace the original acquisition, source-check or
+build clocks. Original private custody records are never uploaded.
+
+The unchanged shared publisher and SNOTEL callbacks receive the exact ordered
+allowlist: index first, current-WY second. Only the write job enters
+`brim-live-main-publish`, with cancellation false and queue max. No direct product
+push, provider retry, second dispatch or recurring authority is conferred.
+Official main and Pages delivery require separate verification; publication does
+not establish hosted acquisition or application acceptance. The dated retained
+snapshot must not be portrayed as continuing freshness.
+
 ### Finite retained SCAN snapshot publication
 
 `publish-scan-retained-c11.yml` is a one-shot, manual-only bridge for the

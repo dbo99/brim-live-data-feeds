@@ -1293,3 +1293,9 @@ The selected-source integration and nonpublishing Linux test route are documente
 in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does not
 activate acquisition/publication, release real SNOTEL catalog data, or resolve
 the held history joins. Production and consumer readiness remain separate.
+
+The separate manual-only `publish-snotel-retained-r11.yml` bridge may publish only
+the pinned original retained two-file snapshot through the existing shared
+publisher. It performs no acquisition. Exact finite run/source/staging admission,
+public artifact limits and retained-clock semantics are documented in
+[operations](PUBLISHING_AND_OPERATIONS.md#finite-retained-snotel-r11-publication).
