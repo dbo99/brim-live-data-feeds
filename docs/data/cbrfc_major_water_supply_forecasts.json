@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "product_id": "cbrfc_major_water_supply_forecasts",
   "roster_version": "cbrfc-colorado-river-v1.3.0",
-  "generated_at": "2026-11-04T21:55:25Z",
+  "generated_at": "2026-11-13T22:03:35Z",
   "publication_mode": "steady_state",
   "expected_record_count": 3,
   "actual_record_count": 3,
@@ -15,7 +15,7 @@
     "source_stale_count": 0,
     "stale_last_known_good_count": 1,
     "expired_count": 2,
-    "source_unavailable_count": 1,
+    "source_unavailable_count": 0,
     "failed_no_data_count": 0
   },
   "family_health": {
@@ -27,7 +27,7 @@
       "source_stale_count": 0,
       "stale_last_known_good_count": 0,
       "expired_count": 1,
-      "source_unavailable_count": 1,
+      "source_unavailable_count": 0,
       "failed_no_data_count": 0,
       "successful_attempt_count": 0,
       "failed_attempt_count": 1,
@@ -86,7 +86,7 @@
       "water_year": 2026,
       "forecast_type": "Unregulated",
       "status": "expired",
-      "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts.",
+      "missing_reason": "fetch_failed: http_failed: CBRFC returned HTTP 404.",
       "source_url": "https://www.cbrfc.noaa.gov/wsup/graph/espgraph_hc.html?id=GLDA3&year=2026",
       "retrieval_url": "https://www.cbrfc.noaa.gov/dbdata/station/espgraph/espgraph_data_hc.py?id=GLDA3&year=2026",
       "summary_url": "https://www.cbrfc.noaa.gov/dash/lp.php",
@@ -98,14 +98,14 @@
         "official_field_prefix": "off",
         "secondary_list_status": null,
         "secondary_list_diagnostic": null,
-        "error_class": "source_unavailable",
-        "error_message": "CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts.",
-        "failure_stage": "source"
+        "error_class": "fetch_failed",
+        "error_message": "http_failed: CBRFC returned HTTP 404.",
+        "failure_stage": "fetch"
       },
       "last_successful_retrieval_at": "2026-09-29T20:02:31Z",
-      "last_attempt_at": "2026-10-01T20:23:48Z",
-      "attempt_outcome": "source_unavailable",
-      "failure_stage": "source",
+      "last_attempt_at": "2026-11-13T22:03:34Z",
+      "attempt_outcome": "fetch_failed",
+      "failure_stage": "fetch",
       "metric_state": {
         "forecast_volume": {
           "status": "expired",
@@ -115,7 +115,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
+          "missing_reason": "fetch_failed: http_failed: CBRFC returned HTTP 404."
         },
         "percent_average": {
           "status": "expired",
@@ -125,7 +125,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
+          "missing_reason": "fetch_failed: http_failed: CBRFC returned HTTP 404."
         },
         "percent_median": {
           "status": "expired",
@@ -135,7 +135,7 @@
           "stale_since": "2026-08-01T00:00:00-07:00",
           "map_eligible": false,
           "popup_eligible": true,
-          "missing_reason": "source_unavailable: CBRFC GLDA3 has no official forecast issue for water year 2027; blank-date zero sentinels were not accepted as forecasts."
+          "missing_reason": "fetch_failed: http_failed: CBRFC returned HTTP 404."
         }
       },
       "value_origin": "last_known_good",
