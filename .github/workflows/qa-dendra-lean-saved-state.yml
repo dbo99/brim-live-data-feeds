@@ -1,0 +1,51 @@
+name: Dendra lean saved-state qualification (manual candidate)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      run_saved_qa:
+        description: Run synthetic offline qualification only
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  saved-state:
+    if: ${{ inputs.run_saved_qa }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact dispatched source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Qualify synthetic acquisition and relocated state without network
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Refuse if Linux network isolation is unavailable. No fallback.
+          sudo unshare --net -- python3 -B - <<'PY'
+          import sys
+          import unittest
+
+          def deny_network(event, args):
+              if event.startswith('socket.'):
+                  raise PermissionError('Synthetic Dendra QA denies network')
+          sys.addaudithook(deny_network)
+          names = [
+              'tests.dendra.test_live_cli.FamilyTests.test_pairs_keep_independent_p1_roots_readback_and_spent_runs',
+              'tests.dendra.test_live_cli.SupervisedRangeTests.test_no_independent_authority_no_output_or_dispatch',
+              'tests.dendra.test_live_persistence.PersistenceTests.test_relocated_authority_unknown_charge_and_resume',
+              'tests.dendra.test_live_persistence.PersistenceTests.test_missing_and_corrupt_references_fail_closed',
+          ]
+          suite = unittest.defaultTestLoader.loadTestsFromNames(names)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if result.testsRun != len(names) or result.skipped or not result.wasSuccessful():
+              raise SystemExit(1)
+          PY

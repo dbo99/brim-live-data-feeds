@@ -1299,3 +1299,25 @@ the pinned original retained two-file snapshot through the existing shared
 publisher. It performs no acquisition. Exact finite run/source/staging admission,
 public artifact limits and retained-clock semantics are documented in
 [operations](PUBLISHING_AND_OPERATIONS.md#finite-retained-snotel-r11-publication).
+
+
+## Lean range source-integration candidate (local, unactivated)
+
+The lean range route uses `scripts/dendra/live_cli.py` with the existing
+provider, P1 state and private range-export modules. Its attended `family_child`
+interface has no default transport or grant issuer. Source integration does
+not authorize provider access, a public feed or a schedule.
+
+`.github/workflows/qa-dendra-lean-saved-state.yml` is a local manual-only QA
+candidate, default-off through `run_saved_qa`. It exercises synthetic family
+pairs, denied authority, relocated state with retained UNKNOWN charges, and
+missing/corrupt object refusal. The workload runs in a Linux network namespace
+with no external network access and an additional Python socket audit guard.
+It uses read-only repository permission, no secrets and no artifact upload.
+Local validation does not establish workflow registration or a hosted run.
+
+The QA fixtures generate synthetic identities and responses without a private
+catalog. Real state, raw responses, grants, private plans and consumer previews
+remain outside the public source selection. Actual hosted private-state
+restore and acquisition require separate custody/input and execution approval.
+See the [consumer boundary](BRIM_CONSUMER_CONTRACT.md#lean-private-v2-preview-boundary).

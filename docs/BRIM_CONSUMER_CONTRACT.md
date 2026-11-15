@@ -888,3 +888,26 @@ The selected-source integration and nonpublishing Linux test route are documente
 in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does not
 activate acquisition/publication, release real SNOTEL catalog data, or resolve
 the held history joins. Production and consumer readiness remain separate.
+
+
+## Lean private V2 preview boundary
+
+The lean range candidate is not a public product URL or an activated BRIM
+consumer. A `dendra-private-range-preview-2` document carries V2 cells with
+separate `current`, `last_candidate` and `latest_attempt` fields. An empty,
+failed, held or unqueried attempt cannot turn an old candidate into a current
+value. Excluded streams belong in a distinct disposition record, not invented
+date cells. P1 object references must be expanded and hash-verified before use.
+
+Native Average samples retain the 08:00 UTC target, original source timestamp,
+fixed UTC-08 source date and unknown support interval. They are neither
+instantaneous observations nor whole-day arithmetic means. Percent uses ×1;
+resolved VolumetricWaterContent uses ×100. Nullable depth, genuine zeros,
+complete-empty gaps and absent provider-quality claims remain explicit.
+`CANDIDATE_NOT_ADMITTED` and `publication_eligible=false` remain binding.
+
+A private family review manifest may group these unchanged cells and their
+dispositions; it does not establish historical-reference admission, percentile
+ranks, public compatibility or application support. Source-only integration,
+manual saved-input QA, real hosted acquisition and eventual versioned public
+publisher/consumer cutover are separate release decisions.
