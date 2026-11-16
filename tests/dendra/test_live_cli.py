@@ -200,11 +200,14 @@ class CLITests(unittest.TestCase):
             self.assertFalse((root/'output').exists())
 
 
-def family_fixture(root, pairs=2, *, live=False):
+def family_fixture(root, pairs=2, *, live=False, target_dates=None, clock='2026-11-14T10:00:00Z'):
     """Fabricated identities and bodies; no private roster or grant material."""
     from scripts.dendra.live_metadata import FAMILY_PAIR
     from scripts.dendra.live_provider import source_fingerprint
-    template=range_plan(root,days_back=2);members=[]
+    days=['2026-11-13','2026-11-14'] if target_dates is None else target_dates
+    template=range_plan(root,days_back=len(days),clock=clock);members=[]
+    positions=2*len(days);attempts=5+positions*template['limits']['pages_per_stream']
+    rows=positions*template['limits']['pages_per_stream']*2016
     for pair in range(pairs):
         p=deepcopy(template);roster={}
         for i,r in enumerate(template['roster'].values()):
@@ -215,17 +218,17 @@ def family_fixture(root, pairs=2, *, live=False):
                 crosswalk_sha256='c'*64,configuration_sha256=digest([dict(begins_at='2025-01-01T00:00:00.000Z')]))
             roster[sid]=r
         p.update(roster=roster,output_root=str(root/f'pair-{pair:02}'),grant_id=f'SYNTHETIC-FAMILY-{pair}',
-            persistence_version=2,ledger_attempt_limit=SEASON['attempts'],stream_day_budget=4,
-            range_targets=[[s,d] for d in ['2026-11-13','2026-11-14'] for s in sorted(roster)])
-        p['limits'].update(attempts=17,observation_rows=24192,response_bytes=1024**2,aggregate_bytes=2*1024**2)
+            persistence_version=2,ledger_attempt_limit=SEASON['attempts'],stream_day_budget=positions,target_day=max(days),
+            range_targets=[[s,d] for d in days for s in sorted(roster)])
+        p['limits'].update(attempts=attempts,observation_rows=rows,response_bytes=1024**2,aggregate_bytes=2*1024**2)
         if live:p.update(status='APPROVED',representation='LIVE_PROVIDER')
         members.append(p)
     child=dict(version='dendra-family-child-1',output_root=str(root),source_sha256=source_fingerprint(),
         not_before=template['not_before'],expires_at=template['expires_at'],members=members,
-        reservation=dict(gets=pairs*17,body_bytes=pairs*2*1024**2,observation_rows=pairs*24192))
+        reservation=dict(gets=pairs*attempts,body_bytes=pairs*2*1024**2,observation_rows=pairs*rows))
     return dict(version='dendra-family-campaign-1',output_root=str(root),source_sha256=source_fingerprint(),
-        target_dates=['2026-11-13','2026-11-14'],children=[child],
-        reservation=dict(gets=pairs*17,body_bytes=pairs*2*1024**2,streams=pairs*2,cells=pairs*4))
+        target_dates=days,children=[child],
+        reservation=dict(gets=pairs*attempts,body_bytes=pairs*2*1024**2,streams=pairs*2,cells=pairs*positions))
 
 
 class FamilyTests(unittest.TestCase):
@@ -252,6 +255,132 @@ class FamilyTests(unittest.TestCase):
         result=live_cli.family_child(c,0,opener=kw.pop('opener',opener),now=clock.now,
                                     monotonic=clock.mono,wait=clock.wait,**kw)
         return result,fixtures
+
+    def test_one_and_two_day_reservations_and_child_readback(self):
+        from scripts.dendra.live_range import validate_family_campaign
+        self.root.mkdir(mode=0o700)
+        for days in (['2026-11-14'],['2026-11-13','2026-11-14']):
+            for pages in (1,3):
+                with self.subTest(days=days,pages=pages):
+                    c=family_fixture(self.root/f'{len(days)}-{pages}',target_dates=days)
+                    child=c['children'][0];positions=2*len(days);gets=5+positions*pages;rows=positions*pages*2016
+                    for p in child['members']:p['limits'].update(pages_per_stream=pages,attempts=gets,observation_rows=rows)
+                    child['reservation'].update(gets=2*gets,observation_rows=2*rows);c['reservation']['gets']=2*gets
+                    self.assertEqual(validate_family_campaign(c)['cells'],2*positions)
+                    result,fixtures=self.execute(c)
+                    self.assertEqual(result['unstarted_pair_count'],0)
+                    self.assertEqual(sum(len(f.calls) for f in fixtures),2*(5+positions))
+                    for p,r in zip(child['members'],result['results']):
+                        with closing(State(Path(p['output_root']),series_binding(p['roster'],2027,20000,version=2))) as state:
+                            self.assertEqual(len(state.data['attempts']),5+positions)
+                            self.assertEqual(len(state.data['cells']),positions)
+                            self.assertEqual(verify_range(state.root,r['verification']['manifest_path'],
+                                r['verification']['manifest_sha256'],state.binding)['cells'],positions)
+
+    def test_one_day_append_preserves_old_cells_charges_and_fresh_readback(self):
+        import subprocess
+        import sys
+        from urllib.parse import parse_qs,urlsplit
+        c=family_fixture(self.root,pairs=1,live=True);pin=digest(c['children'][0])
+        self.execute(c,live=True,authorize=lambda h,at:h==pin)
+        p=c['children'][0]['members'][0];binding=series_binding(p['roster'],2027,20000,version=2)
+        with closing(State(Path(p['output_root']),binding)) as state:
+            old_cells=deepcopy(state.data['cells']);old_attempts=deepcopy(state.data['attempts']);old_totals=season_totals(state.data)
+        self.assertEqual((len(old_cells),len(old_attempts)),(4,9))
+        n=family_fixture(self.root,pairs=1,live=True,target_dates=['2026-11-15'],clock='2026-11-16T10:00:00Z')
+        p=n['children'][0]['members'][0];p['grant_id']+='-APPEND';pin=digest(n['children'][0])
+        clock,opener,fixtures=self.injected(n);key='/'.join(p['range_targets'][0]);fixtures[0].change[key]=0
+        result=live_cli.family_child(n,0,live=True,authorize=lambda h,at:h==pin,opener=opener,
+            now=clock.now,monotonic=clock.mono,wait=clock.wait)
+        calls=fixtures[0].calls;self.assertEqual(len(calls),7)
+        queried=[parse_qs(urlsplit(url).query)['time[$gte]'][0][:10] for url in calls if '/datapoints?' in url]
+        self.assertEqual(queried,['2026-11-15']*2)
+        with closing(State(Path(p['output_root']),binding)) as state:
+            self.assertEqual(len(state.data['cells']),6)
+            self.assertEqual({k:state.data['cells'][k] for k in old_cells},old_cells)
+            self.assertEqual(state.data['attempts'][:9],old_attempts)
+            added=state.data['attempts'][9:];self.assertEqual(len(added),7)
+            self.assertEqual(season_totals(state.data)['charged_bytes'],old_totals['charged_bytes']+sum(a['bytes'] for a in added))
+            self.assertEqual(season_totals(state.data)['charged_rows'],old_totals['charged_rows']+sum(a['rows'] for a in added))
+            self.assertEqual(state.data['cells'][key]['current']['candidate_value_vwc_percent'],0)
+            self.assertEqual(state.data['cells'][key]['current']['source_timestamp_utc'],'2026-11-15T08:00:00.000Z')
+            expected=dict(cells=state.data['cells'],attempts=state.data['attempts'],totals=season_totals(state.data))
+            verification=result['results'][0]['verification']
+            self.assertEqual(verify_range(state.root,verification['manifest_path'],verification['manifest_sha256'],binding)['cells'],6)
+        code='''from contextlib import closing
+from pathlib import Path
+import sys
+from scripts.dendra.history_acquisition.safety import decode,encode
+from scripts.dendra.live_state import State,season_totals
+with closing(State(Path(sys.argv[1]),decode(sys.argv[2].encode()))) as state:
+    sys.stdout.buffer.write(encode(dict(cells=state.data['cells'],attempts=state.data['attempts'],totals=season_totals(state.data))))
+'''
+        fresh=subprocess.run([sys.executable,'-B','-c',code,p['output_root'],encode(binding).decode()],
+            cwd=Path(__file__).resolve().parents[2],capture_output=True,check=True,timeout=30)
+        self.assertEqual(decode(fresh.stdout),expected)
+
+    def test_one_day_missing_empty_and_failed_are_not_values(self):
+        self.root.mkdir(mode=0o700)
+        for outcome in ('MISSING_VALUE','COMPLETE_EMPTY','FAILED'):
+            with self.subTest(outcome=outcome):
+                c=family_fixture(self.root/outcome,pairs=1,target_dates=['2026-11-14'])
+                p=c['children'][0]['members'][0];key='/'.join(p['range_targets'][0])
+                clock,opener,fixtures=self.injected(c);f=fixtures[0]
+                if outcome=='MISSING_VALUE':f.change[key]=None
+                elif outcome=='COMPLETE_EMPTY':f.empty.add(key)
+                else:f.fail.add(key)
+                live_cli.family_child(c,0,opener=opener,now=clock.now,monotonic=clock.mono,wait=clock.wait)
+                with closing(State(Path(p['output_root']),series_binding(p['roster'],2027,20000,version=2))) as state:
+                    cell=state.data['cells'][key];self.assertIsNone(cell['current'])
+                    self.assertEqual(cell['latest_attempt']['outcome'],outcome)
+                    if outcome=='FAILED':
+                        a=state.data['attempts'][-1];self.assertEqual(a['status'],'AMBIGUOUS')
+                        self.assertEqual(season_totals(state.data)['charged_bytes'],sum(x['bytes'] for x in state.data['attempts'][:-1])+a['cap'])
+
+    def test_malformed_dates_and_reservations_refuse_before_http(self):
+        for n in (1,2):
+            original=family_fixture(self.root,target_dates=['2026-11-13','2026-11-14'][-n:])
+            cases=[]
+            for days in ([],['2026-11-14']*2,['2026-11-14','2026-11-13'],
+                         ['2026-11-12','2026-11-13','2026-11-14'],['bad-date'],[None]):
+                bad=deepcopy(original);bad['target_dates']=days;cases.append(bad)
+            for field in ('stream_day_budget','metadata','attempts','observation_rows','child_gets',
+                          'child_body_bytes','child_observation_rows','campaign_gets','campaign_body_bytes','campaign_streams','campaign_cells'):
+                for delta in (-1,1):
+                    bad=deepcopy(original);child=bad['children'][0];p=child['members'][0]
+                    if field.startswith('child_'):child['reservation'][field[6:]]+=delta
+                    elif field.startswith('campaign_'):bad['reservation'][field[9:]]+=delta
+                    elif field=='stream_day_budget':p[field]+=delta
+                    else:p['limits'][field]+=delta
+                    cases.append(bad)
+            for change in ('root','identity','grant','targets'):
+                bad=deepcopy(original);a,b=bad['children'][0]['members']
+                if change=='root':b['output_root']=a['output_root']
+                elif change=='identity':b['roster']=deepcopy(a['roster']);b['range_targets']=deepcopy(a['range_targets'])
+                elif change=='grant':b['grant_id']=a['grant_id']
+                else:b['range_targets'][0]=b['range_targets'][1]
+                cases.append(bad)
+            clock,opener,fixtures=self.injected(original)
+            for i,bad in enumerate(cases):
+                with self.subTest(days=n,case=i),self.assertRaises(Hold):
+                    live_cli.family_child(bad,0,opener=opener,now=clock.now,monotonic=clock.mono,wait=clock.wait)
+                self.assertFalse(self.root.exists());self.assertTrue(all(not f.calls for f in fixtures))
+
+    def test_one_day_authority_expiry_and_old_runtime_refuse_before_http(self):
+        from scripts.dendra.live_provider import source_fingerprint
+        old='ac46d3eb7fb5ada8b2f4ed411759f030489d67f60c78f1f9f4cbdbe827050fc7'
+        self.assertNotEqual(source_fingerprint(),old)
+        for reason in ('unauthorized','expired','old-runtime'):
+            c=family_fixture(self.root,live=True,target_dates=['2026-11-14']);clock,opener,fixtures=self.injected(c)
+            if reason=='expired':clock.wait(300)
+            elif reason=='old-runtime':
+                c['source_sha256']=old;c['children'][0]['source_sha256']=old
+                for p in c['children'][0]['members']:p['source_sha256']=old
+            with self.subTest(reason=reason),self.assertRaises(Hold):
+                live_cli.family_child(c,0,live=True,authorize=lambda h,at:reason!='unauthorized',opener=opener,
+                    now=clock.now,monotonic=clock.mono,wait=clock.wait)
+            self.assertFalse(self.root.exists());self.assertTrue(all(not f.calls for f in fixtures))
+
 
     def test_pairs_keep_independent_p1_roots_readback_and_spent_runs(self):
         c=family_fixture(self.root);result,fixtures=self.execute(c)

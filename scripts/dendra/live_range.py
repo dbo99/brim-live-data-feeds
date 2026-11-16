@@ -91,7 +91,9 @@ def validate_family_campaign(campaign, *, live=False):
     require(root.is_absolute() and root==root.resolve(), 'Canonical family root')
     children=campaign['children'];days=campaign['target_dates']
     require(type(children) is list and 1<=len(children)<=4 and
-            type(days) is list and len(days)==2 and days==sorted(set(days)), 'Finite family windows/dates')
+            type(days) is list and len(days) in (1,2) and all(type(d) is str for d in days) and
+            days==sorted(set(days)), 'Finite family windows/dates')
+    positions=2*len(days)
     seen_roots=set();seen_streams=set();grants=set();family=None;previous=None;total_gets=0;total_bytes=0
     for child in children:
         require(child['version']=='dendra-family-child-1' and child['output_root']==str(root) and
@@ -105,7 +107,7 @@ def validate_family_campaign(campaign, *, live=False):
         for p in members:
             validate_plan(p,p['not_before'],live=live)
             require(p['not_before']==child['not_before'] and p['expires_at']==child['expires_at'] and
-                    p.get('persistence_version')==2 and p['stream_day_budget']==4,
+                    p.get('persistence_version')==2 and p['stream_day_budget']==positions,
                     'Shared child deadline and unchanged P1 persistence')
             target=Path(p['output_root'])
             require(target.parent==root and target==target.resolve() and str(target) not in seen_roots,
@@ -113,7 +115,7 @@ def validate_family_campaign(campaign, *, live=False):
             require(p['grant_id'] not in grants, 'Distinct member run identity')
             seen_roots.add(str(target));grants.add(p['grant_id'])
             require(p['range_targets']==[[sid,d] for d in days for sid in sorted(p['roster'])],
-                    'Exact two-date member targets')
+                    'Exact selected-date member targets')
             for sid,r in p['roster'].items():
                 require(r.get('selection',{}).get('policy')==FAMILY_PAIR and sid not in seen_streams,
                         'Explicit family membership without duplicate stream writes')
@@ -121,14 +123,14 @@ def validate_family_campaign(campaign, *, live=False):
                 require(r['family']==family, 'Single campaign family')
                 seen_streams.add(sid)
             limits=p['limits']
-            require(limits['metadata']==5 and limits['attempts']==5+4*limits['pages_per_stream'] and
-                    limits['observation_rows']==4*limits['pages_per_stream']*2016,
+            require(limits['metadata']==5 and limits['attempts']==5+positions*limits['pages_per_stream'] and
+                    limits['observation_rows']==positions*limits['pages_per_stream']*2016,
                     'Complete finite member reservation')
             gets+=limits['attempts'];body+=limits['aggregate_bytes'];rows+=limits['observation_rows']
         require(child['reservation']==dict(gets=gets,body_bytes=body,observation_rows=rows) and
                 gets<=150 and body<=16*1024**2, 'Child reservation conservation')
         total_gets+=gets;total_bytes+=body
     require(total_gets<=500 and total_bytes<=64*1024**2 and campaign['reservation']==
-            dict(gets=total_gets,body_bytes=total_bytes,streams=len(seen_streams),cells=2*len(seen_streams)),
+            dict(gets=total_gets,body_bytes=total_bytes,streams=len(seen_streams),cells=len(days)*len(seen_streams)),
             'Aggregate family reservation conservation')
     return campaign['reservation']
