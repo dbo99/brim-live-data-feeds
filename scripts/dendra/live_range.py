@@ -7,6 +7,67 @@ from .live_sampling import window
 from .transport import parse_utc
 
 
+def diagnostic_window(plan, now):
+    """Run-bound input only; never a family default or operational target set."""
+    d = plan['diagnostic_interval']
+    require(type(d) is dict and set(d) == {'version','start_day','through_day','comparison_days'} and
+            d['version'] == 'dendra-single-stream-interval-diagnostic-1' and
+            'range_targets' not in plan and plan.get('admission') is False and
+            plan.get('publication') is False and len(plan['roster']) == 1,
+            'Isolated single-stream comparison-only diagnostic')
+    selected = dates(plan['water_year'],now,start=d['start_day'],through=d['through_day'])
+    require(len(selected) <= 28 and plan['target_day'] == selected[-1] and
+            type(d['comparison_days']) is list and 0 < len(d['comparison_days']) <= 2 and
+            d['comparison_days'] == sorted(set(d['comparison_days'])) and
+            all(day in selected for day in d['comparison_days']), 'Finite diagnostic dates/comparators')
+    return dict(start=window(selected[0],now)['start'],end=window(selected[-1],now)['end'])
+
+
+def diagnostic_native_rows(pages):
+    """Collapse inclusive page overlap, retaining true native multiplicities.
+
+    Called only after the existing paginator establishes interval completion.
+    The next page must replay every member of the prior trailing group; it may
+    complete a split group. Changed/missing occurrences hold, never deduplicate
+    differing source records or infer a provider correction.
+    """
+    from collections import Counter
+    from .history_acquisition.safety import encode
+    rows = []
+    for page in pages:
+        if rows:
+            cursor = parse_utc(rows[-1]['t'])
+            old = [r for r in rows if parse_utc(r['t']) == cursor]
+            overlap = [r for r in page if parse_utc(r['t']) == cursor]
+            before, after = Counter(map(encode,old)), Counter(map(encode,overlap))
+            require(not (before-after), 'Diagnostic inclusive boundary group changed or disappeared')
+            rows = [r for r in rows if parse_utc(r['t']) < cursor]
+        rows.extend(deepcopy(page))
+    return rows
+
+
+def diagnostic_projection(raw, admission, plan, evidence):
+    """Pure diagnostic candidates; no cell, accepted pointer or coverage writer."""
+    from .live_product import candidate_sample_v2
+    broad = diagnostic_window(plan,plan['not_before'])
+    require(evidence.get('query_complete') is True and evidence.get('diagnostic_only') is True and
+            all(parse_utc(broad['start']) <= parse_utc(r['t']) < parse_utc(broad['end']) for r in raw),
+            'Complete bounded diagnostic evidence required')
+    require(admission['metadata']['identity']['stream_id'] == next(iter(plan['roster'])) and
+            parse_utc(admission['metadata']['scope']['start']) <= parse_utc(broad['start']) and
+            parse_utc(admission['metadata']['scope']['end']) >= parse_utc(broad['end']),
+            'Whole-interval metadata qualification required')
+    result = {}
+    for day in dates(plan['water_year'],plan['not_before'],start=plan['diagnostic_interval']['start_day'],
+                     through=plan['diagnostic_interval']['through_day']):
+        win = window(day,plan['not_before'])
+        selected = [r for r in raw if parse_utc(win['start']) <= parse_utc(r['t']) < parse_utc(win['end'])]
+        result[day] = dict(native_records=deepcopy(selected),
+            candidate=candidate_sample_v2(selected,admission,day,plan['not_before'],evidence))
+    return dict(diagnostic_only=True,admission=False,publication_eligible=False,
+                operational_coverage_changed=False,daily_diagnostics=result)
+
+
 def series_binding(roster, water_year, attempt_limit=4096, *, version=1):
     from .live_metadata import validate_roster
     from .live_state import P1,SEASON

@@ -19,8 +19,9 @@ VERSION = 'dendra-selected-fresh-metadata-1'
 FAMILY_PAIR = 'dendra-exact-family-pair-1'
 
 
-def validate_roster(roster):
-    require(type(roster) is dict and len(roster) == 2, 'Exactly two streams per lineage')
+def validate_roster(roster, *, diagnostic=False):
+    require(type(roster) is dict and len(roster) == (1 if diagnostic else 2),
+            'One diagnostic stream or exactly two streams per lineage')
     if digest(roster) == ROSTER_SHA256: return
     # Explicit new pair policy, never an enlargement of the original pilot root.
     # Evidence pins select identities; independent exact-plan approval authorizes
@@ -46,7 +47,7 @@ def validate_roster(roster):
         require(type(r['family']['organization_id']) is str and
                 re.fullmatch('[a-f0-9]{24}',r['family']['organization_id']), 'Family identity')
         families.append(r['family'])
-    require(families[0] == families[1], 'One exact family per pair')
+    require(all(f == families[0] for f in families), 'One exact family per pair')
 
 
 def payload(body):
@@ -96,11 +97,13 @@ def vocabulary(value):
 
 
 def admit_all(state, plan, now, *, partial=False):
-    validate_roster(plan['roster'])
+    diagnostic = 'diagnostic_interval' in plan
+    validate_roster(plan['roster'], diagnostic=diagnostic)
     require(state.binding['plan_sha256'] == digest(plan), 'Metadata plan binding')
     records = [a for a in state.data['attempts'] if a['context']['kind'] != 'observations']
-    require((0 < len(records) <= 5 if partial else len(records) == 5) and all(a['status'] == 'RECEIVED' and a['details']['complete'] and
-            a['context']['plan_sha256'] == digest(plan) for a in records), 'Five completed source metadata receipts required')
+    count = 3 if diagnostic else 5
+    require((0 < len(records) <= count if partial else len(records) == count) and all(a['status'] == 'RECEIVED' and a['details']['complete'] and
+            a['context']['plan_sha256'] == digest(plan) for a in records), 'Complete source metadata receipts required')
     by_key = {}
     for a in records:
         key = (a['context']['kind'],a['context']['stream_id'])
@@ -115,6 +118,9 @@ def admit_all(state, plan, now, *, partial=False):
         by_key[key] = (payload(b),a)
     vocabulary(by_key[('unit-vocabulary',None)][0])
     win = window(plan['target_day'],now)
+    if diagnostic:
+        from .live_range import diagnostic_window
+        win = diagnostic_window(plan,now)
     results = {}
     for sid, expected in plan['roster'].items():
         if partial and ('station',sid) not in by_key: continue
@@ -194,8 +200,9 @@ def acquire(provider):
         provider.state.data['provider']['closed']=True
         provider.state.data['provider']['failure']='METADATA_ADMISSION_HOLD'
         provider.state.commit()
-        for sid in provider.plan['roster']:
-            provider.state.outcome(sid+'/'+provider.plan['target_day'],provider.clock(),status='HELD')
+        if 'diagnostic_interval' not in provider.plan:
+            for sid in provider.plan['roster']:
+                provider.state.outcome(sid+'/'+provider.plan['target_day'],provider.clock(),status='HELD')
         raise
 
 

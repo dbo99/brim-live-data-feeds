@@ -45,9 +45,18 @@ def validate_plan(plan, now, *, live=False):
     from .live_metadata import validate_roster
     require(plan['version'] == VERSION and plan['status'] == ('APPROVED' if live else 'OFFLINE_ONLY'),
             'Separate finite live approval required')
-    validate_roster(plan['roster'])
+    diagnostic = 'diagnostic_interval' in plan
+    validate_roster(plan['roster'], diagnostic=diagnostic)
     limits = plan['limits']
     ceilings = dict(LIMITS)
+    if diagnostic:
+        from .live_range import diagnostic_window
+        diagnostic_window(plan,now)
+        require(plan.get('representation') == 'LIVE_PROVIDER' if live else
+                plan.get('representation') in ('SYNTHETIC_INJECTED','MIXED_SAVED_AND_SYNTHETIC'),
+                'Explicit diagnostic provenance')
+        ceilings.update(attempts=6,metadata=3,response_bytes=1024**2,
+                        aggregate_bytes=2*1024**2,observation_rows=6048)
     if 'range_targets' in plan:
         from .live_range import validate_range_plan
         validate_range_plan(plan,now,live=live)
@@ -61,7 +70,7 @@ def validate_plan(plan, now, *, live=False):
     require(plan['source_sha256'] == source_fingerprint(), 'Approved source changed')
     lo, hi, at = map(parse_utc, (plan['not_before'],plan['expires_at'],now))
     require(lo <= at < hi and (hi-lo).total_seconds() <= 300, 'Grant expired/not yet valid')
-    return window(plan['target_day'], now)
+    return diagnostic_window(plan,now) if diagnostic else window(plan['target_day'], now)
 
 
 def spec(plan, kind, sid=None, cursor=None, day=None):
@@ -80,7 +89,11 @@ def spec(plan, kind, sid=None, cursor=None, day=None):
                 require([sid,day] in plan['range_targets'], 'Target outside explicit range plan')
             else:
                 require(day is None, 'Legacy one-day request')
-            win = window(day or plan['target_day'], plan['not_before'])
+            if 'diagnostic_interval' in plan:
+                from .live_range import diagnostic_window
+                win = diagnostic_window(plan,plan['not_before'])
+            else:
+                win = window(day or plan['target_day'], plan['not_before'])
             require(cursor is not None and parse_utc(win['start']) <= parse_utc(cursor) < parse_utc(win['end']), 'Cursor scope')
             url = BASE+'datapoints?'+urlencode({'datastream_id':sid,'time[$gte]':format_utc(cursor),
                 'time[$lt]':win['end'],'$sort[time]':1,'$limit':2016})
@@ -125,6 +138,7 @@ class Provider:
         self.win = validate_plan(plan, self.clock(), live=live)
         self.pin = digest(plan)
         self.ranged = 'range_targets' in plan
+        self.diagnostic = 'diagnostic_interval' in plan
         if self.ranged:
             from .live_range import series_binding
             require(state.binding == series_binding(plan['roster'],plan['water_year'],plan['ledger_attempt_limit'],
@@ -132,6 +146,10 @@ class Provider:
                     'Range state/roster/year binding')
         else:
             require(state.binding.get('plan_sha256') == self.pin, 'State/grant binding')
+        if self.diagnostic:
+            require(state.binding.get('lineage') == 'dendra-isolated-interval-diagnostic-1' and
+                    not state.data['cells'] and not state.data['revisions'],
+                    'Diagnostic requires isolated receipt-only state')
         repo=Path(__file__).resolve().parents[2]
         require(str(state.root)==plan['output_root'] and repo not in (state.root,*state.root.parents) and
                 state.root.stat().st_mode & 0o077 == 0, 'Owner-private granted output root required')
@@ -181,7 +199,10 @@ class Provider:
         kind, sid = request_spec['kind'], request_spec['stream_id']
         if kind == 'observations':
             from .live_metadata import admit_all
-            if self.ranged:
+            if self.diagnostic:
+                from .live_metadata import admit_v2
+                admit_v2(self.state,self.plan,self.clock())
+            elif self.ranged:
                 admissions(self.state,self.plan,day,self.clock(),self.start)
             else:
                 admit_all(self.state,self.plan,self.clock())  # Fresh source gates before every physical page.
@@ -263,7 +284,7 @@ class Provider:
             self.check_authority()
             self.state.receive(ordinal,bytes(body),status='RECEIVED',rows=rows,
                 details=dict(status=status,headers=header_info,complete=complete,retrieved_at=self.clock(),clock_kind='LIVE_PROVIDER' if self.live else 'OFFLINE_DRY_RUN'))
-            if self.ranged:
+            if self.ranged or self.diagnostic:
                 self.state.data['attempts'][ordinal]['details']['saved_provenance']=(dict(representation='LIVE_PROVIDER')
                     if self.live else deepcopy(getattr(response,'saved_provenance',{'representation':'SYNTHETIC_INJECTED'})))
                 self.state.commit()
@@ -295,10 +316,17 @@ class Provider:
         try:
             envelope = DendraFetcher(opener=opener,max_attempts=1,max_pages=self.plan['limits']['pages_per_stream'],
                 page_size=2016,now_fn=self.now,sleep_fn=lambda _:None).fetch_interval(sid,win['start'],win['end'])
-            return raw, dict(kind='LIVE_PROVIDER' if self.live else 'OFFLINE_DRY_RUN',pages=receipts,
-                             envelope_sha256=envelope['content_sha256'],query_completed_at=self.clock())
+            evidence = dict(kind='LIVE_PROVIDER' if self.live else 'OFFLINE_DRY_RUN',pages=receipts,
+                            envelope_sha256=envelope['content_sha256'],query_completed_at=self.clock())
+            if self.diagnostic:
+                from .live_range import diagnostic_native_rows
+                pages = [shape(read(self.state.root/'objects'/r['body_sha256']),sid)['data'] for r in receipts]
+                raw = diagnostic_native_rows(pages)
+                evidence.update(query_complete=True,diagnostic_only=True,
+                                consumed_rows=sum(r['rows'] for r in receipts),interval_native_rows=len(raw))
+            return raw, evidence
         except BaseException:
-            if not self.ranged:
+            if not self.ranged and not self.diagnostic:
                 self.state.outcome(sid+'/'+self.plan['target_day'],self.clock(),status='FAILED')
             self.state.data['provider']['closed']=True;self.state.commit()
             raise
