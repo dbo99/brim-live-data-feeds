@@ -170,4 +170,41 @@ class RangeTests(unittest.TestCase):
         self.assertEqual(len(ev['pages']),3);self.assertEqual({r['t'][:10] for r in raw},{'2026-10-14','2026-10-15'})
 
 
+def year_plan(root, year, day, clock):
+    """Explicit synthetic one-day plan through the unchanged provider seam."""
+    p=fixture.plan(root)
+    p.update(not_before=clock,expires_at=(fixture.parse_utc(clock)+timedelta(seconds=300)).isoformat().replace('+00:00','Z'),
+             grant_id='SYNTHETIC-YEAR-'+day,water_year=year,ledger_attempt_limit=20000,
+             stream_day_budget=2,persistence_version=2,representation='SYNTHETIC_INJECTED',target_day=day,
+             range_targets=[[sid,day] for sid in sorted(p['roster'])])
+    return p
+
+
+class RolloverCalendarTests(unittest.TestCase):
+    def test_completed_and_delayed_september30_is_explicit_and_bounded(self):
+        from scripts.dendra.live_sampling import window
+        for clock in ('2027-10-01T08:00:00Z','2027-10-02T10:00:00Z','2027-10-09T07:59:59Z'):
+            w=window('2027-09-30',clock)
+            self.assertEqual((w['water_year'],w['dowy'],w['plot_day_aligned']),(2027,365,366))
+            self.assertEqual((w['start'],w['end']),('2027-09-30T07:30:00.000Z','2027-09-30T08:30:00.000Z'))
+            self.assertEqual(rg.dates(2027,clock,start='2027-09-30',through='2027-09-30'),['2027-09-30'])
+        for day,clock in [('2027-09-29','2027-10-01T08:00:00Z'),('2027-09-30','2027-10-09T08:00:00Z'),
+                          ('2028-10-01','2028-10-02T10:00:00Z')]:
+            with self.assertRaises(Hold):window(day,clock)
+        self.assertEqual(len(rg.dates(2027,'2027-10-02T10:00:00Z')),365)  # Saved membership only.
+        for options in ({'days_back':8},{'start':'2027-09-29','through':'2027-09-30'}):
+            with self.assertRaises(Hold):rg.dates(2027,'2027-10-02T10:00:00Z',**options)
+
+    def test_new_year_and_cross_year_grant_refusal(self):
+        p=year_plan(Path('/synthetic-state'),2028,'2027-10-01','2027-10-02T10:00:00Z')
+        rg.validate_range_plan(p,p['not_before'])
+        self.assertEqual(rg.dates(2028,p['not_before'],start='2027-10-01',through='2027-10-01'),['2027-10-01'])
+        for year in (2026,2029,True):
+            with self.assertRaises(Hold):rg.series_binding(p['roster'],year,20000,version=2)
+        bad=deepcopy(p);bad['range_targets'][0][1]='2027-09-30'
+        with self.assertRaises(Hold):rg.validate_range_plan(bad,bad['not_before'])
+        p=year_plan(Path('/synthetic-state'),2027,'2027-09-30','2027-10-02T10:00:00Z')
+        rg.validate_range_plan(p,p['not_before'])
+
+
 if __name__=='__main__':unittest.main()

@@ -3,7 +3,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 
 from .history_acquisition.safety import require
-from .live_sampling import window
+from .live_sampling import window, previous_year_completion, PST, SUPPORTED_WATER_YEARS
 from .transport import parse_utc
 
 
@@ -13,7 +13,8 @@ def series_binding(roster, water_year, attempt_limit=4096, *, version=1):
     validate_roster(roster)
     require(type(version) is int and version in (1,2),'Explicit persistence version')
     if version==2:
-        require(water_year==2027 and attempt_limit==SEASON['attempts'], 'Exact P1 WY/attempt contract')
+        require(type(water_year) is int and water_year in SUPPORTED_WATER_YEARS and
+                attempt_limit==SEASON['attempts'], 'Exact P1 WY/attempt contract')
         return dict(lineage=P1,roster=deepcopy(roster),water_year=water_year,
                     attempt_limit=attempt_limit,season_limits=deepcopy(SEASON))
     require(type(water_year) is int and 2000 <= water_year <= 2100 and
@@ -25,7 +26,19 @@ def series_binding(roster, water_year, attempt_limit=4096, *, version=1):
 def dates(water_year, now, *, days_back=None, start=None, through=None):
     at = parse_utc(now); latest = at.date()
     if at < parse_utc(latest.isoformat()+'T08:30:00Z'): latest -= timedelta(days=1)
+    require(type(water_year) is int and water_year in SUPPORTED_WATER_YEARS, 'Unsupported range water year')
     lo, hi = date(water_year-1,10,1), date(water_year,9,30)
+    local = at.astimezone(PST).date()
+    if water_year != local.year + (local.month >= 10):
+        require(previous_year_completion(hi, at), 'Prior-year rollover grace expired')
+        if days_back is None and start is None and through is None:
+            # Saved-snapshot validation uses the complete annual membership set.
+            # This is calendar enumeration, not a grant: validate_range_plan
+            # always supplies explicit bounds and window() rejects older days.
+            return [(lo+timedelta(days=i)).isoformat() for i in range((hi-lo).days+1)]
+        require(days_back is None and start == through == hi.isoformat(),
+                'Only explicit prior September30 completion')
+        latest = hi
     require(lo <= latest <= hi, 'Run cutoff outside explicit current WY')
     if days_back is not None:
         require(start is None and through is None and type(days_back) is int and 1 <= days_back <= 366,
@@ -62,7 +75,12 @@ def targets(roster, water_year, now, cells, *, days_back=None, start=None, throu
 
 def validate_range_plan(plan, now, *, live=False):
     series_binding(plan['roster'],plan['water_year'],plan['ledger_attempt_limit'],version=plan.get('persistence_version',1))
-    work = plan['range_targets']; eligible = set(dates(plan['water_year'],plan['not_before']))
+    work = plan['range_targets']
+    require(type(work) is list and 0 < len(work) <= 732 and
+            all(type(x) is list and len(x)==2 and type(x[1]) is str for x in work),
+            'Finite explicit range targets')
+    eligible = set(dates(plan['water_year'],plan['not_before'],
+                         start=min(x[1] for x in work),through=max(x[1] for x in work)))
     require(type(work) is list and 0 < len(work) <= 732 and
             all(type(x) is list and len(x)==2 and x[0] in plan['roster'] and x[1] in eligible for x in work) and
             len({tuple(x) for x in work}) == len(work), 'Finite exact stream/day target set')

@@ -5,6 +5,7 @@ and blocks its session after interruption. Range replay requires a new explicit
 offline run; it never refunds an old charge. Independent fixture lineages only.
 """
 from copy import deepcopy
+from datetime import date
 import fcntl
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import uuid
 
 from .history_acquisition.safety import encode, decode, sha, require
 from .transport import parse_utc
+from .live_sampling import SUPPORTED_WATER_YEARS
 
 MAX_INDEX = 8 * 1024**2
 P1 = 'dendra-offline-range-series-2'
@@ -32,8 +34,15 @@ def season_totals(data):
 
 
 def check_season(data):
-    require(data['binding']['lineage']==P1 and data['binding']['water_year']==2027 and
+    year=data['binding']['water_year']
+    require(data['binding']['lineage']==P1 and type(year) is int and year in SUPPORTED_WATER_YEARS and
             data['binding']['season_limits']==SEASON, 'Exact P1 season contract')
+    for key in data['cells']:
+        try:
+            stamp=date.fromisoformat(key.rsplit('/',1)[1])
+        except (ValueError,IndexError,AttributeError) as exc:
+            raise ValueError('Invalid P1 source-day key') from exc
+        require(stamp.year+(stamp.month>=10)==year, 'Cross-year P1 cell')
     require(all(type(a['cap']) is int and 0<a['cap']<=MAX_INDEX and
                 type(a['bytes']) is int and 0<=a['bytes']<=a['cap'] and
                 a['status'] in ('RECEIVED','RESERVED','AMBIGUOUS') and

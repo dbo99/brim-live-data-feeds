@@ -14,15 +14,31 @@ from .history_acquisition.safety import require
 
 VERSION = 'dendra-offline-sample-stage-a-1'
 PST = timezone(timedelta(hours=-8))
+SUPPORTED_WATER_YEARS = (2027, 2028)
+ROLLOVER_GRACE_DAYS = 8
 METHOD = 'DAILY NATIVE SAMPLE'
 LABEL = 'provider-native average; averaging interval and timestamp position unknown'
+
+
+def previous_year_completion(day, now):
+    """Only the prior September 30, during eight fixed-PST October days.
+
+    Calendar eligibility is not acquisition authority. Callers still need an
+    exact year/date grant; no other prior-year day is admitted by this rule.
+    """
+    local = now.astimezone(PST).date()
+    first = date(day.year, 10, 1)
+    return (day == date(day.year, 9, 30) and
+            0 <= (local-first).days < ROLLOVER_GRACE_DAYS)
 
 
 def window(day, as_of):
     d, now = date.fromisoformat(day), parse_utc(as_of)
     wy = d.year + (d.month >= 10)
     local = now.astimezone(PST).date()
-    require(wy == local.year + (local.month >= 10), 'Wrong current WY at saved cutoff')
+    require(wy in SUPPORTED_WATER_YEARS, 'Unsupported native water year')
+    require(wy == local.year + (local.month >= 10) or previous_year_completion(d, now),
+            'Wrong current WY at saved cutoff')
     target = datetime(d.year, d.month, d.day, 8, tzinfo=timezone.utc)
     lo = max(target-timedelta(minutes=30), datetime(wy-1, 10, 1, 8, tzinfo=timezone.utc))
     hi = min(target+timedelta(minutes=30), datetime(wy, 10, 1, 8, tzinfo=timezone.utc))

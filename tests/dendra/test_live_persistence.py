@@ -167,4 +167,40 @@ class PersistenceTests(fixture.RangeTests):
             verify_range(copied, accepted['manifest_path'], accepted['manifest_sha256'], binding)
         verify_range(self.root, accepted['manifest_path'], accepted['manifest_sha256'], binding)
         self.assertEqual(storage.read(self.root/'index.json'), before)
-        with self.assertRaises(Hold): fixture.rg.series_binding(p['roster'], 2028, 20000, version=2)
+        with self.assertRaises(Hold): fixture.rg.series_binding(p['roster'], 2029, 20000, version=2)
+
+
+class RolloverPersistenceTests(fixture.unittest.TestCase):
+    def test_prior_close_new_year_restore_and_lineage_separation(self):
+        with fixture.tempfile.TemporaryDirectory(prefix='dendra-rollover-') as td:
+            root=Path(td).resolve();saved={}
+            for year,day,clock in [(2027,'2027-09-30','2027-10-02T10:00:00Z'),
+                                   (2028,'2027-10-01','2027-10-02T10:00:00Z'),
+                                   (2028,'2028-02-29','2028-03-01T10:00:00Z')]:
+                target=root/(str(year)+'-'+day)
+                p=fixture.year_plan(target,year,day,clock)
+                binding=fixture.rg.series_binding(p['roster'],year,20000,version=2)
+                state=storage.State(target,binding,create=True)
+                try:
+                    out=fixture.Injected(p).sync(state)
+                    self.assertEqual(len(out['completed']),2)
+                    self.assertEqual(out['pending'],[])
+                    proof=range_preview(state);before=storage.read(target/'index.json')
+                    self.assertEqual(state.data['binding']['season_limits'],storage.SEASON)
+                    for cell in state.data['cells'].values():
+                        self.assertEqual(cell['current']['source_timestamp_utc'],day+'T08:00:00.000Z')
+                        self.assertEqual(cell['current']['window']['water_year'],year)
+                    if year==2028:
+                        state.data['cells'][next(iter(p['roster']))+'/2027-09-30']=deepcopy(next(iter(state.data['cells'].values())))
+                        with self.assertRaisesRegex(Hold,'Cross-year P1 cell'):state.commit()
+                        self.assertEqual(storage.read(target/'index.json'),before)
+                finally:state.close()
+                reopened=storage.State(target,binding)
+                try:
+                    self.assertEqual(len(reopened.data['cells']),2)
+                    verify_range(target,proof['manifest_path'],proof['manifest_sha256'],binding)
+                finally:reopened.close()
+                wrong=deepcopy(binding);wrong['water_year']=2028 if year==2027 else 2027
+                with self.assertRaises(Hold):storage.State(target,wrong)
+                saved[str(target/'index.json')]=sha(before)
+            self.assertTrue(all(sha(storage.read(Path(p)))==pin for p,pin in saved.items()))
