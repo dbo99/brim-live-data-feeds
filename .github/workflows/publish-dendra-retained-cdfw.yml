@@ -1,0 +1,113 @@
+name: Publish the approved retained CDFW dated observations
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact reviewed main event SHA
+        required: true
+        type: string
+      staging_sha:
+        description: Exact approved public data-only commit SHA
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  RETAINED_EVENT_SHA: ${{ inputs.expected_source_sha }}
+  RETAINED_STAGING_SHA: ${{ inputs.staging_sha }}
+
+jobs:
+  prepare-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Admit one finite publication
+        run: python3 scripts/dendra_retained_candidate.py admit
+      - name: Read pinned data objects and fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin 8f4991bbb816fdd1f5d8cf4df1a0a8e97a96b49b
+          git fetch --no-tags origin main
+          prior_sha="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/dendra_retained_candidate.py prepare \
+            --artifact "${RUNNER_TEMP}/dendra-retained-cdfw-candidate" \
+            --prior-sha "$prior_sha"
+      - name: Retain only the approved public product artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dendra-retained-cdfw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dendra-retained-cdfw-candidate/
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-to-main:
+    if: ${{ success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1 }}
+    needs: prepare-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: brim-live-main-publish
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check out trusted event source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Recheck finite authority after entering the shared queue
+        run: python3 scripts/dendra_retained_candidate.py admit
+      - name: Download this run's public candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: dendra-retained-cdfw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dendra-retained-cdfw-candidate
+      - name: Verify pinned bytes and publish through the unchanged transaction
+        shell: bash
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+        run: |
+          set -euo pipefail
+          artifact="${RUNNER_TEMP}/dendra-retained-cdfw-candidate"
+          python3 scripts/dendra_retained_candidate.py verify-artifact --artifact "$artifact"
+          python3 scripts/main_publisher.py publish \
+            --repo . \
+            --candidate-root "$artifact/candidate" \
+            --metadata "$artifact/candidate-metadata.json" \
+            --product-id dendra-brim-current-wy-1 \
+            --target-ref refs/heads/main \
+            --commit-subject "Publish the approved retained CDFW dated observations" \
+            --allowlist docs/data/dendra-sms/current-wy/current.json \
+            --allowlist docs/data/dendra-sms/current-wy/manifest-19a2b8741a1c5e81b5c2369145ef5e8753da722487b5441227e0e4f86457fb06.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/0b2a5408917d6ec04857f31404634cbb3ba76c480ac5657eaca69f75fe653bc3.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/1845f7dc0e130ec3ef51f14dfa42a75459b315ab1dc5c0ccd8757a5ee7af620e.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/33cb9f58504db9f961dde810abd04a61d36c3191944fb529f11d177a0257beb1.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/3a216d04721cee251a9bd19b825018cba65101c4b4fda5120b4f25e4f30bcfef.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/47303a3488d6f2eb6c3f237025950dabb751bd37ebab7cba8cf3c053255db41d.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/6139f3e8b811e85a28bdce50d54507d5a415d5be96e00fa6b0b91a1d96b01068.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/7673197be38f52e9545a5d755b44cd6502c439a13713f7e079d510f2d3b37c1f.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/8d724133fa839d95720a887895f0ea07912d0d7e28ae28773b51740556dc8a36.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/bb5e0180306c3a8d09ceb029716282e2320dbae5639aa245282aa2e11d97855a.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/be045f41772ac8708cbd24d0c38148733d57517c4403aa3345c5eee880f2be08.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/bebd49af524fb345249f52dea113942018340e82413a894535ec66498c2d4d19.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/c6cb7d39035b85cee84b6232923d9677e89bb539a762cae1e3984555d5990d43.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/cf67f5913d3df6cc2372f7e69e06e376c289a4979d62dae3a057f226de89aaf4.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/f4a945975a62d16481f136713bdad5d2ae6272eb9e46a1c7911c45ec9fc41760.json \
+            --allowlist docs/data/dendra-sms/current-wy/streams/faeec75bb23d2c93e0a00dbe5712b0b97c9e9f1ede3321649e29851ff4be6fa4.json \
+            --candidate-validator scripts/dendra_sms_publisher.py \
+            --reconcile-callback scripts/dendra_sms_publisher.py \
+            --staged-validator scripts/dendra_sms_publisher.py

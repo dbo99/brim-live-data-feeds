@@ -911,3 +911,22 @@ dispositions; it does not establish historical-reference admission, percentile
 ranks, public compatibility or application support. Source-only integration,
 manual saved-input QA, real hosted acquisition and eventual versioned public
 publisher/consumer cutover are separate release decisions.
+
+### Dendra individual dated observations
+
+Resolve `data/dendra-sms/current-wy/current.json` relative to the Pages root.
+Hash the referenced manifest before reading it. Resolve its shard paths relative
+to the pointer directory and verify every length and SHA-256. For generation
+`19a2b8741a1c5e81b5c2369145ef5e8753da722487b5441227e0e4f86457fb06`,
+display only records with `value_status=ADMITTED_DATED_POINT`. This authorization
+applies to individual dated points on November 16 and 17, 2026. The native
+`CANDIDATE_NOT_ADMITTED` and `publication_eligible=false` flags retain their
+original meanings. Every stream's `current` is null.
+
+Match the exact station and stream identifiers, collection-time depth,
+orientation and units. Take coordinates only from the matching manifest locator.
+Preserve all nine family entries and enable only CDFW for this generation.
+Use the original 08:00 UTC timestamps and native Percent values at multiplier one.
+Provider Average has unknown support interval and timestamp position. The provider
+gave no quality claim. Render separate points. Deployment continuity, hardware
+serial, present-day conditions and historical percentile rank remain unknown.
