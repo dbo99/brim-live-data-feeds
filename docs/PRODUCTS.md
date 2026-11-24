@@ -1321,3 +1321,12 @@ catalog. Real state, raw responses, grants, private plans and consumer previews
 remain outside the public source selection. Actual hosted private-state
 restore and acquisition require separate custody/input and execution approval.
 See the [consumer boundary](BRIM_CONSUMER_CONTRACT.md#lean-private-v2-preview-boundary).
+
+### Dendra retained CDFW dated points
+
+The WY2027 product uses `docs/data/dendra-sms/current-wy/current.json` to locate
+its SHA-256-addressed manifest and 15 stream shards. The approved generation
+`19a2b8741a1c5e81b5c2369145ef5e8753da722487b5441227e0e4f86457fb06`
+contains 30 CDFW observations across four stations on November 16 and 17, 2026.
+Its manual retained release has no refresh cadence. Resolve station geometry
+and stream membership through this generation's manifest.

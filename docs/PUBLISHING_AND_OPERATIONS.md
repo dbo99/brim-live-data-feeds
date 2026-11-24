@@ -954,3 +954,15 @@ guard reports `INACTIVE_EXPIRED` before provider traffic: workflow state may
 remain enabled but fail-closed, not automatically disabled. The owner must
 disable it or separately approve a reviewed successor policy; no extension,
 rerun, background monitoring or indefinite steady-state acceptance is implied.
+
+### Finite retained CDFW dated-point release
+
+`publish-dendra-retained-cdfw.yml` admits its first manual run and attempt
+on reviewed main with a pinned public data-only staging commit. Its deadline is
+20:10 UTC on November 24, 2026. It reserves 25 minutes at admission. Preparation
+reads staging objects as data, checks the absent destination and validates the
+17 approved JSON files. Only the write job enters `brim-live-main-publish`.
+The shared publisher repeats the Dendra validation against fresh main and the
+staged result. Unexpected prior content stops publication. An identical complete
+generation found during reconciliation is an unchanged result. Verify Pages
+and ordinary file-origin HTTPS access separately after Git publication.
