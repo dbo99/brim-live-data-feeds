@@ -78,6 +78,8 @@ delta_ops_pdf_retryable_error <- function(error) {
 delta_ops_fetch_pdf_text <- function(url, pdf_reader = pdftools::pdf_text,
                                    request_once = delta_ops_pdf_request,
                                    sleep_fun = Sys.sleep) {
+  # Resolve the parser before starting any request, including selector fallback.
+  force(pdf_reader)
   pdf_tmp <- tempfile("delta-ops-source-", fileext = ".pdf")
   on.exit(unlink(pdf_tmp), add = TRUE)
   for (attempt in 1:3) {
