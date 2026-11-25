@@ -1,6 +1,8 @@
 name: Build SNOTEL soil moisture current-WY feed
 
 on:
+  schedule:
+    - cron: '11 18 * * *'
   workflow_dispatch:
     inputs:
       acquire:
@@ -22,22 +24,30 @@ on:
 
 permissions: {}
 
+env:
+  SUCCESSOR: ${{ github.event_name == 'schedule' || !inputs.bootstrap }}
+  SCHEDULE: ${{ github.event.schedule }}
+  ACQUIRE: ${{ github.event_name == 'schedule' || inputs.acquire }}
+  PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+  BOOTSTRAP: ${{ inputs.bootstrap == true }}
+  WINDOW_END: ${{ inputs.window_end }}
+
 jobs:
   prepare-candidate:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(vars.SNOTEL_SMS_NRCS_CLEARANCE, 'schedule/')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
     outputs:
       candidate_ready: ${{ steps.prepare.outputs.candidate_ready }}
       source_sha: ${{ steps.prepare.outputs.source_sha }}
     steps:
       - name: Validate explicit modes
-        env:
-          ACQUIRE: ${{ inputs.acquire }}
-          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
+          echo "SNOTEL_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
           if [[ "$PUBLISH" == true && "$ACQUIRE" != true ]]; then
             echo "Publication requires explicit acquisition"; exit 2
           fi
@@ -47,7 +57,7 @@ jobs:
           if [[ "$ACQUIRE" != true ]]; then echo "DISABLED: zero source requests"; fi
 
       - name: Check out exact source event
-        if: ${{ inputs.acquire }}
+        if: ${{ github.event_name == 'schedule' || inputs.acquire }}
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
@@ -55,7 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Qualify this runner offline before provider admission
-        if: ${{ inputs.acquire }}
+        if: ${{ github.event_name == 'schedule' || inputs.acquire }}
         shell: bash
         env:
           CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
@@ -67,29 +77,29 @@ jobs:
           timeout --signal=KILL 180s sudo unshare --net -- \
             runuser -u "$(id -un)" -- env -i PATH="$PATH" TMPDIR="$RUNNER_TEMP" \
             PYTHONDONTWRITEBYTECODE=1 \
-            python3 -B tests/soil_moisture/test_snotel_origin.py \
+            bash -ec 'python3 -B tests/soil_moisture/test_snotel_origin.py && python3 -B tests/soil_moisture/test_snotel_successor.py' \
             > "$RUNNER_TEMP/snotel-offline-qualification.log" 2>&1
           echo 'SNOTEL_FOCUSED_ORIGIN_QUALIFICATION_PASS'
           # Actual event checkout and Git objects, not an injected Git fixture.
           timeout --signal=KILL 120s sudo unshare --net -- \
             runuser -u "$(id -un)" -- env -i PATH="$PATH" RUNNER_TEMP="$RUNNER_TEMP" \
-            GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            SUCCESSOR="$SUCCESSOR" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" CATALOG_PIN="$CATALOG_PIN" \
             ROSTER_PIN="$ROSTER_PIN" PYTHONDONTWRITEBYTECODE=1 \
             python3 -B scripts/snotel_first_run.py check-source
 
       - name: Prepare complete bounded current-WY candidate
         id: prepare
-        if: ${{ inputs.acquire }}
+        if: ${{ github.event_name == 'schedule' || inputs.acquire }}
         shell: bash
         env:
-          ACQUIRE: ${{ inputs.acquire }}
+          SUCCESSOR_POLICY: ${{ secrets.SNOTEL_SMS_SUCCESSOR_POLICY_JSON }}
+          NRCS_CLEARANCE: ${{ vars.SNOTEL_SMS_NRCS_CLEARANCE }}
+          PROVIDER_HOLD: ${{ vars.SCAN_PROVIDER_HOLD }}
+          GH_TOKEN: ${{ github.token }}
           R9_GRANT_EXACT_MATCH: >-
-            ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
-          GRANT_ACTIVATED_AT: ${{ fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc }}
-          PUBLISH: ${{ inputs.publish }}
-          BOOTSTRAP: ${{ inputs.bootstrap }}
-          WINDOW_END: ${{ inputs.window_end }}
+            ${{ inputs.bootstrap && vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON || '{}').activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
+          GRANT_ACTIVATED_AT: ${{ inputs.bootstrap && fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON || '{}').activated_at_utc || '' }}
           CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
           ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
           RELEASE_APPROVED: ${{ vars.SNOTEL_SMS_PUBLIC_RELEASE_APPROVED }}
@@ -98,6 +108,7 @@ jobs:
           source_sha="$(git --no-optional-locks rev-parse HEAD)"
           test "$source_sha" = "$GITHUB_SHA"
           test "$RELEASE_APPROVED" = true
+          git fetch --no-tags origin refs/heads/main
           python3 -B scripts/snotel_first_run.py prepare
 
       - name: Upload only the validated public candidate
@@ -114,16 +125,20 @@ jobs:
 
   publish-to-main:
     needs: prepare-candidate
-    if: ${{ inputs.acquire && inputs.publish && github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.candidate_ready == 'true' }}
+    if: ${{ (github.event_name == 'schedule' || (inputs.acquire && inputs.publish)) && github.ref == 'refs/heads/main' && needs.prepare-candidate.outputs.candidate_ready == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     concurrency:
       group: brim-live-main-publish
       cancel-in-progress: false
       queue: max
     steps:
+      - name: Record publisher job start
+        run: echo "SNOTEL_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Check out candidate source event
         uses: actions/checkout@v6
         with:
@@ -136,13 +151,15 @@ jobs:
           name: snotel-current-wy-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/snotel-transfer
 
-      - name: Publish through the unchanged shared owner
+      - name: Check finite publication admission
         env:
+          SUCCESSOR_POLICY: ${{ secrets.SNOTEL_SMS_SUCCESSOR_POLICY_JSON }}
+          NRCS_CLEARANCE: ${{ vars.SNOTEL_SMS_NRCS_CLEARANCE }}
+          PROVIDER_HOLD: ${{ vars.SCAN_PROVIDER_HOLD }}
+          GH_TOKEN: ${{ github.token }}
           R9_GRANT_EXACT_MATCH: >-
-            ${{ vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
-          GRANT_ACTIVATED_AT: ${{ fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON).activated_at_utc }}
-          WINDOW_END: ${{ inputs.window_end }}
-          BRIM_LIVE_MAIN_PUBLISH: "true"
+            ${{ inputs.bootstrap && vars.SNOTEL_SMS_FIRST_RUN_JSON == format('{{"activated_at_utc":"{0}","approval_id":"L11-SNOTEL-SMS-R9-HOSTED-ORIGIN-AND-FIRST-PRODUCT-20261112","catalog_sha256":"{1}","limits":{{"attempts":32,"finalization_seconds":120,"station_bytes":1048576,"station_seconds":60,"total_bytes":33554432,"total_seconds":1920}},"roster_sha256":"{2}","run_number":2,"source_sha":"{3}","version":"snotel-first-run-1","window_end":"{4}"}}', fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON || '{}').activated_at_utc, vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256, vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256, github.sha, inputs.window_end) }}
+          GRANT_ACTIVATED_AT: ${{ inputs.bootstrap && fromJSON(vars.SNOTEL_SMS_FIRST_RUN_JSON || '{}').activated_at_utc || '' }}
           SOURCE_SHA: ${{ needs.prepare-candidate.outputs.source_sha }}
           CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
           ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
@@ -152,7 +169,16 @@ jobs:
           test "$(git --no-optional-locks rev-parse HEAD)" = "$SOURCE_SHA"
           test "$SOURCE_SHA" = "$GITHUB_SHA"
           test "$RELEASE_APPROVED" = true
+          git fetch --no-tags origin refs/heads/main
           python3 -B scripts/snotel_first_run.py publish
+
+      - name: Publish through the unchanged shared owner
+        env:
+          BRIM_LIVE_MAIN_PUBLISH: "true"
+          CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
+          ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
+        run: |
+          set -euo pipefail
           python3 -B scripts/soil_network_workflow.py snotel-publish \
             --repo . --transfer "$RUNNER_TEMP/snotel-transfer" \
             --catalog-sha256 "$CATALOG_PIN" --roster-sha256 "$ROSTER_PIN"
@@ -164,4 +190,5 @@ jobs:
           delivered_commit="$(git --no-optional-locks rev-parse FETCH_HEAD)"
           python3 -B scripts/soil_network_workflow.py snotel-acknowledge \
             --repo . --commit "$delivered_commit" \
-            --candidate "$RUNNER_TEMP/snotel-transfer/candidate"
+            --candidate "$RUNNER_TEMP/snotel-transfer/candidate" > "$RUNNER_TEMP/snotel-ack.json"
+          python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); print(a["status"]); sys.exit(a["status"] != "ACKNOWLEDGED_EXACT_PRODUCT")' "$RUNNER_TEMP/snotel-ack.json"

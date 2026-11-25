@@ -93,11 +93,11 @@ class GrantTests(unittest.TestCase):
                 if isinstance(v,int):return str(v)
                 return v
             obj=strings(json.loads(parsed.stdout));obj['on']=obj.pop('true',obj.get('on'))
-        self.assertEqual(set(obj['on']),{'workflow_dispatch'})
+        self.assertEqual(set(obj['on']),{'workflow_dispatch','schedule'})
         inputs=obj['on']['workflow_dispatch']['inputs']
         self.assertTrue(all(inputs[k]['default']=='false' for k in ('acquire','publish','bootstrap')))
         prep=obj['jobs']['prepare-candidate'];pub=obj['jobs']['publish-to-main']
-        self.assertEqual(prep['permissions'],{'contents':'read'});self.assertEqual(pub['permissions'],{'contents':'write'})
+        self.assertEqual(prep['permissions'],{'contents':'read','actions':'read'});self.assertEqual(pub['permissions'],{'contents':'write','actions':'read'})
         self.assertEqual(pub['concurrency'],{'group':'brim-live-main-publish','cancel-in-progress':'false','queue':'max'})
         self.assertEqual(prep['runs-on'],pub['runs-on']);self.assertEqual(prep['runs-on'],'ubuntu-24.04')
         step=next(s for s in prep['steps'] if s.get('id')=='prepare')
@@ -108,7 +108,7 @@ class GrantTests(unittest.TestCase):
             '${{ runner.temp }}/snotel-private/run/transfer/candidate/docs/data/snotel-sms/index.json',
             '${{ runner.temp }}/snotel-private/run/transfer/candidate/docs/data/snotel-sms/current-wy.json',
             '${{ runner.temp }}/snotel-private/run/transfer/candidate-metadata.json'])
-        command=next(s['run'] for s in pub['steps'] if 'snotel-publish' in s.get('run',''))
+        command='\n'.join(s.get('run','') for s in pub['steps'])
         self.assertLess(command.index('snotel_first_run.py publish'),command.index('soil_network_workflow.py snotel-publish'))
 
     def test_native_network_denial(self):
