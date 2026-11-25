@@ -107,6 +107,8 @@ def write_delta_product(root: Path, report_date: str, build_time: str) -> None:
                        "feature_type": "metric", "metric_name": key, "units": unit,
                        "label_text": raw[source], "value_raw": raw[source], "value_numeric": number},
                       -121.5, 38.1) for key, source, number, unit in specs]
+    diversion = next(f["properties"] for f in features if f["properties"]["feature_key"] == "percent_inflow_diverted")
+    diversion["label_text"] = "Diverted: 30.2% (3-day avg)"
     values = {**provenance, "values": raw}
     summary = {**provenance, "feature_count": 13, "x2_lookup_added": True, "x2_position_km": 81,
                "parser_note": "Automated BRIM daily parser for DWR Delta Operations Daily Summary PDF; values are preliminary and subject to revision.",
@@ -367,6 +369,34 @@ class DeltaOpsPublisherTests(CallbackCase):
                                        metadata=self.metadata(root, "2026-08-18"), result=root / "result.json")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assert_copied(candidate, prior)
+
+    def test_inconsistent_diversion_period_retains_last_good(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prior, candidate = root / "prior", root / "candidate"
+            write_delta_product(prior, "2026-11-06", "2026-11-06T20:00:00Z")
+            write_delta_product(candidate, "2026-11-24", "2026-11-24T20:00:00Z")
+            before = [(prior / p).read_bytes() for p in DELTA_PATHS]
+            values = json.loads((candidate / DELTA_PATHS[0]).read_text())
+            key = "percent_inflow_diverted"
+            values["values"][key] = "62.9 (14-day avg)"
+            write_json(candidate / DELTA_PATHS[0], values)
+            geo = json.loads((candidate / DELTA_PATHS[1]).read_text())
+            diversion = next(f["properties"] for f in geo["features"] if f["properties"]["feature_key"] == key)
+            diversion.update(value_raw=values["values"][key], value_numeric=62.9)
+            correct_label = "Diverted: 62.9% (14-day avg)"
+            for unit, label in [("percent_3day_avg", correct_label),
+                                ("percent_14day_avg", "Diverted: 62.9% (3-day avg)")]:
+                with self.subTest(unit=unit, label=label):
+                    diversion.update(units=unit, label_text=label)
+                    write_json(candidate / DELTA_PATHS[1], geo)
+                    result = self.run_callback(phase="reconcile", candidate=candidate, worktree=prior,
+                                               metadata=self.metadata(root, "2026-11-24"), result=root/"result.json")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual([(prior / p).read_bytes() for p in DELTA_PATHS], before)
+            diversion.update(units="percent_14day_avg", label_text=correct_label)
+            write_json(candidate / DELTA_PATHS[1], geo)
+            self.assertEqual(self.validate(candidate).returncode, 0)
 
     def test_retained_public_product_can_be_replaced_in_private_scratch(self) -> None:
         import shutil

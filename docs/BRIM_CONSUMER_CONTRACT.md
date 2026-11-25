@@ -512,7 +512,10 @@ and producer scripts.
   scheduled/job times do not establish a new publication or consumer freshness.
 - Numeric zero, signed and approximate source values keep their scientific
   meaning. Annotated `% Inflow Diverted` remains a percentage, without joining
-  annotation digits or scaling a fraction; its qualifier appears once. Status
+  annotation digits or scaling a fraction. An explicit positive whole-day
+  duration yields `percent_<N>day_avg` units, including the established
+  `percent_3day_avg` for three days. A bare percentage uses `percent`.
+  The display label preserves the reported duration. Status
   text retains a null numeric representation. No individual fields are blended
   across reports. Duplicate agreement, scientific conflict, malformed-date
   barriers and incomplete scans follow the [whole-report policy](PRODUCTS.md#3-delta-operations).

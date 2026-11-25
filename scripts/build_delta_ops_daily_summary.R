@@ -124,7 +124,6 @@ pt_chr <- function(x) {
 
 pt_num <- function(x) {
   x <- as.character(x)
-  x <- sub("\\s*\\(3-day avg\\)\\s*$", "", x, ignore.case = TRUE, perl = TRUE)
   x <- gsub(",", "", x, fixed = TRUE)
   x <- gsub("[^0-9.\u2212-]", "", x)
   x <- gsub("\u2212", "-", x, fixed = TRUE)
@@ -243,10 +242,8 @@ pt_format_kaf_day <- function(x, digits = 1) {
 pt_format_percent <- function(x) {
   raw <- pt_chr(x)
   if (is.na(raw)) return(NA_character_)
-  average <- grepl("(3-day avg)", raw, fixed = TRUE)
-  value <- trimws(sub("\\s*\\(3-day avg\\)\\s*$", "", raw, perl = TRUE))
-  value <- sub("%$", "", value)
-  paste0(value, "%", if (average) " (3-day avg)" else "")
+  # The normalized percentage may be followed by the source's averaging period.
+  sub("%?( \\(|$)", "%\\1", raw)
 }
 
 pt_format_m_d <- function(x) {
@@ -411,6 +408,10 @@ out_x2_geojson <- file.path(staging_data, basename(out_x2_geojson))
 
 loc <- pt_read_locations(static_locations_csv)
 
+diverted <- vals$percent_inflow_diverted
+period <- regmatches(diverted, regexec(" \\(([1-9][0-9]*)-day avg\\)$", diverted))[[1L]]
+diversion_units <- if (length(period)) paste0("percent_", period[2L], "day_avg") else "percent"
+
 metric_rows <- tibble::tibble(
   feature_key = c(
     "cross_channel_gates", "jones_cvp_exports", "banks_swp_exports",
@@ -443,20 +444,20 @@ metric_rows <- tibble::tibble(
     pt_num(vals$jones_pumping_plant),
     pt_num(vals$clifton_court_inflow),
     pt_num(vals$outflow_index),
-    pt_num(vals$percent_inflow_diverted),
+    source_record$numeric_values$percent_inflow_diverted,
     pt_num(vals$omr_index_daily_value),
     pt_num(vals$sacramento_river),
     pt_num(vals$san_joaquin_river),
     east_side_cfs,
     NA_real_, NA_real_, san_luis_total_taf
   ),
-  units = c("percent", "cfs", "cfs", "cfs", "percent_3day_avg", "cfs", "cfs", "cfs", "cfs", "status", "status", "TAF"),
+  units = c("percent", "cfs", "cfs", "cfs", diversion_units, "cfs", "cfs", "cfs", "cfs", "status", "status", "TAF"),
   label_text = c(
     paste0("Delta X-Channel Gates | ", pt_format_percent(vals$cross_channel_gates_percent_open), " open"),
     paste0("Jones/CVP: ", pt_format_cfs(vals$jones_pumping_plant)),
     paste0("Banks/SWP: ", pt_format_cfs(vals$clifton_court_inflow)),
     paste0("Outflow: ", pt_format_cfs(vals$outflow_index)),
-    paste0("Diverted: ", pt_format_percent(vals$percent_inflow_diverted)),
+    paste0("Diverted: ", pt_format_percent(diverted)),
     paste0("OMR: ", pt_format_cfs(vals$omr_index_daily_value)),
     paste0("Sac: ", pt_format_cfs(vals$sacramento_river)),
     paste0("SJ: ", pt_format_cfs(vals$san_joaquin_river)),

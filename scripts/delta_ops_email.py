@@ -54,6 +54,7 @@ STATUS_KEYS = {"delta_conditions", "controlling_factors"}
 STORAGE_KEYS = {k for k in LABELS if k.endswith("storage")} | {"san_luis_swp_share"}
 PERCENT_KEYS = {"cross_channel_gates_percent_open", "percent_inflow_diverted"}
 NUMBER = r"[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+AVERAGING_PERIOD = r"\((?P<days>[1-9][0-9]*)-day avg\)"
 HEADING = re.compile(r"EXECUTIVE\s+OPERATIONS\s+SUMMARY\s+ON\s+(\d{1,2}/\d{1,2}/\d{4})(?!\d)", re.I)
 SECTIONS = re.compile(r"SCHEDULED EXPORTS FOR TODAY|ESTIMATED DELTA HYDROLOGY|DELTA OPERATIONS|RESERVOIR STORAGES(?:\s*\(AS OF MIDNIGHT\))?", re.I)
 
@@ -109,7 +110,7 @@ def normalize_values(values: dict) -> tuple[dict, dict, dict]:
             continue
         unit = "TAF" if key in STORAGE_KEYS else "cfs"
         if key in PERCENT_KEYS:
-            suffix = r"%" if key == "cross_channel_gates_percent_open" else r"%?(?:\s*\(3-day avg\))?"
+            suffix = r"%" if key == "cross_channel_gates_percent_open" else rf"%?(?:\s*{AVERAGING_PERIOD})?"
         else:
             suffix = unit
         match = re.fullmatch(r"(?P<approx>[~≈])?\s*(?P<number>" + NUMBER + r")\s*(?P<suffix>" + suffix + r")", value, re.I)
@@ -123,10 +124,9 @@ def normalize_values(values: dict) -> tuple[dict, dict, dict]:
         # Preserve annotations and source decimal text, normalize harmless spacing.
         suffix_text = _spaces(match["suffix"])
         if key in PERCENT_KEYS:
-            suffix_text = re.sub(r"\(3-day avg\)", "(3-day avg)", suffix_text, flags=re.I)
             rendered = match["number"] + ("%" if suffix_text.startswith("%") else "")
-            if "(" in suffix_text:
-                rendered += " (3-day avg)"
+            if key == "percent_inflow_diverted" and match["days"]:
+                rendered += f" ({match['days']}-day avg)"
         else:
             rendered = match["number"] + " " + unit
         raw[key] = ((match["approx"] + " ") if match["approx"] else "") + rendered
@@ -237,7 +237,7 @@ def semantic_key(record: dict) -> str:
                            if x2["km"] is not None else [None, None])
         else:
             fields[key] = [exact_number(raw[key]), "approximate" if raw[key].startswith(("~", "≈")) else "reported",
-                           "3-day avg" if "(3-day avg)" in raw[key] else ""]
+                           raw[key].partition(" (")[2].removesuffix(")") if key == "percent_inflow_diverted" else ""]
     return json.dumps([record["report_date"], fields], sort_keys=True, allow_nan=False)
 
 

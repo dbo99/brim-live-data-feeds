@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Sequence, Tuple
 from urllib.parse import urlsplit
 
-from delta_ops_email import LABELS, PUBLIC_ATTRIBUTION, ReportError, normalize_values
+from delta_ops_email import AVERAGING_PERIOD, LABELS, PUBLIC_ATTRIBUTION, ReportError, normalize_values
 
 
 PRODUCT_ID = "delta-ops-daily-summary"
@@ -111,7 +111,7 @@ FEATURE_SPECS = {
     "jones_cvp_exports": ("jones_pumping_plant", "cfs"),
     "banks_swp_exports": ("clifton_court_inflow", "cfs"),
     "delta_outflow_index": ("outflow_index", "cfs"),
-    "percent_inflow_diverted": ("percent_inflow_diverted", "percent_3day_avg"),
+    "percent_inflow_diverted": ("percent_inflow_diverted", "percent"),
     "omr_index": ("omr_index_daily_value", "cfs"),
     "sacramento_freeport": ("sacramento_river", "cfs"),
     "san_joaquin_vernalis": ("san_joaquin_river", "cfs"),
@@ -187,6 +187,21 @@ def _validate_contract(values, summary, features, references, *, root, legacy=Fa
         raise ProductError("Delta Ops reservoir shares exceed total storage")
     for key, (source_key, unit) in FEATURE_SPECS.items():
         feature = by_key[key]
+        if key == "percent_inflow_diverted":
+            value = raw[source_key]
+            period = re.search(AVERAGING_PERIOD + "$", value)
+            if period:
+                unit = f"percent_{period['days']}day_avg"
+            elif legacy and feature["units"] == "percent_3day_avg":
+                # Older builders attached this unit even to unannotated values.
+                unit = feature["units"]
+            if not legacy:
+                percent = value[:period.start()].rstrip() if period else value
+                label = "Diverted: " + percent.removesuffix("%") + "%"
+                if period:
+                    label += " " + period[0]
+                if feature["label_text"] != label:
+                    raise ProductError("Delta Ops diversion label disagrees with source")
         if feature["units"] != unit:
             raise ProductError("Delta Ops feature units disagree")
         actual, wanted = feature.get("value_numeric"), numeric[source_key]
@@ -277,8 +292,6 @@ def _validate_contract(values, summary, features, references, *, root, legacy=Fa
         match = re.fullmatch(r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)" + suffix + r") " + re.escape(unit), str(text))
         if not match or abs(float(match[1].replace(",", "")) - wanted) > 0.5 * 10 ** -decimals + 1e-9:
             raise ProductError("Delta Ops derived display value disagrees")
-    if by_key["percent_inflow_diverted"]["label_text"].count("(3-day avg)") != raw["percent_inflow_diverted"].count("(3-day avg)"):
-        raise ProductError("Delta Ops percentage qualifier is duplicated or missing")
 
 
 def validate_product(root: Path, *, legacy=False, allow_review=False) -> Tuple[str, int]:

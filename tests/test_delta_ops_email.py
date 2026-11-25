@@ -266,6 +266,18 @@ class SelectionTests(unittest.TestCase):
         old_bad = adapter.Delivery(trusted=True, malformed_date=date(2026, 10, 14), rejected=True)
         self.assertEqual(self.choose([old_bad, self.trusted()])["decision"], "email_primary")
 
+    def test_invalid_diversion_periods_are_refused(self):
+        for period in ("0", "-2", "1.5", "14.0", "", "two"):
+            with self.subTest(period=period), self.assertRaises(adapter.ReportError):
+                record(changes={"percent_inflow_diverted": f"62.9 ({period}-day avg)"})
+        with self.assertRaises(adapter.ReportError):
+            record(changes={"percent_inflow_diverted": "62.9 (3-day avg) (14-day avg)"})
+
+    def test_equal_percentages_over_different_periods_conflict(self):
+        first = self.trusted(changes={"percent_inflow_diverted": "62.9 (3-day avg)"})
+        second = self.trusted(changes={"percent_inflow_diverted": "62.9 (14-day avg)"})
+        self.assertEqual(self.choose([first, second])["decision"], "failure_retained")
+
     def test_qualifiers_statuses_and_relations_are_part_of_equivalence(self):
         for changes in [{"total_delta_inflow": "11,833 cfs"}, {"delta_conditions": "Excess"}, {"x2_position_yesterday": "= 81 km"}, {"percent_inflow_diverted": "30.2"}]:
             result = self.choose([self.trusted(), self.trusted(changes=changes)], record(kind="pdf"))
