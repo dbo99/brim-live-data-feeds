@@ -1,11 +1,11 @@
-# SNOTEL SMS current-WY operations — inactive source candidate
+# SNOTEL SMS current-WY operations
 
-This page describes implemented source and offline validation, not deployed or
-standing acquisition authority. The intended live ownership is exactly
+The official product is the committed pair
 `docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`.
-The accepted catalog is committed separately. Observation acquisition, conditional
-first publication, hosted delivery and consumer acceptance remain distinct
-transitions; no standing acquisition or scheduling authority is implied.
+The separately released catalog identifies the approved stations and sensors.
+The first publication came from the retained-product workflow. Successor
+acquisition requires a finite policy, scoped provider clearance and an
+independently acknowledged publication.
 
 Native NRCS `DAILY/END` preserves each exact station triplet, signed SMS depth,
 ordinal and native `pct` value. Provider date D has source boundary D+1 08:00Z
@@ -18,7 +18,7 @@ See the [native consumer contract](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-
 [product description](PRODUCTS.md#snotel-sms-current-wy-snapshot-inactive-offline-implementation)
 and [publication procedures](PUBLISHING_AND_OPERATIONS.md).
 
-The manual operating workflow is **Build SNOTEL soil moisture current-WY feed**.
+The operating workflow is **Build SNOTEL soil moisture current-WY feed**.
 The separate **Build SNOTEL SMS synthetic replay (QA)** workflow retains its
 older saved-fixture replay behavior. A default operating dispatch only reports
 `DISABLED`, skips checkout and Python, and produces no candidate. It therefore
@@ -27,7 +27,39 @@ The older QA replay also does not establish Phase A/B hosted readiness. A meanin
 hosted saved-input test of those paths requires a separate source/dispatch decision;
 no such route is added here.
 
-## Finite first-product commissioning
+## Finite successor operation
+
+The successor uses the committed two-file product as its predecessor. Its manual
+dispatch requires acquisition and publication, bootstrap false and a matching
+UTC deadline. Both jobs verify the main event, reviewed source, catalog, roster,
+generation, hosted run history and resource clearance. Each run admits at most
+one serial campaign under the original 32-station limits. The existing builder
+queries the complete eligible water-year prefix and the shared publisher
+reconciles its result against fresh main. A failed, skipped or uncertain spend
+requires reconciliation before another policy can be approved.
+
+The owner supplies one compact JSON policy through the masked Actions secret
+`SNOTEL_SMS_SUCCESSOR_POLICY_JSON`. It contains operating limits and public
+source identities. Only the admission steps receive it. A second, run-specific
+repository variable, `SNOTEL_SMS_NRCS_CLEARANCE`, binds the event, exact policy
+digest, run number, cutoff, observed prior generation, issuance and expiry (slash-separated).
+The clearance must be at most 30 minutes old at acquisition admission and cover
+the complete three-hour slot.
+Install it only after checking shared NRCS activity, incident/backoff and
+resource release for the full window. The SCAN provider hold is also checked.
+Removing clearance fences future slots; cancel an already admitted job if an
+immediate stop is required, then reconcile its spending.
+
+A separate daily policy can cover one to seven consecutive 18:11 UTC slots,
+each three hours long. Each slot requires current clearance, a continuous
+first-attempt run history, the approved runtime and acknowledgment of the
+preceding publication. A missed slot or missing proof closes the sequence.
+A later authorized full-prefix query can cover the intervening days.
+The cron creates run numbers even when its acquisition job is disabled.
+Verify the actual next number before installing a policy. Independent
+main and Pages readback completes the operating review.
+
+## Historical finite first-product commissioning
 
 The public `data/input/snotel_sms_catalog.json` is the source-authenticated
 32-station/98-sensor catalog released by PR #60. Its presence grants no provider
@@ -77,7 +109,7 @@ runner-local storage and are not promised as permanent evidence after runner
 loss. The public log uses an explicit accounting-field allowlist. First-product
 release and Pages verification remain execution outcomes, not claims made by
 this source change. Application acceptance and any later acquisition require
-separate authority; there is no SNOTEL schedule.
+separate authority under the successor procedure above.
 
 ### Current-WY SNOTEL replacement (offline Phase A)
 
