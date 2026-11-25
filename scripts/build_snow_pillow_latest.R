@@ -164,7 +164,7 @@ LOCAL_TZ <- "America/Los_Angeles"
 
 ## Current-water-year fetch window. This supports the popup trace and lets the
 ## latest-status logic distinguish true reported zeros from missing summer data.
-TODAY_LOCAL <- as.Date(lubridate::with_tz(Sys.time(), LOCAL_TZ))
+TODAY_LOCAL <- as.Date(Sys.time(), tz = LOCAL_TZ)
 CURRENT_WY <- {
   yr <- as.integer(format(TODAY_LOCAL, "%Y"))
   mo <- as.integer(format(TODAY_LOCAL, "%m"))
@@ -306,7 +306,7 @@ pt_water_year <- function(date) {
 pt_water_day <- function(date) {
   date <- as.Date(date)
   wy <- pt_water_year(date)
-  wy_start <- as.Date(sprintf("%d-10-01", wy - 1L))
+  wy_start <- as.Date(sprintf("%d-10-01", wy - 1L), format = "%Y-%m-%d")
   as.integer(date - wy_start + 1L)
 }
 
@@ -1152,7 +1152,13 @@ cdec_stations <- stations |>
 message("NRCS/SNOTEL rows in station index: ", nrow(snotel_stations))
 message("CDEC rows in station index: ", nrow(cdec_stations))
 
+# Fetch through FETCH_END_DATE, but require completeness only for completed
+# Pacific days. Retain the one-day guard when the water year has just begun.
 expected_fetch_days <- max(1L, as.integer(FETCH_END_DATE - FETCH_START_DATE + 1L))
+completed_fetch_end_date <- min(FETCH_END_DATE, TODAY_LOCAL - 1L)
+coverage_days <- max(1L, as.integer(completed_fetch_end_date - FETCH_START_DATE + 1L))
+snotel_requested_station_days <- nrow(snotel_stations) * expected_fetch_days
+cdec_requested_station_days <- nrow(cdec_stations) * expected_fetch_days
 in_low_snow_reporting_season <- as.integer(format(TODAY_LOCAL, "%m")) %in% c(7L, 8L, 9L)
 
 provider_completeness_defaults <- snow_provider_completeness_defaults()
@@ -1176,14 +1182,14 @@ qa_min_cdec_row_fraction <- snow_env_fraction(
 snotel_completeness <- snow_provider_completeness_minimums(
   provider_id = "nrcs_snotel",
   indexed_station_count = nrow(snotel_stations),
-  expected_fetch_days = expected_fetch_days,
+  expected_fetch_days = coverage_days,
   station_fraction = qa_min_snotel_station_fraction,
   row_fraction = qa_min_snotel_row_fraction
 )
 cdec_completeness <- snow_provider_completeness_minimums(
   provider_id = "cdec_snow_sensor",
   indexed_station_count = nrow(cdec_stations),
-  expected_fetch_days = expected_fetch_days,
+  expected_fetch_days = coverage_days,
   station_fraction = qa_min_cdec_station_fraction,
   row_fraction = qa_min_cdec_row_fraction
 )
@@ -1192,19 +1198,19 @@ qa_min_snotel_wteq_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_WTEQ_ROWS",
   default = snotel_completeness$min_rows,
   minimum_allowed = snotel_completeness$min_rows,
-  maximum_allowed = snotel_completeness$expected_station_days
+  maximum_allowed = snotel_requested_station_days
 )
 qa_min_snotel_snwd_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_SNWD_ROWS",
   default = snotel_completeness$min_rows,
   minimum_allowed = snotel_completeness$min_rows,
-  maximum_allowed = snotel_completeness$expected_station_days
+  maximum_allowed = snotel_requested_station_days
 )
 qa_min_cdec_swe_rows <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_CDEC_SWE_ROWS",
   default = cdec_completeness$min_rows,
   minimum_allowed = cdec_completeness$min_rows,
-  maximum_allowed = cdec_completeness$expected_station_days
+  maximum_allowed = cdec_requested_station_days
 )
 qa_min_snotel_sites <- snow_env_integer(
   "SNOW_PILLOW_QA_MIN_SNOTEL_SITES",
@@ -1577,7 +1583,7 @@ provider_results <- list(
         depth_station_coverage_fraction = awdb_depth_sites /
           snotel_completeness$indexed_station_count,
         depth_row_coverage_fraction = nrow(snotel_depth_obs) /
-          snotel_completeness$expected_station_days
+          snotel_requested_station_days
       )
     ),
     failure_reason = if (awdb_provider_success) {
@@ -2143,8 +2149,8 @@ latest_swe_rows <- sum(!is.na(latest$latest_swe_in))
 summary_obj$qa_guardrails <- list(
   disabled = FALSE,
   expected_fetch_days = expected_fetch_days,
-  expected_snotel_station_days = snotel_completeness$expected_station_days,
-  expected_cdec_station_days = cdec_completeness$expected_station_days,
+  expected_snotel_station_days = snotel_requested_station_days,
+  expected_cdec_station_days = cdec_requested_station_days,
   min_snotel_station_fraction = qa_min_snotel_station_fraction,
   min_snotel_row_fraction = qa_min_snotel_row_fraction,
   min_cdec_station_fraction = qa_min_cdec_station_fraction,
@@ -2249,7 +2255,7 @@ message(
   " sites; ",
   qa_min_snotel_wteq_rows,
   "/",
-  snotel_completeness$expected_station_days,
+  snotel_requested_station_days,
   " station-days"
 )
 message(
@@ -2260,7 +2266,7 @@ message(
   " sites; ",
   qa_min_cdec_swe_rows,
   "/",
-  cdec_completeness$expected_station_days,
+  cdec_requested_station_days,
   " station-days"
 )
 message("  QA min latest SWE rows:   ", qa_min_latest_swe_rows)
