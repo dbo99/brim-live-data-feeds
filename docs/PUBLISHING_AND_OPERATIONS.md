@@ -884,17 +884,49 @@ The cutoff must be the preceding Pacific calendar date; the builder retains
 only eligible current-WY dates through that bound without filling missing days.
 No new observation or reference acceptance is implied by a cutoff.
 
-The separate `SCAN_DAILY_PILOT_JSON` is schedule-only: November 13–19, 2026,
-existing 14:30 UTC cron, no more than one first-attempt campaign per date.
-It binds the complete named executable/runtime/test/input closure in
-`scan_operational_guard.py`, rather than a static main commit. Data-only commits
-can advance; changed code, roster or runtime cannot. It requires the recorded
-successful manual run and every preceding pilot date to have exactly one
-successful completed run. Missing, duplicate, failed, cancelled or UNKNOWN runs
-hold subsequent retrieval. Authenticated history must be complete within its
-100-entry cap. The preparation concurrency group serializes SCAN campaigns;
-the original shared publication queue is unchanged. This does not serialize
-unrelated NRCS consumers or claim their absence.
+The November manual and seven November 13–19 slots used the expired
+`scan-c13r-finite-1` schema. Their original decisions and receipts are retained.
+The renewable `scan-finite-2` schema uses the same two owner variables and
+requires explicit approval, the exact code/input hashes and the existing budgets.
+
+For manual publication, bind one future run number, the last reviewed run from
+an earlier Pacific date, the preceding-day cutoff and a window of at most four
+hours on one Pacific date. Bind the exact main event SHA directly, or bind the
+public PR number and reviewed head SHA before merge. The latter requires the
+actual main event to equal GitHub's recorded merge SHA and the reviewed head to
+be the second parent of that merge. The guard checks the public PR over GitHub
+HTTPS, without a PR permission on the job token. A later main commit requires
+a fresh manual decision. Initial admission must still leave more than 125
+minutes for the complete run.
+
+For daily operation, approve one to seven consecutive Pacific operating dates
+in `SCAN_DAILY_PILOT_JSON`. The existing 14:30 UTC cron opens each slot.
+The policy specifies a window of 150–840 minutes plus 15 minutes for release
+and expires at the final release boundary. A late arrival after UTC midnight
+still belongs to the original Pacific date. The initial and pre-acquisition
+fit checks govern the effective latest launch. October 1 refuses because the
+preceding day belongs to the prior WY under the existing builder contract.
+January 1 can retain data through December 31. From January 2 through
+September 30 the current-WY query needs two calendar years per station,
+ordinarily 57 physical requests. Both the R account and the candidate audit
+require exactly 29. The guard refuses a policy containing such a slot before
+any acquisition. Extending accounting to that shape requires its own review.
+
+The first daily slot follows a successful manual run on the previous Pacific
+date. Renewal follows the successful final scheduled slot of the previous
+period and retains the successful manual source and resolved runtime signature.
+The guard checks the complete bounded history (up to 100 rows), consecutive
+run numbers and one successful predecessor per approved date. Missing or
+duplicate slots, failed attempts and unresolved spending stop continuation.
+A new manual grant can reconcile one earlier out-of-campaign cron on the same
+day only when authenticated job steps prove that trusted initial admission
+failed and both reservation and acquisition were skipped. This evidence can
+also explain an unused cron on the manual anchor date before daily service
+starts. It cannot excuse a failed approved daily slot. Public data-only
+commits may advance during daily service while the commissioned code and
+roster still match. The existing SCAN preparation and shared publication
+queues retain their separate concurrency limits. Shared NRCS clearance is
+still required.
 
 Each campaign reserves before launch and retains sanitized accounting. Bounds
 are 87 physical attempts, 20 seconds native and 1,200 seconds acquisition. Source
