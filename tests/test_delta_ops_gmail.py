@@ -636,6 +636,32 @@ class BuilderIntegrationTests(unittest.TestCase):
         self.assertNotEqual(checked.returncode, 0)
         self.assertIn(b'UNVERIFIED_SIGNATURE', checked.stderr)
 
+    def test_signed_diversion_report_preserves_reported_period(self):
+        key = "percent_inflow_diverted"
+        for day, value, numeric, units, label in [
+            (6, "27.1 (3-day avg)", 27.1, "percent_3day_avg", "Diverted: 27.1% (3-day avg)"),
+            (24, "62.9 (14-day avg)", 62.9, "percent_14day_avg", "Diverted: 62.9% (14-day avg)"),
+            (25, "62.90%", 62.9, "percent", "Diverted: 62.90%"),
+        ]:
+            with self.subTest(day=day):
+                clock = datetime(2026, 11, day, 19, tzinfo=timezone.utc)
+                date = clock.date().isoformat()
+                raw, keys = signed_message(report(day=date, changes={key: value}))
+                batch = gmail.retrieve(config(), as_of=clock, http=mailbox([envelope(raw)]), keys=keys)
+                selected = gmail.select_retrieved(batch, lambda: self.fail("unexpected PDF"), as_of=clock)
+                self.assertEqual(selected["decision"], "email_primary")
+                artifact = self.root / date
+                out = artifact / "candidate/docs/data"
+                with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}):
+                    gmail.run_builder(selected["record"], as_of=clock, out_dir=out,
+                                      verification=batch.bindings[0], artifact_metadata=artifact/"candidate-metadata.json")
+                values = json.loads((out/"delta_ops_daily_summary.json").read_text())
+                self.assertEqual((values["report_date"], values["values"][key]), (date, value))
+                features = json.loads((out/"delta_ops_daily_summary_features.geojson").read_text())["features"]
+                feature = next(f["properties"] for f in features if f["properties"]["feature_key"] == key)
+                self.assertEqual((feature["value_raw"], feature["value_numeric"], feature["units"], feature["label_text"]),
+                                 (value, numeric, units, label))
+
     def test_handoff_and_publisher_cannot_promote_email_by_flipping_review_flag(self):
         with self.assertRaisesRegex(gmail.ApiError, 'UNVERIFIED_SIGNATURE'):
             gmail.run_builder(record(),as_of=AS_OF,out_dir=self.root/'docs/data')

@@ -194,7 +194,8 @@ ownership.
   one complete 17-field report. Plain/HTML alternatives must agree; the report
   heading supplies the date. Signs, zero, approximation and decimal text survive.
   Required numeric fields cannot silently become null or zero. Annotated
-  diversion percentages retain their number and display `(3-day avg)` once.
+  diversion percentages retain their number and display the reported averaging
+  period once, for example `Diverted: 62.9% (14-day avg)`.
 - **Optional Gmail source (not activated):** `scripts/delta_ops_gmail.py` uses
   only `gmail.readonly`, verifies the expected account, and bounds list/get
   retrieval. Ordinary use is main-only and default-off. Eligibility requires
