@@ -570,20 +570,69 @@ class BuilderIntegrationTests(unittest.TestCase):
             gmail.run_builder(selected['record'], as_of=AS_OF, out_dir=self.root/'docs/data')
         return selected, fetch
 
+    @contextlib.contextmanager
+    def unavailable_pdf_parser(self):
+        # Shadow only this test's R processes with a package that fails to load.
+        package = self.root / "pdftools"
+        library = self.root / "library"
+        library.mkdir()
+        (package / "R").mkdir(parents=True)
+        (package / "DESCRIPTION").write_text(
+            "Package: pdftools\nVersion: 0.0.1\nTitle: Unavailable Parser Fixture\n"
+            "Description: Offline namespace load failure.\nLicense: MIT\n"
+            "Author: Test Fixture\nMaintainer: Test Fixture <test@example.invalid>\n")
+        (package / "NAMESPACE").touch()
+        (package / "R/failure.R").write_text(
+            '.onLoad <- function(...) stop("synthetic unavailable parser")\n')
+        subprocess.run(["R", "CMD", "INSTALL", "--no-test-load", "-l", str(library), str(package)],
+                       check=True, capture_output=True, timeout=60)
+        libraries = os.pathsep.join(filter(None, [str(library), os.environ.get("R_LIBS", "")]))
+        with patch.dict(os.environ, {"R_LIBS": libraries}):
+            subprocess.run(["Rscript", "-e", 'stopifnot(!requireNamespace("pdftools", quietly=TRUE))'],
+                           check=True, capture_output=True, timeout=30)
+            yield
+
+    def test_no_parser_or_eligible_mail_retains_prior_without_pdf_request(self):
+        from test_delta_ops_pdf_integration import server
+        out = self.root / "docs/data"
+        gmail.run_builder(record(kind="pdf"), as_of=AS_OF, out_dir=out)
+        before = {p.name: p.read_bytes() for p in out.iterdir()}
+        with self.unavailable_pdf_parser(), server([(403, None, b"", {})]) as (url, calls):
+            with patch.dict(os.environ, {"DELTA_OPS_SUMMARY_PDF_URL": url,
+                                        "DELTA_OPS_OUT_DIR": str(out), "DELTA_OPS_FORCE_REFRESH": "true"}):
+                batch = gmail.Retrieval("RETRIEVAL_UNAVAILABLE", "AUTH_EXPIRED")
+                selected = gmail.select_retrieved(batch, gmail.fetch_pdf_record, as_of=AS_OF)
+                self.assertEqual(selected["decision"], "failure_retained")
+                self.assertIsNone(selected["record"])
+                result = subprocess.run(["Rscript", "scripts/build_delta_ops_daily_summary.R"],
+                                        cwd=REPO, capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"synthetic unavailable parser", result.stderr)
+                self.assertEqual(calls, [])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in out.iterdir()})
+
     def test_verified_email_selected_through_real_builder(self):
+        artifact = self.root / "artifact"
+        candidate = artifact / "candidate"
+        metadata = artifact / "candidate-metadata.json"
         raw, keys = signed_message()
         batch = gmail.retrieve(config(), as_of=AS_OF, http=mailbox([envelope(raw)]), keys=keys)
         selected = gmail.select_retrieved(batch, Mock(side_effect=AssertionError('no PDF needed')), as_of=AS_OF)
-        gmail.run_builder(selected['record'], as_of=AS_OF, out_dir=self.root/'docs/data', verification=batch.bindings[0])
-        summary = json.loads((self.root/'docs/data/delta_ops_daily_summary_summary.json').read_text())
+        self.assertEqual(selected["decision"], "email_primary")
+        self.assertFalse(selected["pdf_attempted"])
+        with self.unavailable_pdf_parser(), patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}):
+            gmail.run_builder(selected["record"], as_of=AS_OF, out_dir=candidate/"docs/data",
+                              verification=batch.bindings[0], artifact_metadata=metadata)
+        self.assertTrue(metadata.is_file())
+        summary = json.loads((candidate/'docs/data/delta_ops_daily_summary_summary.json').read_text())
         self.assertEqual(summary['source_kind'], 'email')
         self.assertFalse(summary['review_only'])
         self.assertEqual(summary['source_authentication'], gmail.AUTH_METHOD)
         self.assertEqual(summary['x2_position_date'], '2026-10-14')
         self.assertEqual(summary['export_total_cfs'], 3700)
-        self.assertEqual(len(list((self.root/'docs/data').iterdir())), 4)
+        self.assertEqual(len(list((candidate/'docs/data').iterdir())), 4)
         # A standalone caller cannot elevate public method/flags into evidence.
-        checked = subprocess.run([sys.executable,'scripts/delta_ops_publisher.py','validate','--root',str(self.root)],cwd=REPO,capture_output=True)
+        checked = subprocess.run([sys.executable,'scripts/delta_ops_publisher.py','validate','--root',str(candidate)],cwd=REPO,capture_output=True)
         self.assertNotEqual(checked.returncode, 0)
         self.assertIn(b'UNVERIFIED_SIGNATURE', checked.stderr)
 

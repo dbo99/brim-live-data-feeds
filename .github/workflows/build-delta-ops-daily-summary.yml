@@ -134,23 +134,12 @@ jobs:
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         uses: ./.github/actions/setup-r-hardened
 
-      - name: Install Linux system libraries
-        if: steps.delta_ops_precheck.outputs.should_run == 'true'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libcurl4-openssl-dev \
-            libssl-dev \
-            libxml2-dev \
-            libpoppler-cpp-dev
-
       - name: Install and verify R packages
         if: steps.delta_ops_precheck.outputs.should_run == 'true'
         shell: Rscript {0}
         run: |
           options(repos = c(CRAN = "https://packagemanager.posit.co/cran/__linux__/jammy/latest"))
-          pkgs <- c("curl", "pdftools", "jsonlite", "readr", "tibble", "dplyr", "lubridate")
+          pkgs <- c("jsonlite", "readr", "tibble", "dplyr", "lubridate")
           missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
           if (length(missing) > 0) {
             install.packages(missing, Ncpus = max(1, parallel::detectCores() - 1))
@@ -161,6 +150,23 @@ jobs:
           }
           cat("Installed/available R packages:\n")
           print(vapply(pkgs, function(p) as.character(utils::packageVersion(p)), character(1)))
+
+      - name: Prepare PDF transport and parser
+        if: steps.delta_ops_precheck.outputs.should_run == 'true'
+        continue-on-error: ${{ steps.delta_ops_mode.outputs.use_gmail == 'true' }}
+        shell: timeout --kill-after=10s 5m bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          ready='requireNamespace("curl", quietly = TRUE) && requireNamespace("pdftools", quietly = TRUE)'
+          if Rscript -e "quit(status = as.integer(!($ready)))"; then exit 0; fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev libpoppler-cpp-dev
+          Rscript - <<'RSCRIPT'
+          pkgs <- c("curl", "pdftools")
+          missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+          if (length(missing)) install.packages(missing)
+          stopifnot(all(vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)))
+          RSCRIPT
 
       - name: Build latest Delta Ops daily summary GeoJSON
         if: steps.delta_ops_precheck.outputs.should_run == 'true' && steps.delta_ops_mode.outputs.use_gmail != 'true'
