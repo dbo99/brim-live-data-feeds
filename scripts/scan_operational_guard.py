@@ -158,7 +158,8 @@ def complete_history(response, key):
 
 def initial_refusal(root, run):
     """One out-of-campaign cron may have failed before reservation on the manual day."""
-    require(run["event"] == "schedule" and run["head_branch"] == "main" and
+    require(run["workflow_id"] == WORKFLOW_ID and run["repository"]["id"] == REPOSITORY_ID and
+            run["event"] == "schedule" and run["head_branch"] == "main" and
             run["run_attempt"] == 1 and run["status"] == "completed" and run["conclusion"] == "failure",
             "PRIOR_SPEND_OR_UNKNOWN")
     source = run["head_sha"]
@@ -170,14 +171,49 @@ def initial_refusal(root, run):
             {blob("HEAD", "scripts/scan_operational_guard.py"), "6be892b42888ee191d19c57c05097c927765df1d"},
             "UNKNOWN_PRIOR_ADMISSION_CODE")
     jobs = complete_history(github(f"actions/runs/{run['id']}/jobs?filter=all&per_page=100"), "jobs")
-    require(all(j["run_id"] == run["id"] and j["run_attempt"] == 1 for j in jobs), "WRONG_PRIOR_JOB")
-    prepare = [j for j in jobs if j["name"] == "prepare-candidate"]
-    require(len(prepare) == 1 and prepare[0]["conclusion"] == "failure" and
-            all(j["conclusion"] == "skipped" for j in jobs if j != prepare[0]), "PRIOR_SPEND_OR_UNKNOWN")
-    steps = {s["name"]:s["conclusion"] for s in prepare[0]["steps"]}
-    require(steps.get("Require finite manual or scheduled admission") == "failure" and
-            steps.get("Recheck admission and reserve this campaign once") == "skipped" and
-            steps.get("Build SCAN soil moisture latest feed") == "skipped", "PRIOR_SPEND_OR_UNKNOWN")
+    require(all(j["run_id"] == run["id"] and j["run_attempt"] == 1 and
+                j["head_sha"] == source and j["head_branch"] == "main" and j["status"] == "completed"
+                for j in jobs), "WRONG_PRIOR_JOB")
+    by_name = {j["name"]: j for j in jobs}
+    require(len(jobs) == 3 and set(by_name) == {
+        "prepare-candidate", "refuse-private-acquisition", "publish-to-main"
+    }, "PRIOR_SPEND_OR_UNKNOWN")
+    for name in ("refuse-private-acquisition", "publish-to-main"):
+        require(by_name[name]["conclusion"] == "skipped" and by_name[name]["steps"] == [],
+                "PRIOR_SPEND_OR_UNKNOWN")
+
+    prepare = by_name["prepare-candidate"]
+    steps = prepare["steps"]
+    require(prepare["conclusion"] == "failure" and
+            all(s["status"] == "completed" and type(s["number"]) is int and s["number"] > 0
+                for s in steps), "PRIOR_SPEND_OR_UNKNOWN")
+    numbers = [s["number"] for s in steps]
+    require(numbers == sorted(set(numbers)), "PRIOR_SPEND_OR_UNKNOWN")
+    results = [(s["name"], s["conclusion"]) for s in steps]
+    # Only these two early exits are proved unused. Check the whole ordered
+    # job, including the always-run finalizer and receipt retention.
+    require(results[:1] == [("Set up job", "success")] and results[1:3] in (
+        [("Check out source event", "success"), ("Require finite manual or scheduled admission", "failure")],
+        [("Check out source event", "failure"), ("Require finite manual or scheduled admission", "skipped")],
+    ), "PRIOR_SPEND_OR_UNKNOWN")
+    skipped = (
+        "Prefer Canonical Ubuntu APT mirror with Azure fallback",
+        "Set up R",
+        "Provision the supported bounded SCAN runtime",
+        "Qualify actual Linux SCAN runtime without external egress",
+        "Prepare isolated SCAN candidate directory",
+        "Recheck admission and reserve this campaign once",
+        "Build SCAN soil moisture latest feed",
+        "Validate SCAN candidate",
+        "Describe SCAN candidate artifact",
+    )
+    require(results[3:] == [(name, "skipped") for name in skipped] + [
+        ("Record fixed-label SCAN outcome", "failure"),
+        ("Upload validated SCAN publication candidate", "skipped"),
+        ("Retain bounded SCAN control and accounting receipts", "success"),
+        ("Post Check out source event", "success"),
+        ("Complete job", "success"),
+    ], "PRIOR_SPEND_OR_UNKNOWN")
 
 
 def reviewed_merge(root, policy, head):

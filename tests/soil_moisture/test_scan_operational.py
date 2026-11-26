@@ -285,17 +285,67 @@ class RenewableTests(unittest.TestCase):
         unused=dict(current,id=10095,run_number=10,event="schedule",status="completed",conclusion="failure",
                     created_at="2026-11-29T19:55:00Z")
         current["run_number"]=a["policy"]["run_number"]=11;a["env"]["GITHUB_RUN_NUMBER"]="11";a["history"].append(unused)
-        steps={"Require finite manual or scheduled admission":"failure",
-               "Recheck admission and reserve this campaign once":"skipped","Build SCAN soil moisture latest feed":"skipped"}
-        for name,val in ((None,None),("Recheck admission and reserve this campaign once","success"),
-                         ("Build SCAN soil moisture latest feed","failure"),("Require finite manual or scheduled admission","success")):
-            modified=steps if name is None else dict(steps,**{name:val})
-            job=dict(name="prepare-candidate",id=900,run_id=unused["id"],run_attempt=1,conclusion="failure",
-                     steps=[dict(name=k,conclusion=v) for k,v in modified.items()])
-            with patch.object(g,"github",return_value={"total_count":1,"jobs":[job]}),patch.object(g.subprocess,"check_output",return_value="b"*40):
-                if name:
-                    with self.assertRaisesRegex(g.Refused,"PRIOR_SPEND"):g.admit(**a)
-                else:self.assertEqual(g.admit(**a)["status"],"ADMITTED")
+        workflow = (ROOT / g.WORKFLOW).read_text()
+        prepare = workflow.split("  prepare-candidate:\n")[1].split("  publish-to-main:\n")[0]
+        names = ["Set up job"] + [line.strip()[8:] for line in prepare.splitlines()
+                                  if line.startswith("      - name: ")] + ["Post Check out source event", "Complete job"]
+        common = dict(run_id=unused["id"], run_attempt=1, status="completed", head_sha=unused["head_sha"],
+                      head_branch="main")
+        jobs = [dict(common, id=i, name=name, steps=[], conclusion="skipped") for i, name in
+                enumerate(("prepare-candidate", "refuse-private-acquisition", "publish-to-main"), start=1)]
+        jobs[0]["conclusion"] = "failure"
+        cleanup = {"Set up job", "Retain bounded SCAN control and accounting receipts",
+                   "Post Check out source event", "Complete job"}
+        for i, name in enumerate(names, start=1):
+            result = "success" if name in cleanup else "skipped"
+            if name in ("Check out source event", "Record fixed-label SCAN outcome"):
+                result = "failure"
+            jobs[0]["steps"].append(dict(name=name, number=i, conclusion=result, status="completed"))
+
+        def admit(evidence, count=None):
+            response = {"jobs": evidence, "total_count": len(evidence) if count is None else count}
+            with patch.object(g, "github", return_value=response), patch.object(
+                    g.subprocess, "check_output", return_value="b"*40):
+                return g.admit(**a)["status"]
+
+        self.assertEqual(admit(jobs), "ADMITTED")
+        admission_failure = copy.deepcopy(jobs)
+        admission_failure[0]["steps"][1]["conclusion"] = "success"
+        admission_failure[0]["steps"][2]["conclusion"] = "failure"
+        self.assertEqual(admit(admission_failure), "ADMITTED")
+
+        # Removing, duplicating or running any skipped step invalidates the proof.
+        for i, step in enumerate(jobs[0]["steps"]):
+            for change in ("missing", "duplicate", "conclusion"):
+                broken = copy.deepcopy(jobs)
+                steps = broken[0]["steps"]
+                if change == "missing":
+                    del steps[i]
+                elif change == "duplicate":
+                    steps.append(dict(steps[i], number=len(steps)+1))
+                else:
+                    steps[i]["conclusion"] = "success" if step["conclusion"] != "success" else "skipped"
+                with self.subTest(step=step["name"], change=change), self.assertRaises(g.Refused):
+                    admit(broken)
+
+        for i in range(3):
+            for broken in (jobs[:i] + jobs[i+1:], jobs + [dict(jobs[i], id=99)]):
+                with self.assertRaises(g.Refused):
+                    admit(broken)
+        for i, updates in ((2, {"conclusion": "success"}), (2, {"steps": jobs[0]["steps"]}),
+                           (1, {"name": "unknown"}), (0, {"run_attempt": 2}), (0, {"run_id": 42}),
+                           (0, {"status": "in_progress"}), (0, {"head_sha": "f"*40})):
+            broken = copy.deepcopy(jobs)
+            broken[i].update(updates)
+            with self.assertRaises(g.Refused):
+                admit(broken)
+        with self.assertRaises(g.Refused):
+            admit(jobs, count=4)
+        with patch.object(g.subprocess, "check_output", side_effect=["a"*40, "b"*40]):
+            with self.assertRaisesRegex(g.Refused, "UNKNOWN_PRIOR_ADMISSION_CODE"):
+                g.initial_refusal(ROOT, unused)
+        with self.assertRaises(g.Refused):
+            g.initial_refusal(ROOT, dict(unused, run_attempt=2))
         a=self.case(True,1);a["history"][1]["conclusion"]="failure"
         with patch.object(g,"initial_refusal",side_effect=AssertionError("A failed approved date must not be excused")):
             with self.assertRaises(g.Refused):g.admit(**a)

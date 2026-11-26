@@ -919,8 +919,11 @@ The guard checks the complete bounded history (up to 100 rows), consecutive
 run numbers and one successful predecessor per approved date. Missing or
 duplicate slots, failed attempts and unresolved spending stop continuation.
 A new manual grant can reconcile one earlier out-of-campaign cron on the same
-day only when authenticated job steps prove that trusted initial admission
-failed and both reservation and acquisition were skipped. This evidence can
+day when the complete authenticated job record proves either checkout failed
+before admission, or checkout succeeded and initial admission failed. Both cases
+require skipped reservation, acquisition, validation, candidate upload and
+publication. Only the expected finalizer, receipt retention and runner cleanup
+may follow the early failure. This evidence can
 also explain an unused cron on the manual anchor date before daily service
 starts. It cannot excuse a failed approved daily slot. Public data-only
 commits may advance during daily service while the commissioned code and
