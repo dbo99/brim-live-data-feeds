@@ -1,14 +1,14 @@
 # Soil SMS hosted qualification
 
-This source-only integration combines the reviewed SCAN request-accounting and
-sensor-count repair with the public-selected SNOTEL current-water-year snapshot
-source from PR #49. It does not activate either producer or publish observations.
-The PR #49 source is included here; review merge ordering together so neither is
-merged as an independent, conflicting release.
+PR #52 qualified the SCAN request-accounting and sensor-count repair with the
+selected SNOTEL snapshot source from PR #49. This is a record of that synthetic
+qualification and its replay boundary. Current deployed controls are in
+[SCAN operations](PUBLISHING_AND_OPERATIONS.md#scan-finite-hosted-commissioning-and-inactive-private-mode)
+and [SNOTEL finite successor operation](SOIL_MOISTURE_OPERATIONS.md#finite-successor-operation).
 
-The three SCAN runtime files and SNOTEL science, reducer, native transport,
-publisher and year-end bodies retain their accepted bytes. The public legacy
-SNOTEL compact pool remains 32; the NEW snapshot route is separate. SCAN counts
+At qualification, the three SCAN runtime files and SNOTEL science, reducer,
+native transport, publisher and year-end bodies retained their accepted bytes.
+The legacy SNOTEL compact pool had 32 entries. The snapshot used a separate route. SCAN counts
 original distinct sensor IDs before making its display string: readings 20/40
 remain mean 30 and now report count 2.
 
@@ -71,44 +71,41 @@ complete after abrupt runner loss. Sampled memory has a 3 GiB preventive trigger
 and 4 GiB ceiling when runner capacity permits; sampling is not an instantaneous
 hard-cap proof.
 
-## Future SCAN entry remains closed
+<a id="future-scan-entry-remains-closed"></a>
 
-`build-scan-soil-moisture-latest.yml` retains its schedule expression, five-path
-allowlist, last-good validator, main-only publisher and shared non-cancelling
-publication queue. It is not dispatched or activated by this integration.
+## Historical SCAN entry at PR #52
 
-Before any provider check, it requires `SCAN_LIVE_APPROVAL_JSON` plus five named
-configuration values: `SCAN_HTTP_MAX_REQUESTS`, `SCAN_HTTP_RESPONSE_BYTES`,
+At PR #52 the workflow retained its five-path allowlist, last-good validator,
+main-only publisher and shared queue. The qualification did not activate it.
+PR #57 subsequently commissioned finite SCAN, and PR #68 added renewable dates.
+
+The guarded entry required `SCAN_LIVE_APPROVAL_JSON` and five configuration
+values before provider access: `SCAN_HTTP_MAX_REQUESTS`, `SCAN_HTTP_RESPONSE_BYTES`,
 `SCAN_HTTP_TOTAL_BYTES`, `SCAN_HTTP_CAMPAIGN_SECONDS`, and
-`SCAN_FETCH_TIMEOUT_SEC`. No real values are installed here. The approval must
-explicitly identify the exact source SHA, one workflow run number, first attempt,
+`SCAN_FETCH_TIMEOUT_SEC`. The qualification installed no real values. An approval
+had to identify the exact source SHA, one workflow run number, first attempt,
 finite matching budgets and a current UTC validity interval. The actual run ID
-and attempt are bound in receipts. The check repeats after setup; the R entry
-also verifies the pinned package versions and available interval margin. A new
-run number or rerun cannot reuse that approval silently.
+and attempt were bound in receipts. After setup, the R entry also checked the
+pinned package versions and remaining time. The approval excluded a new run
+number or rerun.
 
-The request account is invocation-local, not a durable restart journal. Runtime
-failure receipts retain known/UNKNOWN spending where execution allows. A new
-live approval, reviewed dependency configuration and durable failure/accounting
-custody are still required for production; this work does not authorize recovery
-by resetting an interrupted account. The existing mutable production dependency
-installer is guarded by the exact runtime-version check; production provisioning
-must be commissioned before activation.
+The request account was invocation-local. Recovery relies on retained receipts
+and authenticated spending evidence. An interrupted or uncertain account cannot
+be reset to resume acquisition. See the current operations guide for the native
+runtime, pre-spend checks and finite manual or daily route.
 
 The ten-good/one-missing synthetic fixture retains the existing strict publisher
 rejection. Partial refresh is a separate product/consumer decision. All 128 held
 current/history joins remain held; absent history is not zero. Broad historical
 re-auditing and SWE repair are outside this integration.
 
-## Remaining production decisions
+<a id="remaining-production-decisions"></a>
 
-| Provider | Review evidence and remaining decision |
-|---|---|
-| SCAN | Review source integration and actual hosted receipts. Separately approve real budgets, production dependency lock/custody, acquisition, observation publication and activation. Preserve the existing five-output contract and held history. |
-| SNOTEL SMS | Review PR49 relationship and NEW snapshot proof. Real 32/98 roster/native-field disclosure, consumer status/rollover decoding, durable predecessor/accounting custody, acquisition/publication and schedule remain separate. Preserve accepted source and provisional annual holdings. |
-| Dendra | Accepted source32B and its separately approved attended cycle remain unchanged. Production still needs approved durable private custody and supported path binding/import/rebinding; copying a database or review ZIP is insufficient recovery. |
+## Later production checkpoints
 
-GitHub remains the preferred production destination. Eventual commissioning must
-prove update, successor retention and a fresh restore/read/repeat with the Mac
-unavailable and without duplicate spending. Synthetic QA alone does not prove
-private real-state durability, real-provider availability or application support.
+PR #71 established SNOTEL successors from the published two-file predecessor.
+The retained replay and synthetic fixtures remain available to test their
+original boundaries. The separate Dendra `source32B` checkpoint retained its
+own custody and recovery requirements. They confer no authority for a provider call, another
+feed's private custody or acceptance by a particular application. Use the
+[product catalog](PRODUCTS.md) for dated delivery evidence.

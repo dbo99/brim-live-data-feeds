@@ -9,6 +9,12 @@ publication paths, manifests, and operational build evidence. The private BRIM
 consumer owns lazy loading, consumer-side validation, display, source and time
 presentation, failure isolation, and in-session fallback.
 
+Verify the committed generation and its Pages delivery, the generation accepted
+by the intended reader and the observation dates represented in each display.
+For multi-plot products, check each daily or monthly observation series by
+source identity and cutoff. Record the period of historical reference statistics
+and fallback traces separately. Report an unchecked display's freshness as unknown.
+
 The human product inventory is [PRODUCTS.md](PRODUCTS.md). Machine-readable
 files remain authoritative for the fields they currently serialize.
 
@@ -51,6 +57,7 @@ from Pages-relative `data/...` paths. Their repository counterparts are under
 | USGS streamflow | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | `scripts/build_usgs_streamflow_latest_ca.R` | `docs/data/usgs_streamflow_latest_ca.geojson`<br>`docs/data/usgs_streamflow_latest_ca_summary.json` | No | Streamflow helper |
 | USGS groundwater | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | `scripts/build_usgs_groundwater_latest_ca.R` | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | No | Groundwater helper |
 | SCAN | `.github/workflows/build-scan-soil-moisture-latest.yml` | `scripts/build_scan_soil_moisture_latest.R` | Latest GeoJSON/summary, current-WY trace, depth style, water-day percentiles, monthly context, and prior-WY fallback under `docs/data/` | No | SCAN helper |
+| SNOTEL SMS | `.github/workflows/build-snotel-sms-current-wy.yml` | `scripts/soil_network_workflow.py` | `docs/data/snotel-sms/index.json` and its authenticated `current-wy.json` | Two-file index | Acceptance depends on the reader's support for the selected generation. |
 | Snow-pillow | `.github/workflows/build-snow-pillow-latest.yml` | `scripts/build_snow_pillow_latest.R` | Latest GeoJSON/summary, current-WY trace, water-day percentiles, monthly context, prior-WY fallback, and normal medians under `docs/data/` | No | Snow-pillow helper |
 | Winter Storm Levels | `.github/workflows/build-winter-storm-levels.yml` | `scripts/build_winter_storm_levels.R` | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` and selected target | Yes | Prepared for the additive f240 lead set; private implementation remains outside this repository |
 
@@ -603,14 +610,16 @@ and producer scripts.
 - Source units and vertical datum must not be silently normalized away.
 - BRIM uses 90-day, one-year and two-year age bands and distinguishes API
   measurements from index fallback.
-- Optional history fields enrich popups; their absence must not prevent the
-  latest-only layer from loading.
+- The latest measurement has its own observation date. Use that date for its
+  age and plotted water year. Historical annual means and their historical
+  cutoff describe a separate series. Optional history fields enrich popups. Their
+  absence must still allow the latest-only layer to load.
 
 ### SCAN soil moisture
 
-The shared three-network soil-moisture interface is the sole application target;
-producer HTML fields do not authorize reactivating a legacy SCAN controller or
-popup. A current-only application projection requires separate consumer work.
+The shared three-network interface remains the SCAN application target. Verify
+its current-only reader separately from the established SCAN display. Producer
+HTML fields grant no authority to reactivate a legacy controller.
 The five-file producer shape is preserved; the two summaries add the optional
 `source_cutoff_date` retained-date ceiling, separate from observed coverage.
 A numeric `sms_pct` proves neither
@@ -636,14 +645,21 @@ unverified context, including prebuilt historical popup fields.
   inches are contract-sensitive.
 - Failure of optional context should not convert a valid latest product into a
   failed latest layer.
-- Daily/monthly/fallback files have split producer ownership and must not be
-  assumed to refresh with the scheduled writer.
+- The daily trace advances with the feed. The separately released monthly file
+  contains actual same-depth monthly medians (at least five valid daily
+  composites) and historical statistics. Check the last supported month for each
+  station/depth, valid-day count and open-month cutoff independently.
 
-### SNOTEL SMS current-WY snapshot (inactive)
+<a id="snotel-sms-current-wy-snapshot-inactive"></a>
 
-The additive `snotel-sms-current-wy-1` contract is implemented for offline saved
-inputs, not enabled or accepted by a live consumer. Future paths are exactly
-`docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`.
+### SNOTEL SMS current-WY successor pair
+
+Both `docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`
+are public. The retained first generation and a native successor have been
+published. A November 25 compatibility check found that the tested reader
+accepted the first index and rejected the successor. Verify the intended reader
+against the actual generation. Keep any retained last-good generation dated.
+
 Index generation, ending-year WY, predecessor and the single target's byte count
 and SHA-256 must agree. Product generation is its canonical content digest before
 adding the generation field; it is not a future Git commit SHA.
@@ -693,9 +709,9 @@ publication lineage only. `annual_maintenance` records the season end, unfinishe
 tail and separate Dave-directed maintenance policy. Query-accounted positions are
 not promises of numeric values or a complete year.
 
-Exact native catalog/data disclosure, this compact public evidence projection,
-consumer decoding/status presentation and explicit initial publication remain
-required before release. No existing consumed output is removed or changed.
+The public pair uses the released native catalog and compact evidence projection.
+Reader acceptance requires decoding the selected generation and its statuses.
+Record it independently of main and Pages publication.
 
 The Phase B runner does not change these arrays or scientific states. Its private
 operational result distinguishes `DISABLED`, `NO_ELIGIBLE_INTERVAL`, `HELD` and
@@ -716,7 +732,12 @@ eligibility. No consumer switch, second live trace or reference policy changes h
 ### Snow-pillow SWE
 
 - Latest GeoJSON is required for the live layer.
-- Current-WY trace and historical context CSVs are optional enrichments.
+- The daily current-WY trace and historical context are optional enrichments.
+  The separately released monthly file includes actual station SWE means
+  (at least ten valid observing days) and historical reference statistics. Verify
+  the latest supported month, valid-day count and open-month cutoff per provider
+  and station. Keep measured zero, missing days, sensor class and reference
+  period distinct.
 - Station identity, provider, latest SWE in inches, observation date/age,
   source-element class and staleness class are contract-sensitive.
 - BRIM freshness classes are 0–2, 3–7, 8–21 and greater than 21 days.

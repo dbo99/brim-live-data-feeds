@@ -16,6 +16,25 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 - **Recommended** — desirable future work requiring its own review.
 - **Gap** — current behavior does not meet the proposed standard.
 
+## Scope of operational controls
+
+Approved autonomous acquisition, validation and publication are the default for
+established feeds. Keep proven components and repair demonstrated defects in the
+path that owns them. Justify replacement work with a measurable benefit.
+
+For temporary controls, record the hazard, affected execution path, accountable
+owner, expiry, evidence for exit and behavior at expiry. Expansion to another
+feed requires a demonstrated shared hazard and owner review. Renewal or removal
+requires an explicit decision. A proposed successor rule has no effect on current
+admission. Provider limits and recovery rules follow the actual provider, spend
+and failure consequences of each feed.
+
+Retire a superseded executable entry only after checking scheduled, manual and
+external callers, identifying its successor or concluded purpose, and verifying
+recovery from preserved source, staging and accepted product bytes. Preserve
+scientific history, receipts, public URLs and genuine safeguards. Retirement of a
+dispatch route requires its own approval.
+
 ## Workflow inventory
 
 | Workflow file | Display name | Trigger/cadence UTC | Entry point | Publication |
@@ -39,13 +58,12 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 | `.github/workflows/check-wind-feeds.yml` | Check BRIM wind feeds | Manual; every 15m | Inline Python | May dispatch wind writers |
 | `.github/workflows/preview-usgs-groundwater-candidates.yml` | Preview USGS groundwater candidate discovery | Manual input; Mondays 13:37 | `scripts/preview_usgs_groundwater_candidate_discovery.R` | Artifact only |
 | `.github/workflows/qa-snotel-sms-saved-replay.yml` | Build SNOTEL SMS synthetic replay (QA) | Manual only | `scripts/soil_moisture/snotel_saved_replay.py` | Synthetic summary/manifest artifact only; no provider call |
-| `.github/workflows/build-snotel-sms-current-wy.yml` | Build SNOTEL soil moisture current-WY feed | Manual only; acquire/publish false | `scripts/soil_network_workflow.py snotel-prepare` | Disabled by default; explicit approved main-only publication after a validated candidate |
+| `.github/workflows/build-snotel-sms-current-wy.yml` | Build SNOTEL soil moisture current-WY feed | Manual default off, scheduled 18:11 subject to finite clearance | `scripts/soil_network_workflow.py snotel-prepare` | Admitted successor pair via the main-only publisher |
 
-This source candidate contains 20 workflow files: fifteen established scheduled
-writers, four support workflows, and one manual/default-off SNOTEL operating
-candidate. Source presence does not establish registration, enabled service state
-or dispatch authority. GitHub Pages deployment is separate platform-managed
-behavior and is not source-controlled in `.github/workflows`.
+The table describes producer and support routes. The three spent retained
+publication bridges are recorded in [operations](PUBLISHING_AND_OPERATIONS.md#historical-retained-releases).
+Source presence, GitHub registration, effective admission and actual publication
+are separate facts. Pages deploys independently.
 
 ## Names and entry points
 
@@ -53,8 +71,8 @@ behavior and is not source-controlled in `.github/workflows`.
 
 - Workflow filenames describe one product or diagnostic responsibility.
 - Display names identify product and action.
-- The established scheduled writers call one principal R entry script. The
-  separate SNOTEL operating candidate uses the Python entry point listed above.
+- R-based writers call their product's entry script. SNOTEL SMS uses the
+  Python entry point listed above.
 - Each workflow passes explicit `--allowlist` paths and, where needed,
   `--owned-root` boundaries to the shared publisher; Git staging lives in
   `scripts/main_publisher.py`.
@@ -74,7 +92,8 @@ behavior and is not source-controlled in `.github/workflows`.
 
 **Implemented**
 
-- Fifteen writers have schedules and `workflow_dispatch`.
+- The operational writer definitions support schedules and manual dispatch.
+  Finite feeds must also satisfy their deployed admission rules.
 - The CNRFC forecast writer uses GitHub Actions' native
   `America/Los_Angeles` timezone at 10:56 and 16:56. It has no runtime
   exact-minute guard, records a stable Pacific AM/PM logical slot, defaults
@@ -193,7 +212,7 @@ activation remain distinct decisions.
 
 **Implemented**
 
-- All fifteen production writers use `contents: read` for preparation and
+- The production writers use `contents: read` for preparation and
   `contents: write` only in their `publish-to-main` job.
 - Wind watchdog requests `contents: read` to inspect wind manifests/state and
   `actions: write` to dispatch ASOS/AWOS, GFS, HRRR, and NBM writers on the
@@ -230,10 +249,9 @@ read in its builder. The current exposure and handling rules are documented in
 - Each attempt starts a detached transaction at freshly fetched `main` and
   repeats product validation. Same/stale no-ops follow the product callback;
   a second race, non-race push failure or invalid transaction fails closed.
-- Preparation selects the intended branch tip. Source binding differs:
-  CNRFC, CBRFC, GFS, HRRR, NBM wind, NBM QPF and Winter Storm Levels record
-  preparation HEAD; the other eight still use event-SHA metadata and callbacks.
-  The exact checkout matrix and resulting provenance gap are in
+- Source binding differs by writer. SCAN and SNOTEL SMS pin the event. The RFC
+  and rolling forecast group records actual preparation HEAD. For the remaining
+  branch-tip writers, compare the event SHA and actual checkout. See
   [operations](PUBLISHING_AND_OPERATIONS.md#checkout-and-source-identity).
 
 **Recommended**
@@ -253,13 +271,13 @@ read in its builder. The current exposure and handling rules are documented in
 
 **Implemented**
 
-- Jobs use `ubuntu-latest`.
+- Use the runner declared in the job. SCAN and SNOTEL admission use `ubuntu-24.04`.
 - Checkout is `actions/checkout@v6`.
 - R setup uses the repository-owned
   [`.github/actions/setup-r-hardened/action.yml`](../.github/actions/setup-r-hardened/action.yml),
   which pins R `4.6.1` and makes three bounded
-  `r-lib/actions/setup-r@v2` attempts with 5- and 15-second backoff. All fifteen
-  writers and both R-based support workflows use this one policy.
+  `r-lib/actions/setup-r@v2` attempts with 5- and 15-second backoff. R-based
+  production, support and qualification jobs use this action.
 - R dependency setup remains `r-lib/actions/setup-r-dependencies@v2`.
 - Micromamba is `mamba-org/setup-micromamba@v3`.
 - Every upload reference is `actions/upload-artifact@v7`.
@@ -651,55 +669,35 @@ by this document.
 
 ## Validation for workflow or producer changes
 
-At minimum:
+Trace the change from its entry point to the affected consumers and callbacks.
+For a product-local change, exercise that path and its failure/last-good boundary.
+For shared code, verify the invariant in its affected callers. Reuse accepted
+runtime and scientific evidence where the dependencies match. Broaden testing
+only when the change or a demonstrated failure warrants it. A hosted or provider
+exercise needs a relevant environment-dependent behavior and separate authority.
 
-1. Parse changed YAML and R.
-2. Run `git diff --check`.
-3. Confirm trigger, permission, concurrency and publication ref.
-4. Enumerate exact staged product paths.
-5. Validate empty/partial/retry behavior.
-6. Validate output JSON/CSV and manifest references.
-7. Inspect secret/log/artifact exposure.
-8. Use an artifact, sandbox or feature branch for nonproduction evidence.
-9. Prove official `main` and hosted paths were not changed by the test.
-10. Test private BRIM when path/schema/time/unit/fallback behavior changed.
-11. Record remaining uncertainty and obtain explicit publication approval.
+Check the exact diff, parse changed formats and verify relevant permissions,
+owned outputs and disclosure. Exercise consumer compatibility when public paths,
+units, timestamps, nulls or fallback semantics change. Documentation-only changes
+need source, link and authority checks. They can be reviewed without a live run.
 
-### SNOTEL current-WY manual finite commissioning
+<a id="snotel-current-wy-manual-finite-commissioning"></a>
 
-`build-snotel-sms-current-wy.yml` is a separate manual-only source candidate;
-`qa-snotel-sms-saved-replay.yml` keeps its behavior with its corrected display title.
-Acquisition/publication default
-false, contradictory modes fail, and a default dispatch performs no checkout,
-provider retrieval or publication. Future explicit preparation has read-only
-repository permission and a 60-minute timeout. Both jobs check out `github.sha`;
-actual checked-out source is bound to integrity metadata and the public catalog.
-The accepted catalog is now committed; it grants no standing acquisition authority.
-The Ubuntu 24.04 route requires an exact finite source/run/attempt grant,
-pre-opener offline qualification in a network namespace, and owned preparation
-supervision through `scripts/snotel_first_run.py`. Both preparation and publication
-repeat finite admission. See the current first-product controls in
-[soil operations](SOIL_MOISTURE_OPERATIONS.md).
+### SNOTEL current-WY successor operation
 
-Artifacts positively allow only `candidate/docs/data/snotel-sms/index.json`,
-`candidate/docs/data/snotel-sms/current-wy.json` and `candidate-metadata.json`.
-Disabled/no-work/failed/synthetic results cannot qualify. The 15-minute publisher
-job additionally requires explicit publication, a validated candidate and main.
-Only that job has contents-write, and its job-scoped queue remains exactly
-`brim-live-main-publish`, `cancel-in-progress: false`, `queue: max`. The unchanged
-shared publisher reconciles only the two product paths onto fresh main. Each
-source-specific callback repeats year admission; committed delivery is verified
-separately from the source-event checkout. Newer unrelated products remain owned
-by their existing writers. There are no schedules, chained triggers, activation
-steps or changes to other workflows. Local YAML/mock tests do not establish a
-hosted or real-provider pass; Git integration, disclosure, consumer, hosted,
-acquisition, first-publication and scheduling decisions remain explicit.
+`build-snotel-sms-current-wy.yml` supports a manual successor and an 18:11 UTC
+scheduled opportunity. The default manual mode reports `DISABLED` and skips the
+checkout and Python steps. An admitted acquisition checks the event source,
+finite policy, catalog, actual run history, acknowledged predecessor and current
+provider/resource clearance. Both jobs check out the event SHA and repeat the
+applicable admission checks. The synthetic replay workflow remains separate.
 
-A default `acquire=false` dispatch reports `DISABLED` and skips checkout and all
-Python steps; it produces no candidate and does not test the snapshot, prior-product
-importer, transport or publisher. The older synthetic QA validates its established
-saved-fixture replay only. Meaningful hosted Phase A/B saved-input validation needs
-a separately approved test route and dispatch; neither is implemented here.
+The 60-minute preparation job can upload only the validated index, current-WY
+payload and candidate metadata. The 15-minute main-only publisher reconciles the
+pair on fresh main under `brim-live-main-publish`. An authenticated publication
+acknowledgment and independent delivery check complete the successor. See
+[finite successor operation](SOIL_MOISTURE_OPERATIONS.md#finite-successor-operation)
+for the deployed windows, spending and stop rules.
 
 ### SCAN/SNOTEL synthetic hosted qualification
 
@@ -718,8 +716,8 @@ in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does 
 activate acquisition/publication, release real SNOTEL catalog data, or resolve
 the held history joins. Production and consumer readiness remain separate.
 
-The separate retained R11 bridge has only a manual trigger, one admitted first
-run/attempt, a 10-minute contents-read preparation job and a 15-minute
+The R11 bridge completed its single admitted manual run. Its workflow declares a
+10-minute contents-read preparation job and a 15-minute
 contents-write job in the unchanged shared publication queue. Its artifact is
 exactly the approved two-file product plus new standard metadata. Source and
 staging identities are distinct; staging content is never executable. No provider

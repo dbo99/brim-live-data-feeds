@@ -16,9 +16,10 @@ Read:
 - `docs/BRIM_CONSUMER_CONTRACT.md` if any public file, manifest, field, unit, time,
   or fallback behavior may change.
 
-Compare the proposed edit with every production writer when it affects a shared
-pattern. Do not assume a safe change in one workflow was already applied to the
-others.
+Trace the proposed edit to its actual callers. For a shared publisher, runtime
+or permission change, check the common invariant across affected jobs. For a
+product-local change, check that feed and the interfaces it calls. Reuse accepted
+evidence for unaffected paths.
 
 ## Workflow classes
 
@@ -64,8 +65,11 @@ continues to serve `main/docs`.
 ## Triggers and permissions
 
 Retain the current schedule/manual shape unless the task explicitly changes it.
-Evaluate schedules in UTC, upstream availability, overlapping writers, runtime,
-rate limits, staleness tolerance, and Pages churn.
+Use the declared timezone and measured event and runner delays when evaluating a
+schedule. Allow time for upstream availability, acquisition, validation, queueing
+and delivery. For finite acquisitions, check the approved provider limits, holds
+and release deadline before spending. Scope a required provider exclusion to
+jobs that contend for that provider. Keep the shared main-publication queue on `publish-to-main`.
 
 There are no pull-request triggers in the current workflow set. Do not expose
 write permissions or repository secrets to untrusted pull-request code. Prefer a
@@ -79,9 +83,9 @@ remain `contents: read`.
 ## Dependencies and actions
 
 Review publisher, version/runtime support, inputs, permissions, and data exposure
-for every action update. Apply shared runtime remediations consistently unless a
-documented exception exists. Preserve artifact identity/retention unless it is in
-scope, and keep system/R dependencies aligned with the builder. Current versions
+for every action update. Apply a shared runtime repair to its affected callers.
+Preserve artifact identity and retention unless they are in scope. Keep system
+and R dependencies aligned with the builder. Current versions
 and product-specific tools are documented in the workflow standards.
 
 ## Retrieval and secrets
@@ -114,10 +118,10 @@ Do not add automatic force, destructive reset, or branch fallback behavior.
 
 Parse changed YAML and inspect rendered triggers. Verify permissions, concurrency,
 timeout, checkout ref, action versions, builder command, artifact behavior,
-staged paths, commit message, and push target. Search equivalent workflows after
-a shared-control edit, compare declared paths to the product catalog, and review
-the diff for accidental schedule/permission/secret changes. Prefer read-only or
-sandbox evidence when it is safe and in scope.
+staged paths, commit message, and push target. Verify concurrency on the publish
+job and check the preparation job's read-only permissions independently. Compare
+owned paths with the catalog and check the diff for unintended schedule,
+permission or secret changes. Use saved or isolated evidence where appropriate.
 
 For incidents, retain the ref/SHA, first failing step, relevant sanitized log,
 artifact state, product/Pages state, comparable success, and last-known-good
