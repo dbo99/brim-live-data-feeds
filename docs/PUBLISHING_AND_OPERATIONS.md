@@ -4,67 +4,10 @@ This runbook describes current GitHub Actions publication, last-known-good
 behavior, incident response, rollback and recovery for the public live-feed
 repository.
 
-### Finite retained SNOTEL R11 publication
-
-`publish-snotel-retained-r11.yml` is manual-only and admits exactly run 1,
-attempt 1, on the reviewed main event SHA, before November 18, 2026 00:00 UTC.
-Admission reserves 10 minutes for preparation plus the complete 15-minute
-publisher timeout. It cannot acquire provider observations or enable a schedule.
-
-The provider-free `scripts/snotel_retained_candidate.py` binds one immutable
-root data-only commit, the exact two original product hashes, accepted catalog,
-roster, original generation, null parent, coverage cutoff and native clocks.
-Staging objects are never checked out or executed. Complete prior-subtree absence
-is required during preparation. Unexpected prior content holds the bridge.
-
-The public staging ref contains only `docs/data/snotel-sms/index.json` and
-`docs/data/snotel-sms/current-wy.json`. The short-lived Actions artifact adds only
-new standard candidate metadata, bound to the genuine Actions event SHA. That
-preparation clock does not replace the original acquisition, source-check or
-build clocks. Original private custody records are never uploaded.
-
-The unchanged shared publisher and SNOTEL callbacks receive the exact ordered
-allowlist: index first, current-WY second. Only the write job enters
-`brim-live-main-publish`, with cancellation false and queue max. No direct product
-push, provider retry, second dispatch or recurring authority is conferred.
-Official main and Pages delivery require separate verification; publication does
-not establish hosted acquisition or application acceptance. The dated retained
-snapshot must not be portrayed as continuing freshness.
-
-### Finite retained SCAN snapshot publication
-
-`publish-scan-retained-c11.yml` is a one-shot, manual-only bridge for the
-reviewed retained SCAN snapshot. Its first run failed before publication on an
-ordered-allowlist mismatch and remains spent. The corrected bridge admits only
-this workflow's second run and first attempt, a main event whose SHA equals the
-operator's reviewed SHA,
-and the immutable five-file data-only commit pinned in
-`scripts/scan_retained_candidate.py`. Its deadline is November 12, 2026,
-07:59:59 UTC, with the full publisher-job timeout reserved before admission.
-Redispatch, rerun, wrong source/ref, changed data, extra files and symlinks refuse.
-
-Preparation executes only trusted event-source code; staging Git objects are
-read as data and never checked out or executed. Exact hashes, existing SCAN
-validation and compatibility against fresh main precede the public artifact.
-Only five approved product files and standard candidate metadata are uploaded.
-Preparation, artifact verification and the actual publisher CLI use the same
-canonical ordered allowlist; set equality alone does not satisfy the metadata contract.
-The metadata source SHA identifies the real Actions event, not original
-acquisition source. Private acquisition/custody provenance stays outside GitHub.
-The original acquisition's build time, dates, zeros, gaps and dated freshness
-classifications are not rewritten; historical reference joins remain unverified.
-
-The write-capable job enters the unchanged `brim-live-main-publish` queue,
-rechecks finite admission and data hashes, and invokes the existing shared
-publisher and SCAN callbacks. Fresh-main validation, stale/same handling,
-ordinary non-force push and the shared bounded non-fast-forward reconciliation
-remain intact. A successful snapshot does not enable recurring SCAN acquisition;
-the scheduled SCAN workflow stays disabled. This bridge has no provider client,
-schedule, reusable grant, new credential or application integration authority.
-
-It distinguishes observed controls from recommended future controls. Following
-this document does not grant permission to dispatch a production writer,
-publish a product, merge a pull request or change repository settings.
+Established feeds use their approved schedules for acquisition, validation and
+publication. A finite feed also needs every clearance and admission check
+required for its slot. The maintainer separately authorizes source promotion,
+manual production intervention, changes in scope or spend, and rollback.
 
 Baseline audited: 2026-07-24; the audited commit is recorded in
 [README.md](README.md).
@@ -76,7 +19,7 @@ Publication/governance reconciliation: 2026-09-09 UTC against `febf1cae`
 
 The official product has two stages:
 
-1. Each of the fifteen scheduled writers retrieves, transforms and validates
+1. Each admitted acquisition workflow retrieves, transforms and validates
    data in a read-only `prepare-candidate` job, then delegates a validated,
    run-local candidate artifact to a separate `main`-authorized
    `publish-to-main` job for bounded fresh-main reconciliation.
@@ -90,11 +33,12 @@ newer product than the hosted site.
 
 ## Branch-safe writer behavior
 
-All fifteen scheduled production writers currently:
+The scheduled production writers share these publication controls:
 
 - support schedules and manual dispatch;
 - allow their isolated `prepare-candidate` jobs to run concurrently;
-- grant preparation only `contents: read` and publication `contents: write`;
+- grant preparation `contents: read` and grant `contents: write` only to the
+  publisher. The soil admission jobs also read Actions history where required.
 - serialize only `publish-to-main` through `brim-live-main-publish`, with
   `cancel-in-progress: false` and `queue: max`;
 - follow their documented checkout/ref contract with full history;
@@ -117,12 +61,13 @@ paths, validates the staged product, and issues an ordinary non-force
 
 ### Checkout and source identity
 
-Preparation selects the intended branch tip. The checked-out build SHA, publisher callback SHA
-and fresh-main transaction SHA are distinct evidence and must not be conflated:
+Record the event SHA, actual preparation checkout, publisher callback source
+and fresh-main transaction base. The checkout patterns differ by writer.
 
 | Writers | Preparation checkout | Publisher callback/provenance checkout |
 |---|---|---|
-| CDEC, CoCoRaHS, Delta, SCAN, streamflow, groundwater, ASOS/AWOS, snow | `github.ref` with full history | Event `github.sha`; candidate metadata carries `GITHUB_SHA` |
+| CDEC, CoCoRaHS, ordinary Delta, streamflow, groundwater, ASOS/AWOS, snow | `github.ref` with full history | Event `github.sha`; candidate metadata carries `GITHUB_SHA` |
+| SCAN, SNOTEL SMS and the retained publication bridges | Exact event `github.sha` | Event-pinned callbacks and product-specific source checks |
 | CNRFC, CBRFC, GFS, HRRR, NBM wind, NBM QPF, Winter Storm Levels | `main` for schedules; `github.ref_name` for manual runs, with full history | Actual preparation HEAD recorded as `source-sha`, then used for metadata, checkout and publisher `GITHUB_SHA` |
 
 Except for Delta's diagnostic checkout output, the first group does not record
@@ -147,10 +92,10 @@ Consequences:
 
 ## Maintainer authority and repository settings
 
-David approves merges, manual production dispatches/reruns and official
-rollbacks. Permission to diagnose, edit documentation or prepare a PR does not
-authorize those actions. Existing schedules and watchdog dispatch policy remain
-separate from a new manual intervention.
+David approves merges, manual production dispatches and reruns, changes to
+scheduled authority and official rollback. A run inside standing authority uses
+the deployed policy. The wind watchdog may dispatch its named wind jobs under
+its own reviewed rules. Contributors need explicit authority to intervene.
 
 Human access, automation identities, the dated GitHub ruleset verification and
 compatible settings guidance are owned by
@@ -167,8 +112,9 @@ a short-lived artifact.
 
 Every `publish-to-main` job uses the constant repository-wide group
 `brim-live-main-publish` with `cancel-in-progress: false` and `queue: max`.
-Only publication is serialized. After entering that group, each publisher
-fetches fresh `origin/main`, reconciles its own candidate against that state,
+This group serializes publication. A feed can separately serialize its own
+provider preparation where required. After entering the publish group, each
+publisher fetches fresh `origin/main`, reconciles its own candidate against that state,
 stages only its declared product paths, and pushes normally to `main`.
 
 A non-fast-forward rejection receives exactly one retry: fetch fresh `main`,
@@ -192,8 +138,8 @@ write permission.
 
 ## R runtime setup
 
-All fifteen production writers and the two R-based support workflows call the
-repository-owned
+The R-based writers, HRRR sandbox, groundwater preview and soil synthetic QA
+use the repository-owned
 [`setup-r-hardened`](../.github/actions/setup-r-hardened/action.yml) composite
 action. It fixes the hosted runtime at R `4.6.1`, the version demonstrated by
 healthy recent `ubuntu-24.04` runs, and makes at most three
@@ -220,15 +166,33 @@ hosted canary described by the change. Do not change workflows back to
 ## Scheduled and manual execution
 
 Schedules are owned by the workflow files and summarized in
-[PRODUCTS.md](PRODUCTS.md).
+[PRODUCTS.md](PRODUCTS.md). Treat cron as an opportunity. Measure actual event
+creation, runner start and remaining time for collection, validation, publication
+and delivery. Apply the feed's provider checks at the spending boundary.
+An expired slot stays closed. Supported recovery includes the publisher's one
+fresh-main race retry and a product's explicitly authorized fallback or later
+full-prefix acquisition.
+
+SCAN scheduled runs 150–163 were created 289–675 minutes after the nominal
+14:30 UTC slot. In a sample of 69 runs under the former three-slot SWE schedule,
+68 were created more than 25 minutes after the closest preceding slot. These
+are creation delays. Runner startup and the time needed to finish are additional.
+Use these observations when reviewing future windows. Existing deadlines still apply.
+
+For a metered feed, authenticate the predecessor and reconcile the run, attempt,
+step outcomes and receipts. Record a pre-reservation skip as no-spend only when
+the evidence proves it. A reservation with missing accounting remains uncertain.
+Preserve last-good and stop for reconciliation whenever the feed's policy
+requires it. A run-number gap or green job alone cannot authorize another spend.
 
 Every production publisher job is gated to `main`; a feature-branch dispatch
 can produce runner/artifact evidence but cannot push even to that feature branch.
-Most writers have no separate confirmation input, so a manual run on `main` can
+Most writers have no separate confirmation input. A manual run on `main` can
 publish after its gates pass. CNRFC, CBRFC and Winter Storm Levels expose a
 `publish` boolean that defaults false and use temporary dry-run output. No
-production publisher job declares a GitHub Environment approval gate. David's
-manual production approval is therefore a required process control.
+production publisher job declares a GitHub Environment approval gate. Operators
+need David's approval for manual production intervention. Approved scheduled
+events proceed under the corresponding feed's controls.
 
 Winter Storm Levels also runs at two guarded UTC offsets for each selected NBM
 00/06/12/18 cycle:
@@ -327,7 +291,7 @@ and can change. Git publication and Pages deployment remain separate stages.
 | `major-water-supply-basin-forecasts-qa` | CNRFC forecast writer | Per-page retrieval/parser and acceptance diagnostics; no source-page bodies | Explicit 14 days |
 | `cbrfc-major-water-supply-forecasts-qa` | CBRFC Colorado River forecast writer | Three-record point/list/dashboard and Lake Mead Local current/archive-evidence retrieval, parser and per-family acceptance diagnostics; dry-run payload when applicable; no source bodies | Explicit 14 days |
 | `winter-storm-levels-qa` | Winter Storm Levels writer | Complete manifest/GeoJSON bundle and browser QA when a build starts; concise inventory-preflight diagnostics for guarded no-build outcomes; no full GRIB files | Explicit 14 days |
-| Product-specific `*-candidate-<run>-<attempt>` | All fifteen production workflows; exact prefixes are in their upload/download steps | Validated product candidate plus inventory/hash/source metadata crossing the prepare/publish boundary; metadata is artifact-only, not secret or a public feed envelope | Explicit 2 days |
+| Product-specific `*-candidate-<run>-<attempt>` | Scheduled product writers, with exact prefixes in their upload/download steps | Validated product candidate plus inventory/hash/source metadata crossing the prepare/publish boundary; metadata is artifact-only, not secret or a public feed envelope | Explicit 2 days |
 | `nbm-qpf-qa-<run>-<attempt>` | Seeded NBM QPF workflow | R producer preflight and validation diagnostics; no official publication status | Explicit 14 days |
 | `github-pages` | GitHub-controlled Pages deployment | Platform deployment bundle, not a feed product | Observed short platform retention, approximately one day at the audit baseline |
 
@@ -688,11 +652,12 @@ settings change, provider request, hosted execution or publication authority.
 
 ### Stale product
 
-1. Distinguish stale upstream observations from a stale producer build and a
-   stale Pages deployment.
-2. Check writer, watchdog, manifest/summary and Pages statuses.
-3. Verify the product's actual freshness semantics; build time alone may be
-   insufficient.
+1. Record the observation cutoff, producer generation, Pages generation and last
+   generation accepted by the intended reader. Identify which stage is stale.
+2. Check the writer, its manifest or summary, Pages and any applicable watchdog.
+3. For a display with several series, inspect the last supported observation
+   in each daily or monthly series. Record partial periods and the separate
+   reference period. Keep unverified display coverage unknown.
 4. Dispatch production only with explicit approval.
 
 ### Git push rejection
@@ -851,9 +816,9 @@ uploads also explicitly exclude that mode. The publisher remains excluded.
 Normal manual false and scheduled publication retain the five-file candidate
 artifact and separate write-capable publisher. Preparation has contents/read
 and actions/read, the latter only for authenticated run-history checks. These
-are publicly readable Actions surfaces, not private custody. The finite
-`scan-c13r-finite-1` policy requires explicit false `acquire_only`; missing,
-string-valued or mismatched modes refuse. Old grants do not authorize this
+are publicly readable Actions surfaces, not private custody. The historical
+`scan-c13r-finite-1` pilot required explicit false `acquire_only` and refused
+missing, string-valued or mismatched modes. Old grants do not authorize this
 route. A valid grant cannot release the private-mode custody hold.
 
 No public summary, candidate hash, ephemeral runner directory or skipped
@@ -898,6 +863,11 @@ be the second parent of that merge. The guard checks the public PR over GitHub
 HTTPS, without a PR permission on the job token. A later main commit requires
 a fresh manual decision. Initial admission must still leave more than 125
 minutes for the complete run.
+
+Provider-denied hosted QA5 exercised the direct `source_sha` path with historical
+run evidence. The earlier PR lookup returned HTTP 403 in the reconstructed QA
+case. Neither result establishes the original exception in run 164. Retain both
+receipts and verify the actual source and run history for live admission.
 
 For daily operation, approve one to seven consecutive Pacific operating dates
 in `SCAN_DAILY_PILOT_JSON`. The existing 14:30 UTC cron opens each slot.
@@ -982,19 +952,81 @@ does not prove an instantaneous aggregate disk or memory cap. Explicit package
 downloads retain their shared 4 GiB body bound; platform-managed setup is
 separately covered by step/job limits and headroom, not those body counters.
 
-Only manual publication plus same-generation Pages verification can justify
-installing the pilot policy, after a separate coordination check. The first
-scheduled run remains PENDING until observed. At November 20 08:00 UTC, the
-guard reports `INACTIVE_EXPIRED` before provider traffic: workflow state may
-remain enabled but fail-closed, not automatically disabled. The owner must
-disable it or separately approve a reviewed successor policy; no extension,
-rerun, background monitoring or indefinite steady-state acceptance is implied.
+The C13 pilot expired on November 20, 2026 at 08:00 UTC. Retain its policy and
+receipts for replay. Current manual and daily admission use their separately
+approved finite policies and the verified history described above. An enabled
+registration or passing QA job grants no spending authority.
+
+## Historical retained releases
+
+These three finite identities are spent. Keep the staging objects, run records,
+validated public bytes and recovery procedures. A new operation requires its
+own supported route and authority.
+
+### Finite retained SNOTEL R11 publication
+
+The retained pair was published at `e406569d61c1`. The manual-only
+`publish-snotel-retained-r11.yml` admitted exactly run 1,
+attempt 1, on the reviewed main event SHA, before November 18, 2026 00:00 UTC.
+Admission reserves 10 minutes for preparation plus the complete 15-minute
+publisher timeout. It cannot acquire provider observations or enable a schedule.
+
+The provider-free `scripts/snotel_retained_candidate.py` binds one immutable
+root data-only commit, the exact two original product hashes, accepted catalog,
+roster, original generation, null parent, coverage cutoff and native clocks.
+Staging objects are never checked out or executed. Complete prior-subtree absence
+is required during preparation. Unexpected prior content holds the bridge.
+
+The public staging ref contains only `docs/data/snotel-sms/index.json` and
+`docs/data/snotel-sms/current-wy.json`. The short-lived Actions artifact adds only
+new standard candidate metadata, bound to the genuine Actions event SHA. That
+preparation clock does not replace the original acquisition, source-check or
+build clocks. Original private custody records are never uploaded.
+
+The unchanged shared publisher and SNOTEL callbacks receive the exact ordered
+allowlist: index first, current-WY second. Only the write job enters
+`brim-live-main-publish`, with cancellation false and queue max. No direct product
+push, provider retry, second dispatch or recurring authority is conferred.
+Official main and Pages delivery require separate verification; publication does
+not establish hosted acquisition or application acceptance. The dated retained
+snapshot must not be portrayed as continuing freshness.
+
+### Finite retained SCAN snapshot publication
+
+`publish-scan-retained-c11.yml` delivered the retained SCAN snapshot at
+`521b1c0cbf56`. Its first run failed before publication on an
+ordered-allowlist mismatch and remains spent. The corrected bridge admitted only
+this workflow's second run and first attempt, a main event whose SHA equals the
+operator's reviewed SHA,
+and the immutable five-file data-only commit pinned in
+`scripts/scan_retained_candidate.py`. Its deadline was November 12, 2026,
+07:59:59 UTC, with the full publisher-job timeout reserved before admission.
+Redispatch, rerun, wrong source/ref, changed data, extra files and symlinks refuse.
+
+Preparation executes only trusted event-source code; staging Git objects are
+read as data and never checked out or executed. Exact hashes, existing SCAN
+validation and compatibility against fresh main precede the public artifact.
+Only five approved product files and standard candidate metadata are uploaded.
+Preparation, artifact verification and the actual publisher CLI use the same
+canonical ordered allowlist; set equality alone does not satisfy the metadata contract.
+The metadata source SHA identifies the real Actions event, not original
+acquisition source. Private acquisition/custody provenance stays outside GitHub.
+The original acquisition's build time, dates, zeros, gaps and dated freshness
+classifications are not rewritten; historical reference joins remain unverified.
+
+The write-capable job enters the unchanged `brim-live-main-publish` queue,
+rechecks finite admission and data hashes, and invokes the existing shared
+publisher and SCAN callbacks. Fresh-main validation, stale/same handling,
+ordinary non-force push and the shared bounded non-fast-forward reconciliation
+remain intact. This one-shot release had no recurring authority. Subsequent
+native SCAN acquisition uses the separate finite operating workflow.
 
 ### Finite retained CDFW dated-point release
 
-`publish-dendra-retained-cdfw.yml` admits its first manual run and attempt
-on reviewed main with a pinned public data-only staging commit. Its deadline is
-20:10 UTC on November 24, 2026. It reserves 25 minutes at admission. Preparation
+`publish-dendra-retained-cdfw.yml` completed its only authorized manual run and
+attempt at publication `bef34b323a27`, using the pinned public data-only staging
+commit. Its November 24, 2026 deadline was 20:10 UTC, with 25 minutes
+reserved at admission. Preparation
 reads staging objects as data, checks the absent destination and validates the
 17 approved JSON files. Only the write job enters `brim-live-main-publish`.
 The shared publisher repeats the Dendra validation against fresh main and the

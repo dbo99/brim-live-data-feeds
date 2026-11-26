@@ -3,9 +3,10 @@
 The official product is the committed pair
 `docs/data/snotel-sms/index.json` and `docs/data/snotel-sms/current-wy.json`.
 The separately released catalog identifies the approved stations and sensors.
-The first publication came from the retained-product workflow. Successor
-acquisition requires a finite policy, scoped provider clearance and an
-independently acknowledged publication.
+The R11 retained release established the first generation. PR71 added native
+successor admission, and manual run 3 delivered a successor through November 24,
+2026. Use the deployed finite policy, scoped clearance and independently
+acknowledged predecessor for each authorized acquisition.
 
 Native NRCS `DAILY/END` preserves each exact station triplet, signed SMS depth,
 ordinal and native `pct` value. Provider date D has source boundary D+1 08:00Z
@@ -14,8 +15,8 @@ a real observation; withheld, explicit missing, omitted dates, complete-valid-em
 failed and unqueried states remain distinct. No averaging, forward fill or depth
 substitution is introduced. Last-admitted values retain their original evidence
 when a later nonnumeric outcome occurs; they must not appear newly observed.
-See the [native consumer contract](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-wy-snapshot-inactive),
-[product description](PRODUCTS.md#snotel-sms-current-wy-snapshot-inactive-offline-implementation)
+See the [native consumer contract](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-wy-successor-pair),
+[product description](PRODUCTS.md#snotel-sms-current-wy-successor-product)
 and [publication procedures](PUBLISHING_AND_OPERATIONS.md).
 
 The operating workflow is **Build SNOTEL soil moisture current-WY feed**.
@@ -23,9 +24,9 @@ The separate **Build SNOTEL SMS synthetic replay (QA)** workflow retains its
 older saved-fixture replay behavior. A default operating dispatch only reports
 `DISABLED`, skips checkout and Python, and produces no candidate. It therefore
 does not validate the new snapshot, prior-product importer, transport or publisher.
-The older QA replay also does not establish Phase A/B hosted readiness. A meaningful
-hosted saved-input test of those paths requires a separate source/dispatch decision;
-no such route is added here.
+Use the [hosted qualification record](SOIL_SMS_HOSTED_QUALIFICATION.md) for the
+scope of saved-input evidence. Use authenticated operating receipts for real
+acquisition, delivery and spending.
 
 ## Finite successor operation
 
@@ -61,31 +62,35 @@ main and Pages readback completes the operating review.
 
 ## Historical finite first-product commissioning
 
+R9 addressed a missing initial product. Its run identity and grant are spent.
+Retain the following source, accounting and recovery facts for replay. An active
+successor must start from the acknowledged pair under the procedure above.
+
 The public `data/input/snotel_sms_catalog.json` is the source-authenticated
 32-station/98-sensor catalog released by PR #60. Its presence grants no provider
-traffic. The manual operating workflow now uses Ubuntu 24.04 and first runs the
+traffic. The R9 manual route used Ubuntu 24.04 and first ran the
 focused synthetic integration tests unprivileged in a network namespace with no
 external route, followed by the non-stub Git reader against the actual event
-checkout, catalog, roster and complete product absence. Its source/run-bound
-proof must be no older than five minutes before preparation. The exact canonical
-Actions HTTPS origin without `.git` and the two existing `.git` origins are
-accepted; near matches remain refused. It installs no packages. This is a prerequisite in the same job,
-not a second real campaign or standing schedule.
+checkout, catalog, roster and complete product absence. The proof had to bind
+the source and run within five minutes of preparation. The route accepted the
+canonical Actions HTTPS origin without `.git` and the two approved `.git`
+origins. It refused near matches and installed no packages.
 
-`scripts/snotel_first_run.py` requires `SNOTEL_SMS_FIRST_RUN_JSON` with the exact
+For that first-product route, `scripts/snotel_first_run.py` required
+`SNOTEL_SMS_FIRST_RUN_JSON` with the exact
 reviewed source SHA, workflow run number, first attempt, catalog/roster pins,
-unchanged budgets and finite matching `window_end`. Only the separately approved
-R9 identity and run number 2/attempt 1 are admitted, with an activation-to-expiry
-interval of at most four hours and absolute expiry no later than November 14,
-2026 07:59:59 UTC. R8 remains closed and spent with UNKNOWN provider accounting.
+unchanged budgets and finite matching `window_end`. Only R9 run 2, attempt 1
+qualified under an activation-to-expiry interval of at most four hours and an
+absolute expiry of November 14, 2026 07:59:59 UTC. R8 remains closed and spent
+with UNKNOWN provider accounting.
 The workflow compares the canonical grant internally, passing only the result
 and public pins/clocks to steps so the full private grant is not echoed in logs.
 GitHub string equality is case-insensitive; the Python admission independently
 enforces the fixed approval, exact event source, pins and finite limits.
-Acquisition, publication and bootstrap must all be explicit; the source
-and fresh-main product checks still require complete absence for bootstrap.
-Wrong event/ref/workflow/run/source, missing grant, rerun, or insufficient full
-setup/acquisition/publication/readback headroom refuses before an opener.
+R9 required explicit acquisition, publication and bootstrap. Its source and
+fresh-main checks required complete product absence. A wrong event, ref,
+workflow, run or source, a missing grant, a rerun or insufficient headroom
+for setup through readback refused before provider access.
 
 One owned preparation child has separate preflight, acquisition and finalization
 deadlines. Private phase markers never grant a restart. A killed or incomplete
@@ -106,20 +111,20 @@ R8 and R9 grants remain spent, and this correction grants no new hosted run.
 Only the validated two-file product and minimal shared candidate metadata can be
 uploaded. Raw responses, run/grant files and private failure streams stay in
 runner-local storage and are not promised as permanent evidence after runner
-loss. The public log uses an explicit accounting-field allowlist. First-product
-release and Pages verification remain execution outcomes, not claims made by
-this source change. Application acceptance and any later acquisition require
-separate authority under the successor procedure above.
+loss. The public log uses an explicit accounting-field allowlist. R11 subsequently
+delivered the first pair. The successor procedure governs later acquisitions.
+Verify reader acceptance independently.
 
-### Current-WY SNOTEL replacement (offline Phase A)
+<a id="current-wy-snotel-replacement-offline-phase-a"></a>
 
-The inactive `snotel_snapshot` path is a versioned compact successor contract;
-it does not relax the separate immutable raw-backed offline replay contract. It
+### Phase A saved-input qualification
+
+Phase A established the versioned `snotel_snapshot` serializer and its saved
+fixtures. Native successor operation now uses that contract. The serializer
 reuses native history validation and the extracted admission/reconciliation
 functions in `soil_moisture_operations.py`. Legacy replay APIs, WY2027 bounds,
 10,000-event/32-MiB bundle/64-MiB expansion limits and other networks are unchanged.
-Phase A changes no transport or automatic annual maintenance. The separate Phase B
-orchestration candidate below uses these same frozen science interfaces.
+Phase B reused these science interfaces. Keep the Phase A fixtures for replay.
 
 `plan_current_wy` is pure. Pin one UTC `as_of`; the source calendar is fixed UTC−08,
 and its latest completed date is `date(as_of - 8 hours) - 1 day`. Intersect with
@@ -163,9 +168,8 @@ fresh-main feed changes do not alter product parentage. Staged bytes must equal
 the validated candidate. Ambiguous acknowledgment requires independently read
 committed bytes/hash/generation, never a provider refetch. Worktree file copying
 is not itself atomic publication: the unchanged main publisher owns the eventual
-Git transaction. The future two-job preparation/publication split and unchanged
-`brim-live-main-publish` queue are implemented by the separate manual-first Phase B
-candidate below; neither hosted execution nor publication is implied.
+Git transaction. The operating workflow now separates preparation from the main-only
+`brim-live-main-publish` job. Its source alone cannot prove delivery.
 
 Annual maintenance is separate and Dave-triggered. The later task should:
 
@@ -184,23 +188,26 @@ future commit SHA; perpetual artifact availability is not promised. Source
 integration, consumer and disclosure review, real acquisition/hosted execution,
 publication and schedule activation remain separate approval gates.
 
-### Phase B operating candidate and provisional export
+<a id="phase-b-operating-candidate-and-provisional-export"></a>
 
-The local `snotel-operating-run-1` adapter in `scripts/soil_network_workflow.py`
-adds `snotel-prepare`, `snotel-rebuild`, `snotel-publish` and `snotel-acknowledge`.
+### Phase B design and provisional export
+
+Phase B introduced the `snotel-operating-run-1` adapter in
+`scripts/soil_network_workflow.py` with `snotel-prepare`, `snotel-rebuild`,
+`snotel-publish` and `snotel-acknowledge`.
 The legacy SCAN/Dendra routes and the older gated SNOTEL mode are unchanged.
-The proposed manual workflow defaults both acquisition and publication off.
-Publication without acquisition is rejected; acquisition-only is supported.
-The workflow is source preparation, not standing permission to dispatch.
+The Phase B candidate supported acquisition-only preparation. The deployed
+finite successor requires acquisition and publication with bootstrap false.
+A default manual dispatch is disabled.
 
-The input contract is a committed `data/input/snotel_sms_catalog.json`, not an
-included real inventory. Version `snotel-sms-catalog-1` has exactly `version`,
+The input is the released, committed `data/input/snotel_sms_catalog.json`.
+Version `snotel-sms-catalog-1` has exactly `version`,
 `disclosure`, `roster_sha256`, and `groups`. Each group contains original pinned
 `metadata_base64`, `metadata_sha256` and sorted exact `sensor_identities`.
 The canonical roster binding must contain all 32 stations and 98 SMS sensors,
 without omitting a selected sensor; no discovery or metadata refresh exists.
-Future real operation requires `RELEASE_APPROVED_PUBLIC`, reviewed catalog and
-roster SHA-256 repository variables, and explicit public release approval.
+Native operation requires `RELEASE_APPROVED_PUBLIC` and the approved catalog
+and roster identities.
 Fictional `ZZ` stations and `SYNTHETIC_ONLY` catalogs are restricted to injected
 offline test openers and cannot qualify for real acquisition or publication.
 
@@ -208,10 +215,11 @@ offline test openers and cannot qualify for real acquisition or publication.
 bounded blob sizes and Git object identities. Effective Python source bytes must
 equal the selected source revision. The prior product is the exact committed
 two-file pair, never mutable checkout files or fabricated private ancestry.
-Bootstrap is explicit absence only. A partial/extra/corrupt product, incompatible
+Historical bootstrap required complete absence. A current successor requires its
+authenticated predecessor. A partial/extra/corrupt product, incompatible
 WY, same-WY roster change or shrinking interval holds before acquisition.
 
-Future local invocation supplies `--repo`, a fresh outside-repository `--root`,
+The Phase B local invocation specified `--repo`, a fresh outside-repository `--root`,
 `--source-sha`, `--prior-commit`, `--catalog-sha256`, `--roster-sha256`, explicit
 `--acquire --release-approved`, optional approved `--bootstrap`/`--publish`,
 `--window-end` (UTC Z), and exact `--budget-json`:
@@ -272,19 +280,9 @@ identical repeats are no-ops. Unsupported platforms hold. Failed staging is
 retained for diagnosis and cannot replace last-good. No provider, Git transaction,
 automatic archive/rollover, ribbons or new storage service is involved.
 
-Remaining release decisions are catalog/native-field disclosure, actual consumer
-decoding/status/rollover acceptance, isolated source integration (including
-Phase A dependencies and documentation/Pages effects), one approved hosted
-saved-input validation, bounded real acquisition/resource clearance, first
-publication and scheduling. The synthetic QA behavior and SCAN/SWE workflows are not changed by this source
-candidate; their configured maintenance states require separate verification. Full-season serializer evidence remains Phase A evidence;
-small integrated runner tests alone do not establish hosted full-season memory
-or provider timing.
-
-The broader provisional year-end preservation direction also covers Dendra soil
-moisture, SCAN soil moisture and SNOTEL SWE through their separately bounded work.
-This helper handles SNOTEL SMS only. It adds no exporter, destination, automatic
-rollover, acquisition authority or reference maintenance for another provider.
+Phase A/B fixtures remain evidence for serializer capacity and recovery. Native
+successor publication, consumer decoding and operational timing each require
+their own evidence. The provisional exporter described here is SNOTEL-specific.
 
 ### SCAN/SNOTEL synthetic hosted qualification
 

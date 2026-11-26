@@ -32,8 +32,11 @@ Baseline audited: 2026-07-24; the audited commit is recorded in
 Schedules below are UTC unless a row explicitly names a native IANA timezone.
 The two major-basin workflows use `America/Los_Angeles`: CNRFC runs at 10:56
 and 16:56 Pacific, and CBRFC runs at 08:14 Pacific. The native timezone follows
-Pacific standard/daylight changes. A scheduled writer also supports
-`workflow_dispatch` unless noted otherwise.
+Pacific standard/daylight changes. Cadence describes a nominal trigger.
+Effective admission depends on workflow registration, the product's active
+authority and its deployed checks. Compare
+those facts with the latest validated generation. A scheduled writer also
+supports `workflow_dispatch` unless noted otherwise.
 
 | Family | Declared product ID | Provider | Writer cadence | Preferred BRIM entry point | Formal manifest |
 |---|---|---|---|---|---|
@@ -49,6 +52,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | ASOS/AWOS observed wind | `asos_awos_wind_obs` | NOAA Aviation Weather Center METAR cache | Twice hourly at :17 and :42 | GeoJSON, summary, and manifest | Yes |
 | USGS streamflow | Not declared | USGS Water Data API | Every 4 hours at :23 | GeoJSON and summary | No |
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
+| SNOTEL SMS | `snotel-sms-current-wy` | USDA NRCS | Daily at 18:11 subject to finite successor policy and clearance | `docs/data/snotel-sms/index.json` | Two-file index |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
 | Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
 | Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Guarded primary 02:08/08:08/14:08/20:08 and fallback 02:54/08:54/14:54/20:54; manual dry run or explicit `main` publication | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
@@ -56,6 +60,15 @@ Pacific standard/daylight changes. A scheduled writer also supports
 The absence of a declared product ID or manifest is a current contract gap,
 not permission to assign an identifier casually. A later versioned manifest
 migration may establish IDs after producer and consumer review.
+
+### Operating evidence as of November 25, 2026
+
+| Feed | Effective operating route | Last verified delivery at that date |
+|---|---|---|
+| SCAN SMS | Native finite manual or scheduled admission | Manual run 149 published the five-file full-WY product through November 10. |
+| SNOTEL SMS | Manual successor or separately approved daily slots, each with current clearance | Manual run 3 published the 32-station, 98-sensor pair through November 24. |
+| Snow-pillow SWE | Workflow disabled after attended restoration | Manual run 404 published the first four-file WY2027 generation from both providers. |
+| Dendra CDFW | One completed retained release, no recurring refresh | The pointer and manifest identify 30 dated observations from November 16–17. |
 
 ## Observed payload snapshot
 
@@ -104,6 +117,7 @@ It does not mean every such file is a canonical consumer product.
 | ASOS/AWOS | `docs/data/wind/asos_awos_wind_latest.geojson`<br>`docs/data/wind/asos_awos_wind_latest_summary.json`<br>`docs/data/wind/asos_awos_wind_feed_manifest.json` | All three are canonical consumer/status products |
 | USGS streamflow | `docs/data/usgs_streamflow_latest_ca.geojson`<br>`docs/data/usgs_streamflow_latest_ca_summary.json` | Both are canonical consumer products |
 | USGS groundwater | `docs/data/usgs_groundwater_latest_ca.geojson`<br>`docs/data/usgs_groundwater_latest_ca_summary.json` | Both are canonical consumer products |
+| SNOTEL SMS | `docs/data/snotel-sms/index.json`<br>`docs/data/snotel-sms/current-wy.json` | The trusted index identifies and binds one current-WY payload. Verify its predecessor and the intended reader’s acceptance. |
 | SCAN soil moisture | `docs/data/scan_soil_moisture_latest.geojson`<br>`docs/data/scan_soil_moisture_latest_summary.json`<br>`docs/data/scan_soil_moisture_current_wy_trace.csv`<br>`docs/data/scan_soil_moisture_current_wy_trace_summary.json`<br>`docs/data/scan_depth_style.csv` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata; depth style is consumer context. `docs/data/scan_sms_waterday_percentiles.csv`, `docs/data/scan_sms_monthly_context.csv`, and `docs/data/scan_sms_prior_wy_fallback_traces.csv` are separately managed consumer context |
 | Snow-pillow SWE | `docs/data/snow_pillow_latest.geojson`<br>`docs/data/snow_pillow_latest_summary.json`<br>`docs/data/snow_pillow_current_wy_trace.csv`<br>`docs/data/snow_pillow_current_wy_trace_summary.json` | Latest, summary, and trace are canonical; trace summary is producer/QA metadata. `docs/data/snow_pillow_swe_waterday_percentiles.csv`, `docs/data/snow_pillow_swe_monthly_context.csv`, `docs/data/snow_pillow_swe_prior_wy_fallback_traces.csv`, and `docs/data/snow_pillow_swe_normal_medians.csv` are static/manual consumer context |
 | Winter Storm Levels | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json`<br>`docs/data/winter-storm-levels/nbm/snow-level/*.geojson` | Manifest and selected rolling targets are canonical. Attempt diagnostics and standalone QA remain workflow artifacts/nonproduction files. |
@@ -494,9 +508,10 @@ ownership.
 - **Consumer/operations roles:** Latest GeoJSON, summary, and trace are
   canonical consumer products; trace summary is producer/QA metadata; depth
   style is consumer context.
-- **Separately managed context:** Water-day percentiles, monthly context, and
-  prior-WY fallback traces are consumer context that the scheduled writer does
-  not rebuild.
+- **Separately managed context:** `scan_sms_monthly_context.csv` contains actual
+  monthly observations and historical monthly statistics. BRIM preprocessing and
+  a separate release supply this file, water-day percentiles and prior-WY fallback
+  traces. The five-file writer advances the daily trace independently.
 - **Format/domain/CRS:** Station GeoJSON plus CSV context; longitude/latitude.
 - **Principal units:** volumetric soil moisture percent, depth in inches,
   elevation in feet.
@@ -524,9 +539,10 @@ ownership.
   current-WY trace, and trace summary.
 - **Consumer/operations roles:** Latest GeoJSON, summary, and trace are
   canonical consumer products; trace summary is producer/QA metadata.
-- **Static/manual context:** Water-day percentiles, monthly context,
-  prior-WY fallback traces, and normal medians are consumer context that the
-  scheduled writer does not rebuild.
+- **Static/manual context:** `snow_pillow_swe_monthly_context.csv` combines
+  observed monthly SWE with historical monthly statistics. BRIM preprocessing
+  and a separate release supply it, water-day percentiles, prior-WY fallback
+  traces and normal medians. The four-file writer advances the daily trace.
 - **Format/domain/CRS:** Station GeoJSON plus CSV context in
   longitude/latitude.
 - **Principal units:** SWE and snow depth in inches; age in days.
@@ -1215,18 +1231,16 @@ These workflows must not be described as additional product families.
 
 <a id="snotel-sms-current-wy-snapshot-inactive-offline-implementation"></a>
 
-### SNOTEL SMS current-WY snapshot (manual first-product commissioning)
+<a id="snotel-sms-current-wy-snapshot-manual-first-product-commissioning"></a>
 
-`scripts/soil_moisture/snotel_snapshot.py` implements the additive, versioned
-`snotel-sms-current-wy-1` saved-input product. Its future closed ownership is
-`docs/data/snotel-sms/index.json` plus `docs/data/snotel-sms/current-wy.json`.
-The accepted 32-station/98-sensor catalog is committed at
-`data/input/snotel_sms_catalog.json`. The first-product commissioning route is
-manual and finite; catalog presence is not observation acquisition or publication.
-The source-specific `scripts/snotel_sms_publisher.py` supplies pure validation,
-fresh-main reconciliation and staged-validation callbacks for the unchanged
-shared publisher. The local Phase B candidate adds a separately gated operating
-entry; no provider run or publication is enabled by source implementation.
+## SNOTEL SMS current-WY successor product
+
+`scripts/soil_moisture/snotel_snapshot.py` implements the versioned
+`snotel-sms-current-wy-1` pair under `docs/data/snotel-sms/`. The retained
+publication established the first generation. Native acquisition uses the public
+catalog at `data/input/snotel_sms_catalog.json` and the acknowledged predecessor.
+`scripts/snotel_sms_publisher.py` validates and reconciles both files through
+the shared publisher.
 
 The planner pins one fixed UTC−08 source calendar and requests only October 1
 through the latest completed day in that same ending-year WY. October 1 can
@@ -1242,25 +1256,15 @@ failure holds the whole replacement. Successful empty, omitted, missing and
 withheld outcomes remain distinct from numeric observations. Both files together
 must fit 32 MiB without truncation; legacy replay limits are unchanged.
 
-See [native consumer semantics](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-wy-snapshot-inactive)
-and [recovery/maintenance](SOIL_MOISTURE_OPERATIONS.md#current-wy-snotel-replacement-offline-phase-a).
-Source integration, exact-catalog disclosure, consumer support, real acquisition
-budgets and resource clearance, hosted execution and publication remain separate
-approval gates. The existing manual synthetic QA behavior is unchanged; its display title is
-**Build SNOTEL SMS synthetic replay (QA)**.
+See [native consumer semantics](BRIM_CONSUMER_CONTRACT.md#snotel-sms-current-wy-successor-pair)
+and [finite successor operation](SOIL_MOISTURE_OPERATIONS.md#finite-successor-operation).
+The operating workflow supports manual and scheduled successors. A default manual
+dispatch reports `DISABLED`. Acquisition requires a matching finite policy,
+current clearance, checked-out event source and verified predecessor. The
+source-bound guard repeats admission before publication. A separate manual
+synthetic QA workflow exercises saved inputs.
 
-The proposed `.github/workflows/build-snotel-sms-current-wy.yml` has only
-`workflow_dispatch`, with acquisition/publication false by default. Its
-`prepare-candidate` job invokes `soil_network_workflow.py snotel-prepare` against
-the exact checked-out source commit and a separately release-approved, pinned
-public catalog. It reads prior product blobs from that explicit commit; absence
-requires explicit bootstrap and a partial/corrupt pair holds. The source-bound
-`snotel_first_run.py` host guard requires one exact finite
-source/run/attempt grant and an actual offline runner qualification before any
-provider call; see the finite first-product commissioning section in
-[soil operations](SOIL_MOISTURE_OPERATIONS.md). At most 32 serial station requests
-use the unchanged transport, each
-with one attempt, zero retries/redirects, 1 MiB body-read allowance and 60 seconds
+The transport allows at most 32 serial station requests, each with one attempt, zero retries/redirects, 1 MiB body-read allowance and 60 seconds
 acquisition; aggregate ceilings are 32 MiB and 1,920 seconds. A station failure or
 Retry-After holds the whole candidate. Only the two validated product files and
 shared integrity metadata can become an artifact. The separate main-only writer
@@ -1295,10 +1299,9 @@ in [Soil SMS hosted qualification](SOIL_SMS_HOSTED_QUALIFICATION.md). This does 
 activate acquisition/publication, release real SNOTEL catalog data, or resolve
 the held history joins. Production and consumer readiness remain separate.
 
-The separate manual-only `publish-snotel-retained-r11.yml` bridge may publish only
-the pinned original retained two-file snapshot through the existing shared
-publisher. It performs no acquisition. Exact finite run/source/staging admission,
-public artifact limits and retained-clock semantics are documented in
+The manual-only `publish-snotel-retained-r11.yml` bridge completed its one
+provider-free publication of the original pinned two-file snapshot. The finite
+run, source and staging checks, artifact limits and retained clocks are in
 [operations](PUBLISHING_AND_OPERATIONS.md#finite-retained-snotel-r11-publication).
 
 
@@ -1309,8 +1312,8 @@ provider, P1 state and private range-export modules. Its attended `family_child`
 interface has no default transport or grant issuer. Source integration does
 not authorize provider access, a public feed or a schedule.
 
-`.github/workflows/qa-dendra-lean-saved-state.yml` is a local manual-only QA
-candidate, default-off through `run_saved_qa`. It exercises synthetic family
+`.github/workflows/qa-dendra-lean-saved-state.yml` declares a manual-only QA
+route, default-off through `run_saved_qa`. It exercises synthetic family
 pairs, denied authority, relocated state with retained UNKNOWN charges, and
 missing/corrupt object refusal. The workload runs in a Linux network namespace
 with no external network access and an additional Python socket audit guard.
@@ -1323,7 +1326,7 @@ remain outside the public source selection. Actual hosted private-state
 restore and acquisition require separate custody/input and execution approval.
 See the [consumer boundary](BRIM_CONSUMER_CONTRACT.md#lean-private-v2-preview-boundary).
 
-### Dendra retained CDFW dated points
+## Dendra retained CDFW dated points
 
 The WY2027 product uses `docs/data/dendra-sms/current-wy/current.json` to locate
 its SHA-256-addressed manifest and 15 stream shards. The approved generation

@@ -6,9 +6,10 @@ their directory.
 
 ## Mission and boundary
 
-This repository produces and publishes BRIM's public live-data feeds. Scheduled
-GitHub Actions call product-specific R builders and commit accepted artifacts
-under `docs/data/`. GitHub Pages serves `main/docs`.
+This repository produces and publishes BRIM's public live-data feeds.
+Established feeds acquire, validate and publish autonomously through their
+approved GitHub Actions schedules. Each product's builder and admission rules
+govern what it can publish under `docs/data/`. GitHub Pages serves `main/docs`.
 
 A separate private BRIM application consumes these files. Private consumer
 behavior may be inspected read-only when the user makes it available and
@@ -16,8 +17,8 @@ compatibility verification requires it, but do not copy private source, internal
 inventories, credentials, or personal filesystem details into this public
 repository.
 
-The official public state comes from `main/docs`. A writer run on a feature branch
-updates ordinary product paths on that branch and is not an official publication.
+Official publication requires the main-only publisher and its validated product
+paths. A permitted feature-branch run can prepare an isolated candidate.
 
 ## Start every task safely
 
@@ -108,7 +109,12 @@ unrelated untracked files as user-owned and leave them unchanged.
 
 ## Validation expectations
 
-Use checks proportionate to risk. A normal handoff includes:
+Preserve proven collectors, validators and publication machinery. Repair a
+demonstrated defect at the affected boundary. A replacement needs evidence of a
+benefit over repairing that path. Reuse accepted evidence for unchanged paths
+and scope checks to the callers and contracts the change can affect.
+
+For a normal handoff, run the applicable Git checks.
 
 ```sh
 cd "$HOME/Documents/brim-live-data-feeds_source_repo"
@@ -132,12 +138,17 @@ occurred. Never claim an action that did not succeed.
 
 ## Maintainer decision points
 
-David, the repository owner and maintainer, retains the explicit decision to
-merge a pull request, dispatch or publish official production products, and
-approve an official rollback. Codex or another agent may prepare changes,
-commits, pushes, and pull requests only when authorized. An agent must not merge,
-dispatch production, publish, or roll back official state without David's
-explicit approval.
+David authorizes merges, changes to provider or publication authority, manual
+production dispatches and reruns, and official rollback. Established schedules
+operate autonomously until suspension or expiry. Per-run human clearance
+applies only where the feed's current authority requires it. Agents require
+explicit authority to change source, commit, push, open a PR or initiate
+production work.
+
+Record the hazard, affected execution path, owner, expiry and exit condition for
+each experimental or commissioning restriction. Renewal, removal or extension
+to another feed requires an explicit decision based on that hazard. A document
+change grants no exception to a deployed control.
 
 Stop and request direction if completion requires a choice about a breaking public
 contract, previously undefined partial/degraded behavior, generated artifacts to
