@@ -931,6 +931,28 @@ roster still match. The existing SCAN preparation and shared publication
 queues retain their separate concurrency limits. Shared NRCS clearance is
 still required.
 
+A separately approved manual restoration may name a failed manual predecessor
+in the existing finite policy. The existing `predecessor_run_id` identifies
+the run. The optional `manual_recovery` object binds its `run_number` and
+`source_sha`, the ordered `out_of_campaign_run_ids` and the installed
+`daily_policy_sha256`. The manual predecessor must have succeeded at checkout
+and failed initial admission on its first main attempt. Verify the trusted
+workflow, admission guard and always-run finalizer, and the complete skipped
+spending and publication steps. Every intervening run number must be present.
+Only individually reviewed, out-of-campaign cron failures with complete
+no-spend evidence may intervene. Before approval, independently verify the
+effective daily policy on each named cron and its digest against the proposed
+binding. The runner checks the installed digest, excludes dates in that
+calendar and refuses missing, duplicate or unlisted evidence. Recovery reads
+at most 100 runs over a bounded date range and confers no daily authority.
+
+Unexpected admission errors produce fixed stage and category labels in the
+control receipt and job log. GitHub reads distinguish run detail, run history,
+prior jobs and the public PR, including the HTTP status when available.
+Exception text, headers, response bodies and policy bytes are excluded from
+these diagnostics. A failed initial receipt still requires independent job
+evidence before concluding that no spending occurred.
+
 Each campaign reserves before launch and retains sanitized accounting. Bounds
 are 87 physical attempts, 20 seconds native and 1,200 seconds acquisition. Source
 retries are disabled; the expected complete run is one GET plus 28 POSTs,
