@@ -7,6 +7,10 @@ name: SCAN historical initial-admission QA
         description: Reviewed proof commit
         required: true
         type: string
+      archived_pilot_context:
+        description: Archived pilot run and source fingerprints for the digest-bound calendar
+        required: true
+        type: string
       historical_window:
         description: Three historical UTC clock fields for the hash-bound fixture
         required: true
@@ -16,7 +20,7 @@ permissions: {}
 
 jobs:
   admission-proof:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/scan-run164-hosted-admission-proof' && github.run_number == 4 && github.run_attempt == 1 && github.sha == inputs.expected_source_sha }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/scan-run164-hosted-admission-proof' && github.run_number == 5 && github.run_attempt == 1 && github.sha == inputs.expected_source_sha }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -65,6 +69,37 @@ jobs:
             /tests/soil_moisture/test_scan_metered_http.R
             /tests/soil_moisture/test_scan_native_timeout.R
             /tests/soil_moisture/test_scan_nwcc_compat.R
+      - name: Check out the recovery candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 881b5035cc4d1d810c14822f838018437d19952d
+          path: candidate
+          fetch-depth: 2
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/actions/setup-r-hardened/action.yml
+            /.github/workflows/build-scan-soil-moisture-latest.yml
+            /data/input/scan_depth_style.csv
+            /data/input/scan_sms_waterday_percentiles.csv
+            /data/input/scan_station_index.csv
+            /scripts/build_scan_soil_moisture_latest.R
+            /scripts/configure_apt_mirror_order.sh
+            /scripts/main_publisher.py
+            /scripts/run_scan_operational.R
+            /scripts/run_scan_operational.py
+            /scripts/scan_operational_guard.py
+            /scripts/scan_soil_moisture_publisher.py
+            /scripts/soil_moisture/scan_metered_http.R
+            /scripts/soil_moisture/scan_nwcc_compat.R
+            /tests/soil_moisture/hosted_runtime_lock.json
+            /tests/soil_moisture/run_scan_operational_qualification.py
+            /tests/soil_moisture/run_scan_operational_qualification.sh
+            /tests/soil_moisture/run_sms_hosted_qualification.py
+            /tests/soil_moisture/scan_http_fixture_server.py
+            /tests/soil_moisture/test_scan_metered_http.R
+            /tests/soil_moisture/test_scan_native_timeout.R
+            /tests/soil_moisture/test_scan_nwcc_compat.R
       - name: Read the two historical job source trees
         shell: bash
         working-directory: historical
@@ -72,7 +107,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 4d8d1c4b34d48495e4cc068bebe9c3b80658683a
           git -c http.followRedirects=false fetch --no-tags --no-write-fetch-head --depth=1 --filter=blob:none https://github.com/dbo99/brim-live-data-feeds.git 7bcda89baa4d61698d0f0050166fdb0bbea052d3 6b9883b6acffac39eb92ac2a90b6fb90f54917a3
-      - name: Run only the historical initial admission
+      - name: Run both initial admissions without acquisition
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

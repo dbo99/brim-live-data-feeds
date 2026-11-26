@@ -1,4 +1,5 @@
 """Single historical SCAN initial-admission proof on the isolated QA ref."""
+import copy
 import datetime
 import hashlib
 import importlib.util
@@ -23,7 +24,8 @@ WORKFLOW = ".github/workflows/build-scan-soil-moisture-latest.yml"
 ROUTES = {
     f"actions/runs/{RUN}": "RUN_DETAIL",
     "actions/workflows/287560809/runs?created=2026-11-24..2026-11-26&per_page=100": "RUN_HISTORY",
-    "pulls/68": "REVIEWED_PR",
+    "actions/workflows/287560809/runs?created=2026-11-19..2026-11-27&per_page=100": "RECOVERY_HISTORY",
+    f"actions/runs/{RUN}/jobs?filter=all&per_page=100": "JOBS_164",
     "actions/runs/45510985646/jobs?filter=all&per_page=100": "JOBS_162",
     "actions/runs/45719264713/jobs?filter=all&per_page=100": "JOBS_163",
 }
@@ -61,67 +63,133 @@ def fixture(guard, root, clocks):
                  release_not_after_utc=release)
     raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     assert len(raw) == 3004 and digest(raw) == FIXTURE_SHA256
-    return raw.decode()
+    del value["source_pr"], value["reviewed_head_sha"]
+    value["source_sha"] = EVENT
+    assert digest(canonical(value).encode()) == "1bdab7a13dbe67dcefeca51f3a040ebbc7fdd18ba53e4d0658f3099f3581a6a8"
+    return value
 
 
-def prove(report):
+PREVIOUS_QA = "6fc68bcafc931f13ab7a611ad10ff00b220c2e55"
+SIM_MANUAL = 999999990166
+SIM_CRON = 999999990165
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def archived_pilot(guard, root, context):
+    number, source, signature, old_guard = context.split(",")
+    pins = guard.code_pins(root)
+    pins["scripts/scan_operational_guard.py"] = old_guard
+    value = dict(approved=True, schema="scan-c13r-finite-1", kind="pilot", code_sha256=pins,
+                 budgets=guard.BUDGETS, acquire_only=False, dates=[d.isoformat() for d in guard.PILOT_DATES],
+                 expires_utc="2026-11-20T08:00:00Z", manual_run_id=int(number),
+                 manual_source_sha=source, runtime_signature=signature)
+    raw = json.dumps(value, separators=(",", ":"))
+    assert digest(raw.encode()) == "465d45e2eaf854fa32731faee89454592717c4693614b2e4bc4cfa6240aaff86"
+    return raw
+
+
+class RecoveryClock(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 11, 27, 2, 36, tzinfo=datetime.timezone.utc).astimezone(tz)
+
+
+def check_request(event, args):
+    if event == "urllib.Request":
+        url, body, headers, method = args
+        prefix = "https://api.github.com/repos/" + REPO + "/"
+        assert url.startswith(prefix) and url[len(prefix):] in ROUTES
+        assert method == "GET" and body is None and "authorization" in {k.lower() for k in headers}
+
+
+def prove(report, recovery):
     workspace = Path(os.environ["GITHUB_WORKSPACE"])
-    checked, historical = workspace / "reviewed", workspace / "historical"
+    checked, historical, candidate = (workspace / name for name in ("reviewed", "historical", "candidate"))
     inputs = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())["inputs"]
     assert os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" and os.environ["GITHUB_REPOSITORY"] == REPO
     assert os.environ["GITHUB_REF"] == "refs/heads/codex/scan-run164-hosted-admission-proof"
-    assert os.environ["GITHUB_RUN_ATTEMPT"] == "1" and os.environ["GITHUB_RUN_NUMBER"] == "4"
+    assert os.environ["GITHUB_RUN_ATTEMPT"] == "1" and os.environ["GITHUB_RUN_NUMBER"] == "5"
     assert revision(checked, "HEAD") == inputs["expected_source_sha"] == os.environ["GITHUB_SHA"]
-    assert revision(checked, "HEAD^") == REVIEW and revision(historical, "HEAD") == EVENT
+    assert revision(checked, "HEAD^") == PREVIOUS_QA
+    assert revision(historical, "HEAD") == EVENT and revision(candidate, "HEAD") == REVIEW
     path = "scripts/scan_operational_guard.py"
-    assert revision(checked, "HEAD:" + path) == revision(checked, REVIEW + ":" + path)
-    assert digest((checked / path).read_bytes()) == GUARD_SHA256
-    spec = importlib.util.spec_from_file_location("reviewed_scan_guard", checked / path)
+    assert revision(checked, "HEAD:" + path) == revision(candidate, "HEAD:" + path)
+    assert digest((candidate / path).read_bytes()) == GUARD_SHA256
+    spec = importlib.util.spec_from_file_location("reviewed_scan_guard", candidate / path)
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)
-    report["stage"] = "HISTORICAL_FIXTURE"
+    report["stage"] = "FIXTURE"
     policy = fixture(guard, historical, inputs["historical_window"])
-    read_metadata = guard.github
+    daily = archived_pilot(guard, candidate, inputs["archived_pilot_context"])
+    root, run_id, clock_class = historical, RUN, FrozenClock
+    real_read = guard.github
+    synthetic = {}
 
-    def historical_read(route):
-        if route not in ROUTES or ROUTES[route] in report["started"]:
-            raise guard.Refused("UNEXPECTED_PROOF_ROUTE")
+    def authenticated(route):
         stage = ROUTES[route]
+        assert stage not in report["started"]
         report["started"].append(stage)
         report["stage"] = stage
-        data = read_metadata(route)
-        if stage == "RUN_DETAIL":
+        data = real_read(route)
+        report["authenticated"][stage] = digest(canonical(data).encode())
+        return data
+
+    def metadata(route):
+        if recovery and route == f"actions/runs/{SIM_MANUAL}":
+            anchor = authenticated(f"actions/runs/{RUN}")
+            assert anchor["status"] == "completed" and anchor["conclusion"] == "failure"
+            assert anchor["id"] == RUN and anchor["run_attempt"] == 1 and anchor["head_sha"] == EVENT
+            synthetic["active"] = dict(anchor, id=SIM_MANUAL, run_number=166, head_sha=REVIEW,
+                                       created_at="2026-11-27T02:35:00Z", status="in_progress", conclusion=None)
+            synthetic["cron"] = dict(anchor, id=SIM_CRON, run_number=165, event="schedule",
+                                     created_at="2026-11-26T14:35:00Z")
+            return synthetic["active"]
+        if recovery and route == f"actions/runs/{SIM_CRON}/jobs?filter=all&per_page=100":
+            jobs = copy.deepcopy(synthetic["job_template"])
+            for job in jobs["jobs"]:
+                job.update(id=job["id"] + 300000000, run_id=SIM_CRON)
+            report["simulated_cron_jobs"] = True
+            return jobs
+        data = authenticated(route)
+        stage = ROUTES[route]
+        if recovery and stage == "RECOVERY_HISTORY":
+            assert data["total_count"] == len(data["workflow_runs"])
+            assert max(row["run_number"] for row in data["workflow_runs"]) == 164
+            data["workflow_runs"] += [synthetic["cron"], synthetic["active"]]
+            data["total_count"] += 2
+        elif recovery and stage == "JOBS_164":
+            synthetic["job_template"] = copy.deepcopy(data)
+        elif not recovery and stage == "RUN_DETAIL":
             restore_active_state(data)
-        elif stage == "RUN_HISTORY":
+        elif not recovery and stage == "RUN_HISTORY":
             matches = [row for row in data["workflow_runs"] if row["id"] == RUN]
             assert len(matches) == 1
             restore_active_state(matches[0])
-        report["read"].append(stage)
         return data
 
-    def audit(event, args):
-        if event == "urllib.Request":
-            url, body, headers, method = args
-            prefix = "https://api.github.com/repos/" + REPO + "/"
-            if not url.startswith(prefix) or url[len(prefix):] not in ROUTES or method != "GET" or body is not None:
-                raise guard.Refused("UNEXPECTED_PROOF_REQUEST")
-            expected_auth = not url.endswith("/pulls/68")
-            if ("authorization" in {name.lower() for name in headers}) != expected_auth:
-                raise guard.Refused("PROOF_REQUEST_AUTH_MISMATCH")
-
-    os.chdir(historical)
-    sys.addaudithook(audit)
+    if recovery:
+        root, run_id, clock_class = candidate, SIM_MANUAL, RecoveryClock
+        policy.update(code_sha256=guard.code_pins(candidate), source_sha=REVIEW, predecessor_run_id=RUN,
+                      run_number=166, source_cutoff_date="2026-11-25", not_before_utc="2026-11-27T02:30:00Z",
+                      not_after_utc="2026-11-27T05:45:00Z", release_not_after_utc="2026-11-27T06:20:00Z",
+                      manual_recovery=dict(run_number=164, source_sha=EVENT, out_of_campaign_run_ids=[SIM_CRON],
+                                           daily_policy_sha256=digest(daily.encode())))
+    os.chdir(root)
     clock = SimpleNamespace(**vars(datetime))
-    clock.datetime = FrozenClock
+    clock.datetime = clock_class
+    raw_policy = canonical(policy)
     with tempfile.TemporaryDirectory(dir=os.environ["RUNNER_TEMP"]) as temp:
-        env = dict(GITHUB_REF="refs/heads/main", GITHUB_RUN_ID=str(RUN), GITHUB_RUN_NUMBER="164",
-                   GITHUB_WORKFLOW_REF=REPO + "/" + WORKFLOW + "@refs/heads/main", GITHUB_SHA=EVENT,
-                   SCAN_SOURCE_CUTOFF_DATE="2026-11-24", SCAN_ACQUIRE_ONLY="false", SCAN_PROVIDER_HOLD="false",
-                   SCAN_LIVE_APPROVAL_JSON=policy, RUNNER_TEMP=temp, GITHUB_ENV=temp + "/env",
-                   GITHUB_OUTPUT=temp + "/output")
+        env = dict(GITHUB_REF="refs/heads/main", GITHUB_RUN_ID=str(run_id), GITHUB_RUN_NUMBER=str(policy["run_number"]),
+                   GITHUB_WORKFLOW_REF=REPO + "/" + WORKFLOW + "@refs/heads/main", GITHUB_SHA=policy["source_sha"],
+                   SCAN_SOURCE_CUTOFF_DATE=policy["source_cutoff_date"], SCAN_ACQUIRE_ONLY="false", SCAN_PROVIDER_HOLD="false",
+                   SCAN_LIVE_APPROVAL_JSON=raw_policy, SCAN_DAILY_PILOT_JSON=daily, RUNNER_TEMP=temp,
+                   GITHUB_ENV=temp + "/env", GITHUB_OUTPUT=temp + "/output")
         report["stage"] = "INITIAL"
         with patch.dict(os.environ, env), patch.object(guard, "dt", clock), patch.object(
-                guard, "github", historical_read), patch.object(sys, "argv", ["guard", "initial"]):
+                guard, "github", metadata), patch.object(sys, "argv", ["guard", "initial"]):
             try:
                 guard.main()
             except SystemExit:
@@ -130,23 +198,32 @@ def prove(report):
         assert {p.name for p in control.iterdir()} == {"approval-initial.json"}
         raw = (control / "approval-initial.json").read_bytes()
         receipt = json.loads(raw)
-        assert receipt["provider_invoked_by_guard"] is False and receipt["run_id"] == str(RUN)
-        assert receipt["source_sha"] == EVENT and receipt["run_attempt"] == "1"
+        assert receipt["provider_invoked_by_guard"] is False and receipt["run_id"] == str(run_id)
+        assert receipt["source_sha"] == policy["source_sha"] and receipt["run_attempt"] == "1"
         status = receipt["status"]
         assert re.fullmatch("[A-Z][A-Z0-9_]{0,95}", status)
         if status == "ADMITTED":
-            assert report["read"] == list(ROUTES.values())
-            assert receipt["policy_sha256"] == FIXTURE_SHA256
-        report.update(stage="INITIAL_ADMISSION", status=status, reservation=False, receipt_sha256=digest(raw))
+            required = ["RUN_DETAIL", "RECOVERY_HISTORY", "JOBS_164"] if recovery else [
+                "RUN_DETAIL", "RUN_HISTORY", "JOBS_162", "JOBS_163"]
+            assert report["started"] == list(report["authenticated"]) == required
+            assert receipt["source_cutoff_date"] == policy["source_cutoff_date"]
+            assert receipt["policy_sha256"] == digest(raw_policy.encode())
+            assert len(policy["code_sha256"]) == 22 and receipt["budgets"] == guard.BUDGETS
+            assert not recovery or report["simulated_cron_jobs"]
+        report.update(stage="INITIAL_ADMISSION", status=status, reservation=False, receipt_sha256=digest(raw),
+                      policy_sha256=digest(raw_policy.encode()), source_sha=policy["source_sha"])
         return status == "ADMITTED"
 
 
 if __name__ == "__main__":
     os.umask(0o077)
-    report = dict(stage="QA_SOURCE", status="PROOF_SETUP_FAILURE", started=[], read=[])
-    try:
-        passed = prove(report)
-    except Exception:
-        passed = False
-    print("SCAN_PROOF_RESULT " + json.dumps(report, sort_keys=True), flush=True)
-    sys.exit(0 if passed else 1)
+    sys.addaudithook(check_request)
+    for case in ("historical", "simulated_recovery"):
+        report = dict(case=case, stage="QA_SOURCE", status="PROOF_SETUP_FAILURE", started=[], authenticated={})
+        try:
+            passed = prove(report, case == "simulated_recovery")
+        except Exception:
+            passed = False
+        print("SCAN_PROOF_RESULT " + json.dumps(report, sort_keys=True), flush=True)
+        if not passed:
+            sys.exit(1)
