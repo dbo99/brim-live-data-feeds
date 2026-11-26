@@ -50,7 +50,7 @@ Pacific standard/daylight changes. A scheduled writer also supports
 | USGS streamflow | Not declared | USGS Water Data API | Every 4 hours at :23 | GeoJSON and summary | No |
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
-| Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
+| Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 22:20 (cleared slot) | GeoJSON plus current-WY and historical context | No |
 | Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Guarded primary 02:08/08:08/14:08/20:08 and fallback 02:54/08:54/14:54/20:54; manual dry run or explicit `main` publication | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
 
 The absence of a declared product ID or manifest is a current contract gap,
@@ -520,6 +520,35 @@ ownership.
 - **Workflow:** [`.github/workflows/build-snow-pillow-latest.yml`](../.github/workflows/build-snow-pillow-latest.yml).
 - **Producer:** [`scripts/build_snow_pillow_latest.R`](../scripts/build_snow_pillow_latest.R).
 - **Sources:** USDA NRCS AWDB/SNOTEL and CDEC snow sensors.
+- **Daily operation:** The workflow requests one slot at 22:20 UTC. Each slot
+  needs an owner-authorized, fresh NRCS/CDEC resource clearance and an accepted
+  four-file predecessor. Set the repository variable `SWE_PROVIDER_CLEARANCE`
+  to `event/UTC-date/run-number/reviewed-source-commit/prior-product-commit/issued-UTC`
+  only after checking provider restrictions, shared reservations and actual
+  releases. Supply the actual UTC issuance (`YYYY-MM-DDTHH:MM:SSZ`), at most
+  30 minutes before acquisition and no earlier than 21:50 UTC. Use `schedule` for daily
+  operation. A manual event needs its own
+  `workflow_dispatch` clearance. Only main and attempt 1 qualify. The runner
+  checks both immutable pins and the shared SWE/SCAN/SNOTEL SMS/CDEC queue
+  immediately before the build. A missing or active shared NRCS hold blocks it.
+  Acquisition may start from 22:20 through 22:44 UTC and has 25 minutes for
+  the entire builder. Publisher admission closes at 23:50 UTC. The existing
+  shared publisher retains its 20-minute job timeout.
+- **Hosted transport:** Per run, allow up to 32 NRCS and 288 CDEC serial GETs,
+  including retries and both fallback paths. The cumulative body budget is
+  64 MiB with at most 4 MiB per GET. Libcurl 8.4 or newer enforces the
+  size limit during transfer with automatic decompression disabled.
+  Incomplete transfers retain their full byte reservation. Body counts
+  exclude headers, TLS and native socket buffering.
+  Redirects, HTTP 401/403/429, Retry-After and a response or aggregate
+  byte limit violation
+  stop the campaign. Exhausting one provider’s GET allowance ends only that
+  provider’s attempt. Existing provider-specific QA and carry-forward rules
+  determine whether the healthy provider can publish. Inspect request totals, all four
+  committed files and
+  Pages before clearing another slot. Withhold clearance after an unresolved
+  run or provider restriction. To stop, clear the variable and disable the
+  workflow; cancel any queued or active run and reconcile its actual outcome.
 - **Scheduled writer-managed outputs:** Latest GeoJSON, latest summary,
   current-WY trace, and trace summary.
 - **Consumer/operations roles:** Latest GeoJSON, summary, and trace are

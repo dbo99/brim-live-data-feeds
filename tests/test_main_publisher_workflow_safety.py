@@ -645,9 +645,12 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
         self.assertIn('"schedules": ["17,42 * * * *"]', watchdog)
         self.assertIn('"cooldown": 15', watchdog)
 
-    def test_phase5_snow_pillow_schedule_and_provider_boundary_are_unchanged(self) -> None:
+    def test_snow_pillow_daily_schedule_and_provider_boundary(self) -> None:
         snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")
-        self.assertIn('cron: "52 5,13,21 * * *"', snow_pillow)
+        self.assertEqual(re.findall(r'cron: "([^"]+)"', snow_pillow), ["20 22 * * *"])
+        self.assertIn('SNOW_PILLOW_BOUNDED_HTTP: "true"', snow_pillow)
+        self.assertLess(snow_pillow.index("daily_gate.py acquire"), snow_pillow.index("source(file.path("))
+        self.assertLess(snow_pillow.index("daily_gate.py publish"), snow_pillow.index("scripts/main_publisher.py publish"))
         self.assertIn('source(file.path(', snow_pillow)
         self.assertIn('"build_snow_pillow_latest.R"', snow_pillow)
         self.assertIn("scripts/snow_pillow_partial_refresh_helpers.R", snow_pillow)
