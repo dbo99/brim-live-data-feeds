@@ -313,6 +313,27 @@ class RenewableTests(unittest.TestCase):
         admission_failure[0]["steps"][1]["conclusion"] = "success"
         admission_failure[0]["steps"][2]["conclusion"] = "failure"
         self.assertEqual(admit(admission_failure), "ADMITTED")
+        manual = dict(unused, event="workflow_dispatch")
+
+        def manual_proof(run, records):
+            response = dict(jobs=records, total_count=len(records))
+            with patch.object(g, "github", return_value=response), patch.object(
+                    g.subprocess, "check_output", return_value="b"*40):
+                g.initial_refusal(ROOT, run, recovery_event="workflow_dispatch")
+
+        manual_proof(manual, admission_failure)
+        for changed in (dict(run_attempt=2), dict(conclusion="success"), dict(status="in_progress"),
+                        dict(event="schedule"), dict(head_branch="other"), dict(id=42)):
+            with self.subTest(changed=changed), self.assertRaises(g.Refused):
+                manual_proof(dict(manual, **changed), admission_failure)
+        with self.assertRaises(g.Refused):
+            manual_proof(manual, jobs)
+        for name in ("Recheck admission and reserve this campaign once", "Build SCAN soil moisture latest feed",
+                     "Upload validated SCAN publication candidate"):
+            changed = copy.deepcopy(admission_failure)
+            next(s for s in changed[0]["steps"] if s["name"] == name)["conclusion"] = "success"
+            with self.assertRaises(g.Refused):
+                manual_proof(manual, changed)
 
         # Removing, duplicating or running any skipped step invalidates the proof.
         for i, step in enumerate(jobs[0]["steps"]):
@@ -351,13 +372,71 @@ class RenewableTests(unittest.TestCase):
             with self.assertRaises(g.Refused):g.admit(**a)
 
 
+    def test_owner_bound_manual_recovery_and_intervening_crons(self):
+        from unittest.mock import patch, call
+        a = self.case()
+        current, anchor = a["current"], a["history"][1]
+        anchor.update(event="workflow_dispatch", conclusion="failure")
+        earlier = dict(anchor, id=2001, run_number=10, event="schedule", created_at="2026-11-29T18:00:00Z")
+        current["run_number"] = a["policy"]["run_number"] = 11
+        a["env"]["GITHUB_RUN_NUMBER"] = "11"
+        a["history"].append(earlier)
+        raw = json.dumps(dict(schema="scan-c13r-finite-1", kind="pilot", dates=[d.isoformat() for d in g.PILOT_DATES]))
+        a["env"]["SCAN_DAILY_PILOT_JSON"] = raw
+        recovery = dict(run_number=anchor["run_number"], source_sha=anchor["head_sha"],
+                        out_of_campaign_run_ids=[earlier["id"]], daily_policy_sha256=hashlib.sha256(raw.encode()).hexdigest())
+        a["policy"]["manual_recovery"] = recovery
+        with patch.object(g, "initial_refusal") as proof:
+            self.assertEqual(g.admit(**a)["status"], "ADMITTED")
+            self.assertEqual(proof.call_args_list, [
+                call(ROOT, anchor, recovery_event="workflow_dispatch"),
+                call(ROOT, earlier, recovery_event="schedule")])
+            for field, bad in (("run_number", 8), ("source_sha", "f"*40),
+                               ("out_of_campaign_run_ids", []), ("out_of_campaign_run_ids", [True]),
+                               ("daily_policy_sha256", "b"*64)):
+                with self.subTest(field=field), patch.dict(recovery, {field: bad}), self.assertRaises(g.Refused):
+                    g.admit(**a)
+            with patch.dict(a["policy"], predecessor_run_id=earlier["id"]), self.assertRaises(g.Refused):
+                g.admit(**a)
+            with patch.dict(earlier, run_number=12), self.assertRaisesRegex(g.Refused, "INCOMPLETE_SUCCESSION"):
+                g.admit(**a)
+            daily = self.case(True)["policy"]
+            daily["dates"] = ["2026-11-29"]
+            daily["expires_utc"] = g.scheduled_window(dt.date(2026,11,29),daily["window_minutes"])[2].strftime("%Y-%m-%dT%H:%M:%SZ")
+            raw = json.dumps(daily)
+            with patch.dict(a["env"], SCAN_DAILY_PILOT_JSON=raw), patch.dict(
+                    recovery, daily_policy_sha256=hashlib.sha256(raw.encode()).hexdigest()), self.assertRaisesRegex(
+                        g.Refused, "PRIOR_CAMPAIGN_FAILED_OR_UNKNOWN"):
+                g.admit(**a)
+        scheduled = self.case(True)
+        scheduled["policy"]["manual_recovery"] = recovery
+        with self.assertRaisesRegex(g.Refused, "UNDECLARED_POLICY_OR_MODE"):
+            g.admit(**scheduled)
+
+    def test_safe_github_infrastructure_diagnostics(self):
+        from unittest.mock import patch
+        secret = "private diagnostic fixture"
+        routes = [("actions/runs/12", "GITHUB_RUN_DETAIL"), ("pulls/1", "GITHUB_REVIEWED_PR"),
+                  ("actions/runs/12/jobs?filter=all&per_page=100", "GITHUB_PRIOR_JOBS"),
+                  (g.history_path([dt.date(2026,11,25)], recovery=True), "GITHUB_RUN_HISTORY")]
+        for route, stage in routes:
+            with patch.dict(os.environ, GH_TOKEN=secret), patch.object(g.urllib.request, "build_opener") as opener:
+                opener.return_value.open.side_effect = g.urllib.error.HTTPError(route, 403, secret, {}, None)
+                with self.assertRaises(g.Refused) as caught:
+                    g.github(route)
+                self.assertEqual(str(caught.exception), stage + "_HTTP_403")
+                opener.return_value.open.side_effect = g.urllib.error.URLError(secret)
+                with self.assertRaises(g.Refused) as caught:
+                    g.github(route)
+                self.assertEqual(str(caught.exception), stage + "_TRANSPORT")
+
     def test_normal_entrypoint_both_phases_and_fail_closed_receipts(self):
         from contextlib import ExitStack
         from unittest.mock import patch
         from types import SimpleNamespace
         head = subprocess.check_output(["git","-C",str(ROOT),"rev-parse","HEAD"],text=True).strip()
         for scenario in ("manual","daily","absent","disabled","old_expired","short_fit","disk","memory",
-                         "runtime","qualification","expired_during_lookup","incomplete_history"):
+                         "runtime","qualification","expired_during_lookup","incomplete_history","malformed_history"):
             daily = scenario in ("daily","runtime","old_expired")
             a = self.case(daily)
             p,env,current = a["policy"],a["env"],a["current"]
@@ -380,6 +459,7 @@ class RenewableTests(unittest.TestCase):
                 calls.append(path)
                 if path==f"actions/runs/{current['id']}":return current
                 if daily and path==f"actions/runs/{a['manual']['id']}":return a["manual"]
+                if path==expected and scenario=="malformed_history":return {"private diagnostic fixture": []}
                 if path==expected:return dict(total_count=len(a["history"])+int(scenario=="incomplete_history"),workflow_runs=a["history"])
                 raise AssertionError(path)
             class Clock(dt.datetime):
@@ -415,6 +495,8 @@ class RenewableTests(unittest.TestCase):
                     receipt=json.loads((control/f"approval-{phase}.json").read_bytes())
                     if should_fail:
                         self.assertNotEqual(receipt["status"],"ADMITTED")
+                        if scenario=="malformed_history":
+                            self.assertEqual(receipt["status"], "RUN_HISTORY_INVALID_STRUCTURE")
                         self.assertFalse((control/"campaign-reservation.json").exists())
                         if scenario in ("absent","disabled","old_expired"):self.assertFalse(calls)
                         break

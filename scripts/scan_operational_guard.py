@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
 
@@ -142,10 +143,11 @@ def calendar(policy, event):
     return days, start, release
 
 
-def history_path(days):
-    # Include the previous Pacific operating day and the following UTC date.
+def history_path(days, *, recovery=False):
+    # A named manual recovery may need intervening cron evidence from the past week.
+    first = days[0] - (7 if recovery else 1) * DAY
     return (f"actions/workflows/{WORKFLOW_ID}/runs?created="
-            f"{days[0]-DAY}..{days[-1]+DAY}&per_page=100")
+            f"{first}..{days[-1]+DAY}&per_page=100")
 
 
 def complete_history(response, key):
@@ -156,19 +158,23 @@ def complete_history(response, key):
     return rows
 
 
-def initial_refusal(root, run):
-    """One out-of-campaign cron may have failed before reservation on the manual day."""
+def initial_refusal(root, run, *, recovery_event=None):
+    """Prove that the named terminal job never entered the spending path."""
+    expected_event = recovery_event or "schedule"
     require(run["workflow_id"] == WORKFLOW_ID and run["repository"]["id"] == REPOSITORY_ID and
-            run["event"] == "schedule" and run["head_branch"] == "main" and
+            run["event"] == expected_event and run["head_branch"] == "main" and
             run["run_attempt"] == 1 and run["status"] == "completed" and run["conclusion"] == "failure",
             "PRIOR_SPEND_OR_UNKNOWN")
     source = run["head_sha"]
     require(isinstance(source,str) and re.fullmatch(r"[0-9a-f]{40}",source), "WRONG_HISTORY_SOURCE")
     def blob(rev, path):
         return subprocess.check_output(["git","rev-parse","--verify",f"{rev}:{path}"],cwd=root,text=True,timeout=5).strip()
-    require(blob(source, WORKFLOW) == blob("HEAD", WORKFLOW) and
-            blob(source, "scripts/scan_operational_guard.py") in
-            {blob("HEAD", "scripts/scan_operational_guard.py"), "6be892b42888ee191d19c57c05097c927765df1d"},
+    require(blob(source, WORKFLOW) == blob("HEAD", WORKFLOW), "UNKNOWN_PRIOR_ADMISSION_CODE")
+    trusted = {blob("HEAD", "scripts/scan_operational_guard.py"), "6be892b42888ee191d19c57c05097c927765df1d"}
+    if recovery_event:
+        trusted.add("b45021394fc3a1d00456ba0a18c8712e1b7493a3")  # reviewed PR68 guard
+    require(blob(source, "scripts/scan_operational_guard.py") in trusted and
+            blob(source, "scripts/run_scan_operational.py") == blob("HEAD", "scripts/run_scan_operational.py"),
             "UNKNOWN_PRIOR_ADMISSION_CODE")
     jobs = complete_history(github(f"actions/runs/{run['id']}/jobs?filter=all&per_page=100"), "jobs")
     require(all(j["run_id"] == run["id"] and j["run_attempt"] == 1 and
@@ -196,6 +202,10 @@ def initial_refusal(root, run):
         [("Check out source event", "success"), ("Require finite manual or scheduled admission", "failure")],
         [("Check out source event", "failure"), ("Require finite manual or scheduled admission", "skipped")],
     ), "PRIOR_SPEND_OR_UNKNOWN")
+    if recovery_event == "workflow_dispatch":
+        require(results[1:3] == [("Check out source event", "success"),
+                                 ("Require finite manual or scheduled admission", "failure")],
+                "PRIOR_SPEND_OR_UNKNOWN")
     skipped = (
         "Prefer Canonical Ubuntu APT mirror with Azure fallback",
         "Set up R",
@@ -214,6 +224,36 @@ def initial_refusal(root, run):
         ("Post Check out source event", "success"),
         ("Complete job", "success"),
     ], "PRIOR_SPEND_OR_UNKNOWN")
+
+
+def manual_recovery(root, recovery, env, anchor, outside, start):
+    """Credit only the reviewed failed manual and individually excluded cron events."""
+    fields = {"run_number", "source_sha", "out_of_campaign_run_ids", "daily_policy_sha256"}
+    require(type(recovery) is dict and set(recovery) == fields, "INVALID_MANUAL_RECOVERY")
+    require(type(recovery["run_number"]) is int and anchor["run_number"] == recovery["run_number"] and
+            anchor["head_sha"] == recovery["source_sha"] and stamp(anchor["created_at"]) < start,
+            "WRONG_RECOVERY_PREDECESSOR")
+    ids = recovery["out_of_campaign_run_ids"]
+    ordered = sorted(outside, key=lambda row: row["run_number"])
+    require(type(ids) is list and len(ids) <= 7 and all(type(i) is int for i in ids) and
+            ids == [row["id"] for row in ordered], "UNREVIEWED_INTERVENING_RUN")
+    raw = env.get("SCAN_DAILY_PILOT_JSON", "")
+    require(0 < len(raw.encode()) <= 16384 and
+            hashlib.sha256(raw.encode()).hexdigest() == recovery["daily_policy_sha256"], "DAILY_POLICY_CHANGED")
+    daily = json.loads(raw)
+    if daily.get("schema") == RENEWABLE:
+        days, _, _ = calendar(daily, "schedule")
+    else:
+        require(daily.get("schema") == "scan-c13r-finite-1" and daily.get("kind") == "pilot" and
+                daily.get("dates") == [day.isoformat() for day in PILOT_DATES], "UNVERIFIED_DAILY_CALENDAR")
+        days = PILOT_DATES
+    cron_days = [operating_day(row) for row in ordered]
+    require(len(set(cron_days)) == len(cron_days) and not set(days).intersection(cron_days) and
+            all(stamp(anchor["created_at"]) < stamp(row["created_at"]) < start for row in ordered),
+            "PRIOR_CAMPAIGN_FAILED_OR_UNKNOWN")
+    initial_refusal(root, anchor, recovery_event="workflow_dispatch")
+    for row in ordered:
+        initial_refusal(root, row, recovery_event="schedule")
 
 
 def reviewed_merge(root, policy, head):
@@ -259,7 +299,8 @@ def renewable_slot(policy, env, now, current, history, *, root, manual, predeces
     day = operating_day(current)
     require(day == now.astimezone(PACIFIC).date() and day in days, "INACTIVE_OUTSIDE_APPROVED_DATE")
     cutoff = day-DAY
-    require(all(days[0]-DAY <= stamp(r["created_at"]).date() <= days[-1]+DAY for r in history),
+    first_history_day = days[0] - (7 if "manual_recovery" in policy else 1) * DAY
+    require(all(first_history_day <= stamp(r["created_at"]).date() <= days[-1]+DAY for r in history),
             "WRONG_HISTORY_RANGE")
     by_id = {r["id"]:r for r in history}
     require(len(by_id) == len(history) and run_binding(by_id[current["id"]]) == run_binding(current), "INCONSISTENT_RUN_HISTORY")
@@ -279,11 +320,14 @@ def renewable_slot(policy, env, now, current, history, *, root, manual, predeces
         require(type(policy["run_number"]) is int and policy["run_number"] == current["run_number"], "WRONG_MANUAL_RUN")
         require(policy["source_cutoff_date"] == env.get("SCAN_SOURCE_CUTOFF_DATE") == cutoff.isoformat(), "WRONG_CUTOFF")
         require(not any(r["id"] != current["id"] and stamp(r["created_at"]) >= start for r in history), "COMPETING_CAMPAIGN")
+        outside = [r for r in following if r["id"] != current["id"]]
+        if "manual_recovery" in policy:
+            manual_recovery(root, policy["manual_recovery"], env, anchor, outside, start)
+            return cutoff.isoformat(), end, release
         require(operating_day(anchor) < day and all(operating_day(r) == day for r in following),
                 "WRONG_MANUAL_PREDECESSOR")
         if anchor["conclusion"] != "success":
             initial_refusal(root, anchor)
-        outside = [r for r in following if r["id"] != current["id"]]
     else:
         start, end, release = scheduled_window(day, policy["window_minutes"])
         require(start <= stamp(current["created_at"]) <= now < end, "DAILY_WINDOW_CLOSED")
@@ -341,6 +385,8 @@ def admit(policy, env, now, pins, current, history, *, root=None, manual=None, p
     renewable = policy["schema"] == RENEWABLE
     if renewable and event == "workflow_dispatch":
         extra.add("predecessor_run_id")
+        if "manual_recovery" in policy:
+            extra.add("manual_recovery")
         if "source_pr" in policy:
             extra = (extra - {"source_sha"}) | {"source_pr","reviewed_head_sha"}
     if renewable and event == "schedule":
@@ -394,6 +440,27 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         fp.close()
         raise Refused("GITHUB_REDIRECT")
 
+def infrastructure_status(stage, error):
+    """Use fixed categories only. Exception messages may contain untrusted bytes."""
+    if isinstance(error, urllib.error.HTTPError):
+        kind = f"HTTP_{error.code}" if type(error.code) is int and 100 <= error.code <= 599 else "HTTP_ERROR"
+    elif isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
+        kind = "TIMEOUT"
+    elif isinstance(error, urllib.error.URLError):
+        kind = "TRANSPORT"
+    elif isinstance(error, (UnicodeError, json.JSONDecodeError)):
+        kind = "INVALID_ENCODING_OR_JSON"
+    elif isinstance(error, (KeyError, IndexError, TypeError, ValueError)):
+        kind = "INVALID_STRUCTURE"
+    elif isinstance(error, subprocess.CalledProcessError):
+        kind = "COMMAND_FAILED"
+    elif isinstance(error, OSError):
+        kind = "IO_ERROR"
+    else:
+        kind = "UNEXPECTED_ERROR"
+    return f"{stage}_{kind}"
+
+
 def github(path):
     require(valid_history_endpoint(path), "INVALID_HISTORY_ENDPOINT")
     token = os.environ.get("GH_TOKEN", "")
@@ -404,10 +471,23 @@ def github(path):
     if not path.startswith("pulls/"):
         headers["Authorization"] = "Bearer "+token
     request = urllib.request.Request("https://api.github.com/repos/"+REPOSITORY+"/"+path, headers=headers)
-    with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as response:
-        body=response.read(4*1024**2+1)
-        require(response.status == 200 and len(body) <= 4*1024**2, "HISTORY_RESPONSE_LIMIT")
-    return json.loads(body)
+    if path.startswith("pulls/"):
+        stage = "GITHUB_REVIEWED_PR"
+    elif "/jobs?" in path:
+        stage = "GITHUB_PRIOR_JOBS"
+    elif path.startswith("actions/workflows/"):
+        stage = "GITHUB_RUN_HISTORY"
+    else:
+        stage = "GITHUB_RUN_DETAIL"
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as response:
+            body=response.read(4*1024**2+1)
+            require(response.status == 200 and len(body) <= 4*1024**2, "HISTORY_RESPONSE_LIMIT")
+        return json.loads(body)
+    except Refused:
+        raise
+    except Exception as error:
+        raise Refused(infrastructure_status(stage, error)) from None
 
 def valid_history_endpoint(path):
     if re.fullmatch(r"pulls/[1-9][0-9]*", path):
@@ -430,9 +510,14 @@ def durable(path, value):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument("phase", choices=["initial", "pre-acquisition"])
     phase=parser.parse_args().phase
-    control=Path(os.environ["RUNNER_TEMP"])/"scan-control";control.mkdir(exist_ok=True)
+    try:
+        control=Path(os.environ["RUNNER_TEMP"])/"scan-control"
+        control.mkdir(exist_ok=True)
+    except Exception as error:
+        raise SystemExit(infrastructure_status("RECEIPT_DIRECTORY", error)) from None
     receipt={"status":"REFUSED", "provider_invoked_by_guard":False, "source_sha":os.environ.get("GITHUB_SHA"),
              "run_id":os.environ.get("GITHUB_RUN_ID"), "run_attempt":os.environ.get("GITHUB_RUN_ATTEMPT")}
+    stage = "POLICY"
     try:
         root=Path.cwd().resolve();now=dt.datetime.now(dt.timezone.utc)
         event=os.environ.get("GITHUB_EVENT_NAME")
@@ -445,13 +530,15 @@ def main():
         if renewable:
             days, start, release = calendar(policy,event)
             require(start <= now < release, "INACTIVE_WINDOW_OR_RUN")
-            history_url = history_path(days)
+            history_url = history_path(days, recovery="manual_recovery" in policy)
         elif event == "schedule":
             require(now < EXPIRY, "INACTIVE_EXPIRED")
             require(now.date() in PILOT_DATES, "INACTIVE_OUTSIDE_PILOT_DATE")
+        stage = "CHECKOUT"
         head=subprocess.check_output(["git", "rev-parse", "HEAD"], timeout=5, text=True).strip()
         require(head == os.environ.get("GITHUB_SHA"), "CHECKOUT_MISMATCH")
         current=github("actions/runs/"+os.environ["GITHUB_RUN_ID"])
+        stage = "RUN_HISTORY"
         history = complete_history(github(history_url), "workflow_runs")
         manual = predecessor = None
         if renewable and event == "workflow_dispatch":
@@ -459,9 +546,13 @@ def main():
                 predecessor = github(f"actions/runs/{policy['predecessor_run_id']}")
         if renewable and event == "schedule":
             manual = github(f"actions/runs/{policy['manual_run_id']}")
+            stage = "DAILY_SOURCES"
             check_daily_sources(root, head, policy, manual, history)
         now=dt.datetime.now(dt.timezone.utc)  # Do not reuse a pre-network clock.
-        receipt.update(admit(policy, dict(os.environ), now, code_pins(root), current, history, root=root, manual=manual, predecessor=predecessor))
+        stage = "SOURCE_PINS"
+        pins = code_pins(root)
+        stage = "ADMISSION_DECISION"
+        receipt.update(admit(policy, dict(os.environ), now, pins, current, history, root=root, manual=manual, predecessor=predecessor))
         now=dt.datetime.now(dt.timezone.utc)  # Recheck fit after any prior-job evidence read.
         if renewable:
             require(now + dt.timedelta(seconds=BUDGETS["SCAN_HTTP_CAMPAIGN_SECONDS"]+30) < stamp(receipt["not_after_utc"]) and
@@ -471,20 +562,26 @@ def main():
         # closure reserve 30. This is configured fit, not a runtime prediction.
         if phase == 'initial':
             require(now + dt.timedelta(seconds=3600+1200+900+1800) < stamp(receipt['release_not_after_utc']), 'INSUFFICIENT_COMPLETE_RUN_FIT')
+        stage = "DISK_HEADROOM"
         require(shutil.disk_usage(root).free >= 12*1024**3, "INSUFFICIENT_HOST_HEADROOM")
         if phase == 'initial':
+            stage = "MEMORY_HEADROOM"
             mem=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
             require(int(mem['MemAvailable'].split()[0])*1024 > 5*1024**3, 'INSUFFICIENT_MEMORY_HEADROOM')
         if phase == "pre-acquisition":
+            stage = "QUALIFICATION"
             qualification=json.loads((control/"hosted-qualification.json").read_text())
             require(qualification.get("status") == "PASS" and qualification.get("platform") == "linux" and
                     qualification.get("source_sha") == head, "HOSTED_QUALIFICATION_MISSING")
+            stage = "RUNTIME_LOCK"
             runtime=json.loads((control/"runtime-lock.json").read_text());signature=runtime_signature(runtime)
             require(policy["kind"] == "manual" or signature == policy["runtime_signature"], "RUNTIME_CHANGED")
             receipt["runtime_signature"]=signature
+            stage = "RESERVATION"
             durable(control/"campaign-reservation.json", {"state":"UNKNOWN_RESERVED_BEFORE_LAUNCH", "run_id":current["id"],
                 "attempt":1, "maximum_requests":87, "maximum_decoded_bytes":182452224})
         receipt["policy_sha256"]=hashlib.sha256(raw.encode()).hexdigest()
+        stage = "RUNNER_OUTPUTS"
         with open(os.environ["GITHUB_ENV"], "a") as f:
             for k,v in BUDGETS.items():f.write(k+"="+str(v)+"\n")
             f.write("SCAN_SOURCE_CUTOFF_DATE="+receipt["source_cutoff_date"]+"\n")
@@ -492,10 +589,14 @@ def main():
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:f.write("release_not_after="+receipt["release_not_after_utc"]+"\n")
     except Refused as e:
         receipt["status"]=str(e);raise SystemExit("SCAN admission: "+str(e))
-    except Exception:
-        receipt["status"]="UNCLASSIFIED_ADMISSION_FAILURE";raise SystemExit("SCAN admission failed closed")
+    except Exception as error:
+        receipt["status"] = infrastructure_status(stage, error)
+        raise SystemExit("SCAN admission: " + receipt["status"]) from None
     finally:
-        durable(control/("approval-"+phase+".json"), receipt)
+        try:
+            durable(control/("approval-"+phase+".json"), receipt)
+        except Exception as error:
+            raise SystemExit(infrastructure_status("ADMISSION_RECEIPT", error)) from None
     print("SCAN finite "+phase+" admission passed; no provider request from guard.")
 
 if __name__ == "__main__":main()
