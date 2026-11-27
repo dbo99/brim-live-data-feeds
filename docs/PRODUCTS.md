@@ -54,7 +54,7 @@ supports `workflow_dispatch` unless noted otherwise.
 | USGS groundwater | Not declared | USGS Water Data API | Daily at 13:41 | GeoJSON and summary | No |
 | SNOTEL SMS | `snotel-sms-current-wy` | USDA NRCS | Daily at 18:11 subject to finite successor policy and clearance | `docs/data/snotel-sms/index.json` | Two-file index |
 | SCAN soil moisture | Not declared | USDA NRCS AWDB | Daily at 14:30 | GeoJSON plus current-WY and historical context | No |
-| Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 05:52, 13:52, 21:52 | GeoJSON plus current-WY and historical context | No |
+| Snow-pillow SWE | Not declared | USDA NRCS AWDB and CDEC | 22:20 UTC target (finite term) | GeoJSON plus current-WY and historical context | No |
 | Winter Storm Levels | `winter_storm_levels` | NOAA/NWS/NCEP NBM | Guarded primary 02:08/08:08/14:08/20:08 and fallback 02:54/08:54/14:54/20:54; manual dry run or explicit `main` publication | `docs/data/winter-storm-levels/winter_storm_levels_manifest.json` | Yes |
 
 The absence of a declared product ID or manifest is a current contract gap,
@@ -535,6 +535,47 @@ ownership.
 - **Workflow:** [`.github/workflows/build-snow-pillow-latest.yml`](../.github/workflows/build-snow-pillow-latest.yml).
 - **Producer:** [`scripts/build_snow_pillow_latest.R`](../scripts/build_snow_pillow_latest.R).
 - **Sources:** USDA NRCS AWDB/SNOTEL and CDEC snow sensors.
+- **Daily operation:** The owner may approve up to seven consecutive Pacific
+  dates using the existing repository variable `SWE_PROVIDER_CLEARANCE` in
+  the form `schedule/first-date/last-date/reviewed-source-SHA/prior-product-SHA/last-reviewed-run-ID`.
+  Use ISO dates and complete Git commit IDs. A separately approved manual term
+  uses `workflow_dispatch` and one date. The run ID identifies the last
+  reconciled terminal SWE run on an earlier Pacific date. Check consecutive
+  actual workflow history from that anchor. Before installing or renewing a term,
+  reconcile prior spending, provider restrictions, capacity and the four-file
+  main generation. Do not overlap terms or reissue an unresolved acquisition.
+  `SCAN_PROVIDER_HOLD` must be explicitly false.
+- **Admission:** A main first attempt created at or after the 22:20 UTC target
+  may acquire later on the same Pacific day. The collector uses that date as
+  its inclusive query end. Its native completed-day coverage rules still apply.
+  Setup, acquisition and publication require respectively more than 80, 50 and
+  20 minutes before Pacific midnight. Refuse repeated source days and water-year
+  changes until the new year's predecessor has separate seasonal acceptance.
+  Each phase verifies current main source and all four predecessor blobs.
+  Each successful publisher reads back its run-tagged commit or confirms the
+  previous generation on a validated no-op. Either outcome spends the day. The
+  publisher retains the generation SHA in a run-scoped generation receipt for eight days. Successors
+  validate that receipt and the first-attempt job history from the approved
+  term. An interrupted build, unknown spend or missing generation holds the term.
+- **Coordination and revocation:** Serialize SWE preparation. Before acquisition,
+  inspect actual SWE, SCAN, SNOTEL SMS and CDEC reservoir preparation jobs.
+  A completed preparation may publish independently. An incomplete inventory
+  or pending preparation blocks acquisition. This queue check is a snapshot.
+  Disable SWE and clear the term to revoke it. Jobs recheck workflow enablement
+  before acquisition and publication. Repository variables can be snapshotted
+  at queue time. Keep the workflow disabled while reconciling outstanding SWE
+  jobs and any already reserved transfers before replacement or re-enablement.
+- **Hosted transport:** Per run, allow up to 32 NRCS and 288 CDEC serial GETs,
+  including retries and both fallback paths. The cumulative body budget is
+  64 MiB with at most 4 MiB per GET. Libcurl 8.4 or newer enforces the
+  size limit during transfer with automatic decompression disabled.
+  Incomplete transfers retain their full byte reservation. Body counts
+  exclude headers, TLS and native socket buffering.
+  Redirects, HTTP 401/403/429, Retry-After and a response or aggregate
+  byte limit violation
+  stop the campaign. Exhausting one provider’s GET allowance ends only that
+  provider’s attempt. Existing provider-specific QA and carry-forward rules
+  determine whether the healthy provider can publish. Review actual accounting, main and Pages delivery at term close or on a refusal.
 - **Scheduled writer-managed outputs:** Latest GeoJSON, latest summary,
   current-WY trace, and trace summary.
 - **Consumer/operations roles:** Latest GeoJSON, summary, and trace are

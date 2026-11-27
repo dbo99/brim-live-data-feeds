@@ -348,6 +348,12 @@ PT_FETCH_TIMEOUT_SEC <- suppressWarnings(as.integer(Sys.getenv(
 )))
 if (is.na(PT_FETCH_TIMEOUT_SEC) || PT_FETCH_TIMEOUT_SEC < 10) PT_FETCH_TIMEOUT_SEC <- 90L
 
+daily_http <- NULL
+if (identical(Sys.getenv("SNOW_PILLOW_BOUNDED_HTTP"), "true")) {
+  source("scripts/snow_pillow_daily_http.R", local = TRUE)
+  daily_http <- snow_daily_http()
+}
+
 pt_fetch_text <- function(url, label, attempts = PT_FETCH_ATTEMPTS, timeout_sec = PT_FETCH_TIMEOUT_SEC) {
 
   label <- pt_chr(label)
@@ -355,19 +361,19 @@ pt_fetch_text <- function(url, label, attempts = PT_FETCH_ATTEMPTS, timeout_sec 
 
   for (attempt in seq_len(attempts)) {
 
-    handle <- curl::new_handle()
-    curl::handle_setopt(
-      handle,
-      useragent = "BRIM-snow-pillow-latest/1.0 (+https://github.com/dbo99/brim-live-data-feeds)",
-      followlocation = TRUE,
-      timeout = timeout_sec,
-      connecttimeout = min(30L, timeout_sec)
-    )
-
-    resp <- tryCatch(
-      curl::curl_fetch_memory(url, handle = handle),
-      error = function(e) e
-    )
+    resp <- tryCatch({
+      if (!is.null(daily_http)) {
+        daily_http$get(url, timeout_sec)
+      } else {
+        handle <- curl::new_handle(
+          useragent = "BRIM-snow-pillow-latest/1.0 (+https://github.com/dbo99/brim-live-data-feeds)",
+          followlocation = TRUE, timeout = timeout_sec, connecttimeout = min(30L, timeout_sec)
+        )
+        curl::curl_fetch_memory(url, handle = handle)
+      }
+    }, error = function(e) e)
+    if (!is.null(daily_http)) daily_http$check()
+    if (inherits(resp, "snow_provider_cap")) stop(resp)
 
     if (!inherits(resp, "error")) {
       status <- as.integer(resp$status_code)
@@ -397,16 +403,16 @@ pt_fetch_text <- function(url, label, attempts = PT_FETCH_ATTEMPTS, timeout_sec 
   NULL
 }
 
-pt_json_from_url <- function(url, label) {
+pt_json_from_url <- function(url, label, attempts = PT_FETCH_ATTEMPTS) {
 
-  txt <- pt_fetch_text(url, label = label)
+  txt <- pt_fetch_text(url, label = label, attempts = attempts)
 
   if (is.null(txt) || !nzchar(txt)) {
     return(NULL)
   }
 
   tryCatch(
-    jsonlite::fromJSON(txt, flatten = TRUE),
+    jsonlite::parse_json(txt, simplifyVector = TRUE, flatten = TRUE),
     error = function(e) {
       message(label, " returned text that could not be parsed as JSON; error: ", conditionMessage(e))
       NULL
@@ -725,6 +731,13 @@ fetch_cdec_swe <- function(cdec_ids,
 
     if (is.data.frame(direct_rows) && nrow(direct_rows) > 0) {
       return(direct_rows)
+    }
+
+    if (!is.null(daily_http)) {
+      # The library fallback reads the same servlet through an unmetered HTTP URL.
+      # Retain its single second look through the bounded HTTPS reader.
+      retry <- pt_json_from_url(cdec_url, label = paste("CDEC fallback", id, sensor_num), attempts = 1L)
+      return(pt_parse_cdec_json_response(retry, id, sensor_num))
     }
 
     message("CDEC direct JSON returned no rows for ", id, " sensor ", sensor_num, "; trying sharpshootR fallback once.")
@@ -1295,6 +1308,7 @@ awdb_attempt <- tryCatch(
     )
   }
 )
+if (!is.null(daily_http)) daily_http$check()
 awdb_fetch_completed_at_utc <- snow_utc_now()
 
 message("Provider attempt: cdec_snow_sensor (CDEC sensors #3 and #82).")
@@ -1329,6 +1343,7 @@ cdec_attempt <- tryCatch(
     )
   }
 )
+if (!is.null(daily_http)) daily_http$check()
 cdec_fetch_completed_at_utc <- snow_utc_now()
 
 awdb_preflight <- awdb_attempt$preflight

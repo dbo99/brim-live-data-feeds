@@ -50,7 +50,7 @@ dispatch route requires its own approval.
 | `.github/workflows/build-nbm-wind-guidance-latest.yml` | Build NBM wind guidance latest | Manual; four times daily | `scripts/build_nbm_wind_guidance_latest.R` | Rolling set/manifest/summary |
 | `.github/workflows/build-nbm-qpf.yml` | Build NBM QPF live feed | Manual; +138m primary and +190m fallback for 00/06/12/18Z | `scripts/build_nbm_qpf_candidate.R` | Seeded complete-cycle paired image/numeric artifact; separate bounded `main` publisher |
 | `.github/workflows/build-scan-soil-moisture-latest.yml` | Build SCAN soil moisture latest feed | Manual; daily 14:30 | `scripts/build_scan_soil_moisture_latest.R` | Latest/trace/style |
-| `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Manual; three times daily | `scripts/build_snow_pillow_latest.R` | Latest/trace |
+| `.github/workflows/build-snow-pillow-latest.yml` | Build snow pillow SWE latest feed | Finite manual or autonomous daily term, 22:20 UTC target | `scripts/build_snow_pillow_latest.R` | Latest/trace |
 | `.github/workflows/build-usgs-groundwater-latest-ca.yml` | Build USGS CA groundwater latest GeoJSON | Manual; daily 13:41 | `scripts/build_usgs_groundwater_latest_ca.R` | GeoJSON/summary |
 | `.github/workflows/build-usgs-streamflow-latest-ca.yml` | Build USGS CA streamflow latest GeoJSON | Manual; :23 every 4h | `scripts/build_usgs_streamflow_latest_ca.R` | GeoJSON/summary |
 | `.github/workflows/build-winter-storm-levels.yml` | Build Winter Storm Levels | Manual dry run by default; guarded primary +128m and fallback +174m for 00/06/12/18Z | `scripts/build_winter_storm_levels.R` | Complete manifest/contour artifact; scheduled or explicit `main` publication only after a newer complete-cycle preflight |

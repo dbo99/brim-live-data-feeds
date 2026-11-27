@@ -1395,6 +1395,9 @@ scenario("Prior latest, summary, trace, and trace-summary validation", {
     "Valid prior all-null properties did not retain expected types."
   )
 
+  assert_equal(validation$trace$obs_date_local, as.character(prior_trace$obs_date_local),
+               "Saved observation dates must bind to fresh text labels without changing the day.")
+
   malformed <- jsonlite::fromJSON(paths[["latest_geojson"]], simplifyVector = FALSE)
   malformed$features[[1]]$properties <-
     malformed$features[[1]]$properties[

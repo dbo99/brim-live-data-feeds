@@ -650,7 +650,11 @@ snow_validate_serialized_output_set <- function(paths,
         paths[["latest_summary"]],
         paste0(purpose_title, " latest summary")
       ),
-      trace = readr::read_csv(paths[["trace_csv"]], show_col_types = FALSE),
+      trace = readr::read_csv(
+        paths[["trace_csv"]],
+        col_types = readr::cols(obs_date_local = readr::col_character()),
+        show_col_types = FALSE
+      ),
       trace_summary = snow_read_json_object(
         paths[["trace_summary"]],
         paste0(purpose_title, " trace summary")
