@@ -16,6 +16,10 @@ jobs:
   prepare-candidate:
     if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && vars.SWE_PROVIDER_CLEARANCE != '' }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: snow-pillow-provider-preparation
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 60
     permissions:
       contents: read
@@ -30,6 +34,8 @@ jobs:
           fetch-depth: 0
 
       - name: Refuse an expired or unbound slot before setup
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 -B scripts/snow_pillow_daily_gate.py start
 
       - name: Prefer Canonical Ubuntu APT mirror with Azure fallback
@@ -179,6 +185,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+      actions: read
     concurrency:
       group: brim-live-main-publish
       cancel-in-progress: false
@@ -197,6 +204,11 @@ jobs:
           name: snow-pillow-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/snow-pillow-candidate
 
+      - name: Verify SWE term and predecessor before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/snow_pillow_daily_gate.py publish
+
       - name: Reconcile and publish Snow Pillow candidate onto current main
         shell: bash
         env:
@@ -204,7 +216,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          python3 -B scripts/snow_pillow_daily_gate.py publish
           candidate_artifact_root="${RUNNER_TEMP}/snow-pillow-candidate"
 
           python3 scripts/main_publisher.py publish \
@@ -213,7 +224,7 @@ jobs:
             --metadata "${candidate_artifact_root}/candidate-metadata.json" \
             --product-id snow-pillow-latest \
             --target-ref refs/heads/main \
-            --commit-subject "Update snow pillow SWE latest feed" \
+            --commit-subject "Update snow pillow SWE latest feed (run ${GITHUB_RUN_ID})" \
             --allowlist docs/data/snow_pillow_latest.geojson \
             --allowlist docs/data/snow_pillow_latest_summary.json \
             --allowlist docs/data/snow_pillow_current_wy_trace.csv \
@@ -221,3 +232,15 @@ jobs:
             --candidate-validator scripts/snow_pillow_publisher.py \
             --reconcile-callback scripts/snow_pillow_publisher.py \
             --staged-validator scripts/snow_pillow_publisher.py
+
+      - name: Read back the published generation
+        id: readback
+        run: python3 -B scripts/snow_pillow_daily_gate.py receipt
+
+      - name: Retain the verified generation for successor admission
+        uses: actions/upload-artifact@v7
+        with:
+          name: snow-pillow-generation-${{ steps.readback.outputs.generation }}
+          path: ${{ runner.temp }}/swe-generation.txt
+          if-no-files-found: error
+          retention-days: 8

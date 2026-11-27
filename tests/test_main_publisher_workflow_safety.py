@@ -470,8 +470,9 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
             self.assertNotRegex(text, r"(?m)^concurrency:\s*$", workflow.name)
             self.assertEqual(text.count("\n  publish-to-main:\n"), 1, workflow.name)
             self.assertEqual(text.count("group: brim-live-main-publish"), 1, workflow.name)
-            self.assertEqual(text.count("cancel-in-progress: false"), 1, workflow.name)
-            self.assertEqual(text.count("queue: max"), 1, workflow.name)
+            expected_queues = 2 if workflow == SNOW_PILLOW else 1
+            self.assertEqual(text.count("cancel-in-progress: false"), expected_queues, workflow.name)
+            self.assertEqual(text.count("queue: max"), expected_queues, workflow.name)
 
             prepare, publish = text.split("  publish-to-main:\n", 1)
             publish_header = publish.split("    steps:\n", 1)[0]
@@ -648,6 +649,13 @@ class MainPublisherWorkflowSafetyTests(unittest.TestCase):
     def test_snow_pillow_daily_schedule_and_provider_boundary(self) -> None:
         snow_pillow = SNOW_PILLOW.read_text(encoding="utf-8")
         self.assertEqual(re.findall(r'cron: "([^"]+)"', snow_pillow), ["20 22 * * *"])
+        prepare, publish = snow_pillow.split("  publish-to-main:", 1)
+        self.assertIn("group: snow-pillow-provider-preparation", prepare)
+        self.assertIn("group: brim-live-main-publish", publish)
+        self.assertIn("actions: read", publish)
+        self.assertLess(publish.index("scripts/main_publisher.py publish"),
+                        publish.index("daily_gate.py receipt"))
+        self.assertIn("name: snow-pillow-generation-${{ steps.readback.outputs.generation }}", publish)
         self.assertIn('SNOW_PILLOW_BOUNDED_HTTP: "true"', snow_pillow)
         self.assertLess(snow_pillow.index("daily_gate.py acquire"), snow_pillow.index("source(file.path("))
         self.assertLess(snow_pillow.index("daily_gate.py publish"), snow_pillow.index("scripts/main_publisher.py publish"))
