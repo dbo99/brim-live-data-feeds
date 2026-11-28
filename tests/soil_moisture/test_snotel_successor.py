@@ -84,6 +84,144 @@ class SuccessorTests(unittest.TestCase):
             return f.admit_successor(self.env,phase,json.dumps(self.policy,sort_keys=True,separators=(',',':')) if raw is None else raw,
                                      w.SnotelGitReader(self.repo),self.get,lambda:self.clock)
 
+    def term_fixture(self):
+        # The prior generation is an actual local Git publication descended from
+        # a distinct source event. Give it a reproducible publication clock.
+        import os
+        self.git('checkout','-q','--orphan','term-fixture')
+        self.git('rm','-qr','--cached','.')
+        wf=self.repo/f.WORKFLOW
+        wf.parent.mkdir(parents=True,exist_ok=True)
+        wf.write_text('reviewed fixture workflow')
+        self.git('add',f.WORKFLOW)
+        self.git('commit','-qm','Source event')
+        event=self.git('rev-parse','HEAD')
+        with patch.dict(os.environ,GIT_COMMITTER_DATE='2026-10-02T20:05:00Z'):
+            self.parent=self.commit_product(self.files)
+        self.source=self.parent
+        self.policy.update(version=f.TERM_VERSION,event='schedule',reviewed_head=self.source,
+            predecessor_commit=self.parent,predecessor_run_id=900002,slots=4,python_version='3.12.3',
+            daily_release_utc='06:00')
+        self.policy.pop('first_run')
+        self.clock=f.utc('2026-10-06T01:42:28Z')
+        self.env.update(GITHUB_SHA=self.source,GITHUB_WORKFLOW_SHA=self.source,GITHUB_EVENT_NAME='schedule',
+                        GITHUB_RUN_NUMBER='5',GITHUB_RUN_ID='900005',SNOTEL_JOB_STARTED=str(int(self.clock.timestamp())-3))
+        self.anchor=self.run_row(900002,2,'workflow_dispatch','2026-10-02T18:12:00Z','completed','success')
+        self.anchor['head_sha']=event
+        self.runs=[self.anchor,self.run_row(900003,3,'schedule','2026-10-04T01:42:28Z','completed','skipped'),
+                   self.run_row(900004,4,'schedule','2026-10-05T01:26:20Z','completed','skipped'),
+                   self.run_row(900005,5,'schedule','2026-10-06T01:42:27Z','in_progress',None)]
+        self.raw=json.dumps(self.policy,sort_keys=True,separators=(',',':'))
+        self.env['NRCS_CLEARANCE']='schedule/term/'+hashlib.sha256(self.raw.encode()).hexdigest()
+        prep=['Set up job','Validate explicit modes','Check out exact source event',
+              'Qualify this runner offline before provider admission',f.TERM_STEP,f.BUILD_STEP,f.UPLOAD_STEP,
+              'Post Check out exact source event','Complete job']
+        pub=['Set up job','Record publisher job start','Check out candidate source event','Download closed candidate',
+             'Check finite publication admission','Publish through the unchanged shared owner',
+             'Authenticate committed delivery independently','Post Check out candidate source event','Complete job']
+        def steps(names):
+            return [dict(name=name,number=i+1,status='completed',conclusion='success',
+                         started_at='2026-10-02T20:04:59Z',completed_at='2026-10-02T20:05:01Z')
+                    for i,name in enumerate(names)]
+        self.proofs={}
+        for row in self.runs[:-1]:
+            ok=row is self.anchor
+            js=[dict(id=row['id']*10+i,name=name,run_id=row['id'],run_attempt=1,status='completed',
+                     head_sha=row['head_sha'],head_branch='main',conclusion=row['conclusion'],
+                     steps=steps(names) if ok else [])
+                for i,(name,names) in enumerate([('prepare-candidate',prep),('publish-to-main',pub)])]
+            if ok:js[0]['steps'][4]['conclusion']='skipped'
+            self.proofs[row['id']]=dict(total_count=2,jobs=js)
+        self.refusal_steps=steps(prep)
+        for step,result in zip(self.refusal_steps[4:],['failure','skipped','skipped','success','success']):
+            step['conclusion']=result
+        initial_get=self.get
+        def get(path):
+            if '/jobs?' in path:return self.proofs[int(path.split('/')[2])]
+            if path == 'actions/runs/900003':return self.runs[1]
+            return initial_get(path)
+        self.get=get
+
+    def test_term_late_arrival_and_no_spend_bridge(self):
+        from datetime import timedelta
+        self.term_fixture()
+        grant=self.admit()
+        self.assertEqual((grant['cutoff'],grant['window_end'],grant['prior']['generation']),
+                         ('2026-10-04','2026-10-06T06:00:00Z',self.gen))
+        self.assertEqual(self.admit('publish'),grant)
+        record=self.repo/'term.json'
+        f.write(record,dict(grant=grant,run=self.env['GITHUB_RUN_ID'],admitted_at=self.clock.timestamp()))
+        self.assertEqual(f.consume_term_admission(self.env,self.raw,record,self.clock),grant)
+        for delta in (61,-1):
+            with self.assertRaises(ValueError):f.consume_term_admission(self.env,self.raw,record,self.clock+timedelta(seconds=delta))
+        for changes in ({'GITHUB_RUN_ID':'1'},{'NRCS_CLEARANCE':''},{'PROVIDER_HOLD':'true'}):
+            with patch.dict(self.env,changes),self.assertRaises(ValueError):
+                f.consume_term_admission(self.env,self.raw,record,self.clock)
+        row=self.runs[2];prep=self.proofs[row['id']]['jobs'][0]
+        row['conclusion']=prep['conclusion']='failure';prep['steps']=self.refusal_steps
+        self.assertEqual(self.admit(),grant)
+        for changes in ({'conclusion':'success'},{'conclusion':'cancelled'},{'status':'in_progress'}):
+            with patch.dict(prep['steps'][5],changes),self.assertRaises(ValueError):self.admit()
+        self.proofs[row['id']]['jobs'].pop()
+        with self.assertRaises(ValueError):self.admit()
+
+    def test_term_closed_ambiguous_or_duplicate(self):
+        self.term_fixture()
+        for changes in ({'NRCS_CLEARANCE':''},{'PROVIDER_HOLD':'true'},{'GITHUB_RUN_ATTEMPT':'2'},
+                        {'GITHUB_RUN_NUMBER':'6'}):
+            with patch.dict(self.env,changes),self.assertRaises(ValueError):self.admit()
+        for when in ('2026-10-06T04:31:00Z','2026-10-06T07:00:00Z','2026-10-09T01:00:00Z'):
+            with patch.object(self,'clock',f.utc(when)),self.assertRaises(ValueError):self.admit()
+        for changes in ({'run_attempt':2},{'status':'in_progress'},{'conclusion':'failure'},
+                        {'event':'workflow_dispatch'},{'run_number':3}):
+            with patch.dict(self.runs[2],changes),self.assertRaises(ValueError):self.admit()
+        for changes in ({'created_at':'2026-10-05T01:42:28Z'},{'head_sha':'f'*40}):
+            with patch.dict(self.runs[-1],changes),self.assertRaises(ValueError):self.admit()
+        self.missing=True
+        with self.assertRaises(ValueError):self.admit()
+        self.missing=False
+        for key,val in [('predecessor_generation','f'*64),('predecessor_run_id',900003),('reviewed_head','f'*40),
+                        ('predecessor_commit',self.anchor['head_sha']),('daily_release_utc','09:00')]:
+            with patch.dict(self.policy,{key:val}):
+                raw=json.dumps(self.policy,sort_keys=True,separators=(',',':'))
+                with patch.dict(self.env,NRCS_CLEARANCE='schedule/term/'+hashlib.sha256(raw.encode()).hexdigest()):
+                    with self.assertRaises(ValueError):self.admit()
+        self.active=[dict(id=1,workflow_id=288862661)]
+        with self.assertRaisesRegex(ValueError,'Shared NRCS'):self.admit()
+        self.active=[]
+        self.proofs[self.anchor['id']]['jobs'][1]['steps'].pop()
+        with self.assertRaisesRegex(ValueError,'Incomplete acknowledged'):self.admit()
+
+    def test_term_delivery_after_gap_and_source_drift(self):
+        import os
+        self.term_fixture()
+        grant=self.admit()
+        groups,caps=fixture(end=grant['cutoff'])
+        child=build(groups,caps,end=grant['cutoff'],prior=self.files)
+        prior=self.runs[-1];prior.update(status='completed',conclusion='success')
+        with patch.dict(os.environ,GIT_COMMITTER_DATE='2026-10-06T01:55:00Z'):
+            self.source=self.commit_product(child)
+        import copy
+        js=copy.deepcopy(self.proofs[self.anchor['id']])
+        for j in js['jobs']:
+            j.update(run_id=prior['id'],head_sha=prior['head_sha'])
+            for s in j['steps']:
+                s.update(conclusion='success',started_at='2026-10-06T01:54:59Z',completed_at='2026-10-06T01:55:01Z')
+        self.proofs[prior['id']]=js
+        self.clock=f.utc('2026-10-07T01:40:00Z')
+        cur=self.run_row(900006,6,'schedule','2026-10-07T01:39:00Z','in_progress',None)
+        self.runs.append(cur);self.env.update(GITHUB_SHA=self.source,GITHUB_WORKFLOW_SHA=self.source,
+            GITHUB_RUN_NUMBER='6',GITHUB_RUN_ID='900006',SNOTEL_JOB_STARTED=str(int(self.clock.timestamp())-2))
+        self.assertEqual(self.admit()['prior']['generation'],json.loads(child[w.ss.PATHS[1]])['generation'])
+        publish=js['jobs'][1]['steps'][5]
+        with patch.dict(publish,started_at='2026-10-06T01:55:01Z'),self.assertRaises(ValueError):self.admit()
+        with patch.dict(prior,created_at=cur['created_at']),self.assertRaises(ValueError):self.admit()
+        (self.repo/f.WORKFLOW).write_text('changed workflow')
+        self.git('add',f.WORKFLOW);self.git('commit','-qm','Changed admission source')
+        self.source=self.git('rev-parse','HEAD');cur['head_sha']=self.source
+        self.env.update(GITHUB_SHA=self.source,GITHUB_WORKFLOW_SHA=self.source)
+        with self.assertRaises(ValueError):self.admit()
+
     def test_operating_imports_are_independent(self):
         # Use the same two entry modules as the hosted job in a fresh interpreter.
         code = ("import sys; import snotel_first_run, soil_network_workflow; "

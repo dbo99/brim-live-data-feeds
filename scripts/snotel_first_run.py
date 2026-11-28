@@ -1,7 +1,7 @@
 """Finite bootstrap/successor admission and private preparation supervision.
 
-This does not grant authority by itself. The repository variable must bind one
-reviewed source event, workflow run number, first attempt and finite UTC window.
+Manual grants bind an exact run. A scheduled term binds reviewed source, an
+acknowledged predecessor, finite source days and the daily release time.
 Only positive, explicitly selected accounting is printed; raw source and failures
 remain in the private runner directory, never an Actions artifact.
 """
@@ -84,6 +84,12 @@ OPERATING_WORKFLOW_ID = 398301342
 SHARED_WORKFLOWS = {OPERATING_WORKFLOW_ID, 287560809, 288862661}
 SLOT_LENGTH = timedelta(hours=3)
 DAILY_CRON = '11 18 * * *'
+TERM_VERSION = 'snotel-successor-2'
+# The acknowledged manual predecessor and the closed commissioning slots.
+COMMISSIONING_WORKFLOW = 'f15565d1c62dcc576e82c2d0c06182f9850c8683'
+TERM_STEP = 'Check scheduled term before acquisition'
+BUILD_STEP = 'Prepare complete bounded current-WY candidate'
+UPLOAD_STEP = 'Upload only the validated public candidate'
 
 
 def strict_object(raw, cap):
@@ -99,8 +105,11 @@ def slot(policy, env, clock):
     fields = {'version', 'event', 'reviewed_head', 'predecessor_commit', 'predecessor_generation',
               'predecessor_run_id', 'first_run', 'first_start_utc', 'first_cutoff', 'slots',
               'catalog_sha256', 'roster_sha256', 'limits', 'python_version'}
-    require(isinstance(policy, dict) and set(policy) == fields and
-            policy['version'] == 'snotel-successor-1', 'Successor policy')
+    require(isinstance(policy, dict), 'Successor policy')
+    term = policy.get('version') == TERM_VERSION
+    if term:
+        fields = (fields - {'first_run'}) | {'daily_release_utc'}
+    require(set(policy) == fields and (term or policy['version'] == 'snotel-successor-1'), 'Successor policy')
     event = policy['event']
     require(env.get('GITHUB_ACTIONS') == 'true' and env.get('GITHUB_REPOSITORY') == REPO
             and env.get('GITHUB_REPOSITORY_ID') == '1247282299'
@@ -121,14 +130,34 @@ def slot(policy, env, clock):
         require(re.fullmatch('[0-9a-f]{64}', policy[key]) and policy[key] == env.get(var), 'Catalog/roster')
     require(re.fullmatch('[0-9a-f]{64}', policy['predecessor_generation']), 'Prior generation')
     require(policy['limits'] == LIMITS and all(type(x) is int for x in policy['limits'].values()), 'Budgets')
-    for key in ('first_run', 'predecessor_run_id', 'slots'):
+    for key in ('predecessor_run_id', 'slots'):
         require(type(policy[key]) is int and policy[key] > 0, 'Finite run binding')
-    require(policy['first_run'] > 2 and 1 <= policy['slots'] <= (7 if event == 'schedule' else 1),
+    require((term or (type(policy['first_run']) is int and policy['first_run'] > 2))
+            and 1 <= policy['slots'] <= (7 if event == 'schedule' else 1),
             'Spent or unbounded run')
     start = utc(policy['first_start_utc'])
     if event == 'schedule':
         require(start.strftime('%H:%M:%S') == '18:11:00' and env.get('SCHEDULE') == DAILY_CRON,
                 'Scheduled slot')
+    if term:
+        require(event == 'schedule', 'Scheduled term only')
+        require(re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', policy['daily_release_utc']), 'Daily release')
+        first = (start - timedelta(hours=8, days=1)).date()
+        year = first.year + (first.month >= 10)
+        last_operating_day = first + timedelta(days=policy['slots'])
+        require(policy['first_cutoff'] == first.isoformat()
+                and last_operating_day.year + (last_operating_day.month >= 10) == year,
+                'Term exceeds the eligible current-WY prefix')
+        index = (clock - start).days
+        require(0 <= index < policy['slots'], 'Outside authorized term')
+        start += timedelta(days=index)
+        hour, minute = map(int, policy['daily_release_utc'].split(':'))
+        end = start.replace(hour=hour, minute=minute)
+        if end <= start:
+            end += timedelta(days=1)
+        require(end <= (start + timedelta(days=1)).replace(hour=8, minute=0) and start <= clock < end,
+                'Outside daily release window')
+        return index, start, end, first + timedelta(days=index)
     index = int(env['GITHUB_RUN_NUMBER']) - policy['first_run']
     require(0 <= index < policy['slots'], 'Outside authorized run numbers')
     cutoff = (start - timedelta(hours=8, days=1)).date()
@@ -206,6 +235,83 @@ def require_delivered(run, get):
                 for step in publishers[0]['steps']), 'Previous run lacked committed acknowledgment')
 
 
+def term_deliveries(reader, policy, env, anchor, rows, start, end, get):
+    """Account for every actual run since the owner-selected successful delivery."""
+    current_number = int(env['GITHUB_RUN_NUMBER'])
+    ordered = sorted(rows, key=lambda r: r['run_number'])
+    require(1 < len(ordered) <= 100 and ordered[0] == anchor
+            and 0 < current_number - anchor['run_number'] < 100
+            and [r['run_number'] for r in ordered] == list(range(anchor['run_number'], current_number+1)), 'Incomplete term history')
+    current = ordered[-1]
+    require(anchor['id'] == policy['predecessor_run_id'] and anchor['conclusion'] == 'success'
+            and utc(anchor['created_at']) < utc(policy['first_start_utc']), 'Wrong term anchor')
+    require(str(current['id']) == env['GITHUB_RUN_ID'] and current['head_sha'] == env['GITHUB_SHA']
+            and current['status'] == 'in_progress' and current['event'] == 'schedule'
+            and start <= utc(current['created_at']) < end, 'Wrong or late current run')
+    deliveries = []
+    active_workflow = reader.git(['rev-parse', env['GITHUB_SHA']+':'+WORKFLOW]).decode().strip()
+    created = [utc(r['created_at']) for r in ordered]
+    require(created == sorted(created), 'Out-of-order term history')
+    prep_names = ['Set up job','Validate explicit modes','Check out exact source event',
+                  'Qualify this runner offline before provider admission',TERM_STEP,BUILD_STEP,UPLOAD_STEP,
+                  'Post Check out exact source event','Complete job']
+    pub_names = ['Set up job','Record publisher job start','Check out candidate source event',
+                 'Download closed candidate','Check finite publication admission',
+                 'Publish through the unchanged shared owner','Authenticate committed delivery independently',
+                 'Post Check out candidate source event','Complete job']
+    def graph(job, names, conclusions):
+        steps = job['steps']
+        return ([s['name'] for s in steps] == names
+                and [s['number'] for s in steps] == sorted({s['number'] for s in steps})
+                and all(s['status'] == 'completed' for s in steps)
+                and [s['conclusion'] for s in steps] == conclusions)
+    for run in ordered:
+        require(run['workflow_id'] == OPERATING_WORKFLOW_ID and run['head_branch'] == 'main'
+                and run['run_attempt'] == 1 and run['event'] in ('schedule','workflow_dispatch'),
+                'Unexpected term run')
+        if run is current:
+            break
+        require(run['status'] == 'completed', 'Unfinished prior run')
+        source = reader.commit(run['head_sha'])
+        reader.git(['merge-base','--is-ancestor',source,env['GITHUB_SHA']])
+        workflow = reader.git(['rev-parse',source+':'+WORKFLOW]).decode().strip()
+        require(workflow in (active_workflow, COMMISSIONING_WORKFLOW), 'Unknown prior workflow')
+        jobs = complete(get(f"actions/runs/{run['id']}/jobs?filter=all&per_page=100"), 'jobs')
+        named = {j['name']:j for j in jobs}
+        require(len(jobs) == 2 and set(named) == {'prepare-candidate','publish-to-main'}
+                and all(j['status'] == 'completed' and j['run_attempt'] == 1 and j['run_id'] == run['id']
+                        and j['head_sha'] == source and j['head_branch'] == 'main' for j in jobs),
+                'Incomplete predecessor jobs')
+        prep, pub = named['prepare-candidate'], named['publish-to-main']
+        if run['id'] != anchor['id'] and pub['conclusion'] == 'skipped' and pub['steps'] == []:
+            require(run['event'] == 'schedule', 'Unresolved manual spend')
+            if prep['conclusion'] == run['conclusion'] == 'skipped' and prep['steps'] == []:
+                continue
+            # Only the reviewed term workflow has this separate, provider-free gate.
+            reader.git(['diff','--quiet',policy['reviewed_head'],source,'--',*operating_paths()])
+            require(workflow == active_workflow and prep['conclusion'] == run['conclusion'] == 'failure'
+                    and graph(prep, prep_names, ['success']*4 + ['failure','skipped','skipped','success','success']),
+                    'Ambiguous term spending')
+            continue
+        require(run['conclusion'] == prep['conclusion'] == pub['conclusion'] == 'success',
+                'Ambiguous predecessor spending')
+        expected = [name for name in prep_names if name != TERM_STEP or workflow == active_workflow]
+        outcomes = ['skipped' if name == TERM_STEP and run['event'] == 'workflow_dispatch' else 'success'
+                    for name in expected]
+        require(graph(prep, expected, outcomes) and graph(pub, pub_names, ['success']*len(pub_names)),
+                'Incomplete acknowledged delivery')
+        published = next(s for s in pub['steps'] if s['name'] == 'Publish through the unchanged shared owner')
+        day = (utc(run['created_at']) - timedelta(hours=8, days=1)).date()
+        if run['id'] != anchor['id']:
+            require(run['event'] == 'schedule' and workflow == active_workflow, 'Unapproved term acquisition')
+            reader.git(['diff','--quiet',policy['reviewed_head'],source,'--',*operating_paths()])
+            _, prior_start, prior_end, _ = slot(policy, env, utc(run['created_at']))
+            require(prior_start < start and utc(published['completed_at']) <= prior_end
+                    and day > deliveries[-1][0], 'Duplicate or out-of-term acquisition')
+        deliveries.append((day, source, utc(published['started_at']), utc(published['completed_at'])))
+    return deliveries
+
+
 def operating_paths():
     import soil_network_workflow as w
     # The scheduled workflow runs the origin and successor suites. Bind their
@@ -217,7 +323,7 @@ def operating_paths():
             'tests/soil_moisture/test_snotel_snapshot.py', 'tests/soil_moisture/test_snotel_transport.py')
 
 
-def check_product_lineage(reader, policy, source, index, cutoff):
+def check_product_lineage(reader, policy, source, index, cutoff, deliveries=None):
     import soil_network_workflow as w
     anchor = policy['predecessor_commit']
     reader.git(['merge-base', '--is-ancestor', anchor, source])
@@ -225,13 +331,26 @@ def check_product_lineage(reader, policy, source, index, cutoff):
     reader.git(['diff', '--quiet', policy['reviewed_head'], source, '--', *operating_paths()])
     commits = reader.git(['log', '--first-parent', '--format=%H', '--max-count=8',
                           anchor+'..'+source, '--', *w.ss.PATHS]).decode().splitlines()
+    if deliveries is not None:
+        require(len(commits)+1 == len(deliveries), 'Unmatched delivery or product change')
+        for commit, (day, run_source, begin, finish) in zip([anchor, *reversed(commits)], deliveries):
+            reader.git(['merge-base','--is-ancestor',run_source,commit+'^'])
+            parents = reader.git(['show','-s','--format=%P',commit]).split()
+            changed = reader.git(['diff','--name-only',commit+'^',commit]).decode().splitlines()
+            stamp = int(reader.git(['show','-s','--format=%ct',commit]))
+            require(len(parents) == 1 and set(changed) == set(w.ss.PATHS) and day < cutoff
+                    and begin.timestamp() <= stamp <= finish.timestamp(),
+                    'Wrong acknowledged publication')
+        index = len(commits)
     require(len(commits) == index, 'Unexpected predecessor product history')
     files, binding = reader.product(anchor)
     require(binding['generation'] == policy['predecessor_generation'], 'Approved predecessor generation')
+    if deliveries is not None:
+        require(json.loads(files[w.ss.PATHS[1]])['end'] == str(deliveries[0][0]), 'Wrong anchor source day')
     for n, commit in enumerate(reversed(commits)):
         child, _ = reader.product(commit)
         require(w.sp.classify(child, files)['decision'] == 'publish' and
-                json.loads(child[w.ss.PATHS[1]])['end'] == str(cutoff-timedelta(days=index-n)),
+                json.loads(child[w.ss.PATHS[1]])['end'] == str(deliveries[n+1][0] if deliveries is not None else cutoff-timedelta(days=index-n)),
                 'Broken daily predecessor chain')
         files = child
     actual, current = reader.product(source)
@@ -254,16 +373,20 @@ def admit_successor(env, phase, raw, reader, get, clock):
     source = env['GITHUB_SHA']
     require(not reader.test_stub and reader.git(['rev-parse','HEAD']).decode().strip() == source,
             'Actual event checkout required')
-    current = check_product_lineage(reader, policy, source, index, cutoff)
-    # A fresh scoped clearance binds this exact policy, run, and observed prior.
-    # The owner installs it only after confirming shared capacity and backoff.
+    term = policy['version'] == TERM_VERSION
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    clearance = f"{policy['event']}/{digest}/{env['GITHUB_RUN_NUMBER']}/{cutoff}/{current['generation']}"
-    parts = env.get('NRCS_CLEARANCE', '').rsplit('/', 2)
-    require(len(parts) == 3 and parts[0] == clearance, 'Fresh slot clearance missing')
-    issued, expires = utc(parts[1]), utc(parts[2])
-    require(start-timedelta(minutes=30) <= issued <= clock() < expires == end
-            and (phase != 'prepare' or (clock()-issued).total_seconds() <= 1800), 'Clearance validity')
+    if term:
+        require(env.get('NRCS_CLEARANCE') == 'schedule/term/'+digest, 'Term revoked or clearance mismatch')
+    else:
+        current = check_product_lineage(reader, policy, source, index, cutoff)
+        # A fresh scoped clearance binds this exact policy, run, and observed prior.
+        # The owner installs it only after confirming shared capacity and backoff.
+        clearance = f"{policy['event']}/{digest}/{env['GITHUB_RUN_NUMBER']}/{cutoff}/{current['generation']}"
+        parts = env.get('NRCS_CLEARANCE', '').rsplit('/', 2)
+        require(len(parts) == 3 and parts[0] == clearance, 'Fresh slot clearance missing')
+        issued, expires = utc(parts[1]), utc(parts[2])
+        require(start-timedelta(minutes=30) <= issued <= clock() < expires == end
+                and (phase != 'prepare' or (clock()-issued).total_seconds() <= 1800), 'Clearance validity')
     anchor = get(f"actions/runs/{policy['predecessor_run_id']}")
     since = utc(anchor['created_at']).strftime('%Y-%m-%d')
     rows = complete(get(f'actions/workflows/{OPERATING_WORKFLOW_ID}/runs?created=%3E%3D{since}&per_page=100'), 'workflow_runs')
@@ -272,13 +395,17 @@ def admit_successor(env, phase, raw, reader, get, clock):
     anchor_fields = ('id','run_number','run_attempt','workflow_id','head_branch','status','conclusion','head_sha','created_at','event')
     def compact(row):
         return {key: row[key] for key in anchor_fields}
-    check_history(policy, env, index, start, compact(anchor), [compact(row) for row in runs], get)
-    for row in runs:
-        if row['status'] == 'completed' and row['conclusion'] == 'success':
-            require_delivered(row, get)
-    if policy['event'] == 'schedule':
+    if term:
+        deliveries = term_deliveries(reader, policy, env, compact(anchor), [compact(row) for row in runs], start, end, get)
+        current = check_product_lineage(reader, policy, source, index, cutoff, deliveries)
+    else:
+        check_history(policy, env, index, start, compact(anchor), [compact(row) for row in runs], get)
         for row in runs:
-            reader.git(['diff','--quiet',row['head_sha'],source,'--', *operating_paths()])
+            if row['status'] == 'completed' and row['conclusion'] == 'success':
+                require_delivered(row, get)
+        if policy['event'] == 'schedule':
+            for row in runs:
+                reader.git(['diff','--quiet',row['head_sha'],source,'--', *operating_paths()])
     if phase == 'prepare':
         for state in ('queued','in_progress','pending','waiting','requested'):
             active = complete(get('actions/runs?status='+state+'&per_page=100'), 'workflow_runs')
@@ -297,6 +424,22 @@ def admit_successor(env, phase, raw, reader, get, clock):
             'Remaining hosted job headroom')
     return dict(source_sha=source, catalog_sha256=policy['catalog_sha256'], roster_sha256=policy['roster_sha256'],
                 prior=current, cutoff=str(cutoff), policy_sha256=digest, window_end=end.strftime('%Y-%m-%dT%H:%M:%SZ'))
+
+
+def consume_term_admission(env, raw, path, now):
+    import hashlib
+    policy = strict_object(raw, 4096)
+    _, _, end, cutoff = slot(policy, env, now)
+    require(policy['version'] == TERM_VERSION and not path.is_symlink(), 'Term admission required')
+    record = json.loads(path.read_bytes())
+    grant = record['grant']
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    require(env.get('NRCS_CLEARANCE') == 'schedule/term/'+digest and env.get('PROVIDER_HOLD') == 'false'
+            and grant['policy_sha256'] == digest and grant['source_sha'] == env['GITHUB_SHA']
+            and record['run'] == env['GITHUB_RUN_ID'] and 0 <= now.timestamp()-record['admitted_at'] <= 60
+            and utc(grant['window_end']) == end and str(cutoff) == grant['cutoff']
+            and (end-now).total_seconds() >= 5400, 'Expired or changed term admission')
+    return grant
 
 
 def hosted_environment(env):
@@ -394,7 +537,7 @@ def supervise(argv, root, *, preflight_seconds=300, acquisition_seconds=1920,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=('prepare', 'publish', 'check-source'))
+    parser.add_argument('phase', choices=('prepare', 'publish', 'check-source', 'admit-term'))
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -407,8 +550,23 @@ def main():
             from soil_network_workflow import SnotelGitReader
             raw = os.environ.pop('SUCCESSOR_POLICY', '')
             token = os.environ.pop('GH_TOKEN', '')
-            grant = admit_successor(os.environ, args.phase, raw, SnotelGitReader('.'),
-                                    lambda path: get_github(path, token), lambda: datetime.now(timezone.utc))
+            reader = SnotelGitReader('.')
+            term_file = Path(os.environ['RUNNER_TEMP'])/'snotel-scheduled-admission.json'
+            if args.phase == 'prepare' and strict_object(raw, 4096).get('version') == TERM_VERSION:
+                grant = consume_term_admission(os.environ, raw, term_file, current)
+                fresh = get_github('git/ref/heads/main', token)['object']['sha']
+                reader.commit(fresh)
+                reader.git(['merge-base','--is-ancestor',grant['source_sha'],fresh])
+                reader.git(['diff','--quiet',grant['source_sha'],fresh,'--',*operating_paths(),'docs/data/snotel-sms'])
+            else:
+                phase = 'prepare' if args.phase == 'admit-term' else args.phase
+                grant = admit_successor(os.environ, phase, raw, reader,
+                                        lambda path: get_github(path, token), lambda: datetime.now(timezone.utc))
+                if args.phase == 'admit-term':
+                    require(strict_object(raw, 4096)['version'] == TERM_VERSION, 'Scheduled term only')
+                    write(term_file, dict(grant=grant, run=os.environ['GITHUB_RUN_ID'],
+                                          admitted_at=time.time()))
+                    return 0
             current = datetime.now(timezone.utc)
         else:
             grant = authorize(hosted_environment(os.environ), args.phase, current)
