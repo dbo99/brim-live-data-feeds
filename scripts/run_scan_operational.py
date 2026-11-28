@@ -9,7 +9,7 @@ PHASES={'RUNTIME_ADMISSION','BUILDER','ACCOUNT_SNAPSHOT','ACCOUNT_PREDICATE','RE
 ERRORS={'NONE','SCAN_FATAL','SIMPLE_ERROR','OTHER_ERROR'}
 ACCOUNT_REFUSALS={'NONE','NOT_EVALUATED','ACCOUNT_SHAPE','FATAL_PRESENT','REQUEST_COUNT_TYPE',
                  'RECEIPT_COUNT_TYPE','RECEIPT_SHAPE','RECEIPT_STATE','RECEIPT_STATUS',
-                 'RECEIPT_ATTEMPT','RECEIPT_METHOD','RECEIPT_BYTES','TIMEOUT_NONFINITE_TYPE',
+                 'RECEIPT_ATTEMPT','RECEIPT_METHOD','RECEIPT_IDENTITY','RECEIPT_BYTES','TIMEOUT_NONFINITE_TYPE',
                  'TIMEOUT_LIMIT','TOTAL_BYTES','BYTE_SUM','SNAPSHOT_EXCEPTION',
                  'PREDICATE_EXCEPTION','RECEIPT_EXCEPTION'}
 
@@ -68,13 +68,31 @@ def finalize(root,build,validation,metadata):
     return 0 if outcome=='VALIDATED_CANDIDATE' else 1
 
 def audit_candidate(root,account):
+    from scan_operational_guard import request_plan
     expected={'candidate/docs/data/'+p for p in PRODUCTS}|{'candidate-metadata.json'}
     entries=list(root.rglob('*'))
     assert not any(p.is_symlink() for p in entries), 'Linked artifact'
     assert {str(p.relative_to(root)) for p in entries if p.is_file()}==expected,'Artifact disclosure boundary'
     assert sum(p.stat().st_size for p in entries if p.is_file())<=64*1024**2,'Artifact byte limit'
     value=json.loads(account.read_text())
-    assert value['status']=='BUILT_ACCOUNT_COMPLETE' and value['account']['requests']==29
+    reservation = json.loads(account.with_name('campaign-reservation.json').read_text())
+    plan = reservation['request_plan']
+    actual = value['account']
+    assert reservation['state'] == 'UNKNOWN_RESERVED_BEFORE_LAUNCH'
+    cutoff = os.environ['SCAN_SOURCE_CUTOFF_DATE']
+    assert reservation['source_cutoff_date'] == cutoff
+    assert plan == request_plan(pathlib.Path(__file__).resolve().parents[1], cutoff)
+    assert value['status'] == 'BUILT_ACCOUNT_COMPLETE' and actual['fatal'] is None
+    assert type(actual['requests']) is int and actual['requests'] == len(actual['receipts']) == len(plan)
+    for attempt, (key, receipt) in enumerate(zip(plan, actual['receipts']), start=1):
+        assert type(receipt['attempt']) is int and receipt['attempt'] == attempt
+        assert receipt['request_key'] == key
+        assert receipt['method'] == ('GET' if attempt == 1 else 'POST')
+        assert receipt['state'] == 'COMPLETE' and receipt['status'] == 200
+        assert type(receipt['body_bytes']) is int and 0 <= receipt['body_bytes'] <= 2097152
+        assert type(receipt['timeout_seconds']) in (float, int) and 0 < receipt['timeout_seconds'] <= 20
+    assert type(actual['body_bytes']) is int
+    assert sum(r['body_bytes'] for r in actual['receipts']) == actual['body_bytes'] <= 182452224
     assert value['account_refusal']=='NONE' and value['account_predicate'] is True
     assert value['raw_provider_errors_disclosed'] is False
 

@@ -54,7 +54,8 @@ pt_scan_curl_backend <- function(method, url, form, timeout, read_limit, consume
 pt_scan_make_http <- function(max_requests, response_bytes, total_bytes,
                               campaign_seconds, request_seconds,
                               backend = pt_scan_curl_backend,
-                              clock = function() unname(proc.time()[["elapsed"]])) {
+                              clock = function() unname(proc.time()[["elapsed"]]),
+                              request_plan = NULL) {
   integer_limit <- function(x) is.numeric(x) && length(x) == 1L && is.finite(x) &&
     x >= 1 && x <= 2^31 - 1 && x == floor(x)
   if (!all(vapply(list(max_requests, response_bytes, total_bytes), integer_limit, logical(1))) ||
@@ -85,6 +86,11 @@ pt_scan_make_http <- function(max_requests, response_bytes, total_bytes,
     if (method == "POST" && (!is.list(form) || !identical(names(form),
         c("intervalType", "report", "timeseries", "format", "sitenum", "interval", "year", "month")) ||
         !all(vapply(form, function(x) length(x) == 1L && !is.na(x), logical(1))))) fail("Invalid SCAN form")
+    key <- if (method == "GET") "GET" else paste(form$sitenum, form$year, sep = "/")
+    if (!is.null(request_plan) && (requests >= length(request_plan) ||
+        !identical(key, request_plan[[requests + 1L]]))) {
+      fail("SCAN request differs from reserved station/year order", "scan_accounting_error")
+    }
     if (!is.numeric(timeout) || length(timeout) != 1L || !is.finite(timeout) || timeout <= 0) fail("Invalid SCAN timeout")
     if (requests >= max_requests || consumed >= total_bytes) fail("SCAN request/body budget exhausted", "scan_budget_exhausted")
     admitted <- clock()
@@ -97,7 +103,7 @@ pt_scan_make_http <- function(max_requests, response_bytes, total_bytes,
     # Reserve BEFORE invoking the physical backend. Failed/unknown work stays spent.
     requests <<- requests + 1L
     id <- requests; bytes <- 0; chunks <- list()
-    receipts[[id]] <<- list(attempt = id, method = method, state = "UNKNOWN", body_bytes = 0,
+    receipts[[id]] <<- list(attempt = id, method = method, request_key = key, state = "UNKNOWN", body_bytes = 0,
                            body_allowance_reserved = min(response_bytes, total_bytes - consumed),
                            timeout_seconds = remaining, status = NULL)
     on.exit(message("SCAN_HTTP attempt=", id, " method=", method,
@@ -162,5 +168,6 @@ pt_scan_http_from_env <- function() {
   required <- function(name) suppressWarnings(as.numeric(Sys.getenv(name, unset = NA_character_)))
   pt_scan_make_http(required("SCAN_HTTP_MAX_REQUESTS"), required("SCAN_HTTP_RESPONSE_BYTES"),
     required("SCAN_HTTP_TOTAL_BYTES"), required("SCAN_HTTP_CAMPAIGN_SECONDS"),
-    required("SCAN_FETCH_TIMEOUT_SEC"), backend = getOption("brim.scan.http.backend", pt_scan_curl_backend))
+    required("SCAN_FETCH_TIMEOUT_SEC"), backend = getOption("brim.scan.http.backend", pt_scan_curl_backend),
+    request_plan = getOption("brim.scan.request_plan"))
 }

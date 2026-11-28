@@ -3,11 +3,12 @@ args <- commandArgs(trailingOnly=TRUE)
 source("scripts/run_scan_operational.R")
 out <- args[[1]];dir.create(out,recursive=TRUE,showWarnings=FALSE)
 sentinel <- "SYNTHETIC_PRIVATE_FAILURE_SENTINEL"
+plan <- c("GET", paste(seq_len(28), 2026, sep="/"))
 account <- list(requests=29L,body_bytes=29,fatal=NULL,receipts=lapply(seq_len(29),function(i)
-  list(attempt=i,method=if(i==1)"GET" else "POST",state="COMPLETE",status=200L,
+  list(attempt=i,request_key=plan[[i]],method=if(i==1)"GET" else "POST",state="COMPLETE",status=200L,
        body_bytes=1,body_allowance_reserved=2097151,timeout_seconds=20)))
 results <- list()
-run <- function(name,a=account,fail=FALSE,admit=function()NULL,snapshot_fail=FALSE,path=file.path(out,paste0(name,".json"))) {
+run <- function(name,a=account,fail=FALSE,admit=function()plan,snapshot_fail=FALSE,path=file.path(out,paste0(name,".json"))) {
   # Exercise the same source(scope) -> snapshot -> predicate -> receipt route
   # used by production, with explicitly synthetic builder source only.
   fixture <- file.path(out,paste0(name,"-builder.R"))
@@ -45,7 +46,7 @@ for(code in names(cases)){
  stopifnot(x$exit==1L,x$value$status=="ACCOUNT_REJECTED",identical(x$value$account_refusal,code))
 }
 bad_fields<-list(RECEIPT_STATE=list("state","UNKNOWN"),RECEIPT_STATUS=list("status",503),
- RECEIPT_ATTEMPT=list("attempt",2),RECEIPT_METHOD=list("method","POST"),RECEIPT_BYTES=list("body_bytes",2097153),
+ RECEIPT_IDENTITY=list("request_key","BAD"),RECEIPT_ATTEMPT=list("attempt",2),RECEIPT_METHOD=list("method","POST"),RECEIPT_BYTES=list("body_bytes",2097153),
  TIMEOUT_NONFINITE_TYPE=list("timeout_seconds",NaN),TIMEOUT_LIMIT=list("timeout_seconds",20+.Machine$double.eps*16))
 for(code in names(bad_fields)){
  b<-account;b$receipts[[1]][[bad_fields[[code]][[1]]]]<-bad_fields[[code]][[2]]
@@ -62,7 +63,7 @@ x<-run("attributes",b);stopifnot(x$exit==0L,x$value$account_refusal=="NONE")
 b<-account;class(b$receipts[[1]]$timeout_seconds)<-sentinel
 x<-run("classified-number",b);stopifnot(x$value$account_refusal=="TIMEOUT_NONFINITE_TYPE")
 original_refusal<-scan_account_refusal
-scan_account_refusal<-function(account)stop(sentinel)
+scan_account_refusal<-function(account,plan)stop(sentinel)
 x<-run("predicate-exception");stopifnot(x$value$account_refusal=="PREDICATE_EXCEPTION",x$exit==1L)
 scan_account_refusal<-original_refusal
 stopifnot(jsonlite::fromJSON(file.path(out,"snapshot.json"))$account_refusal=="SNAPSHOT_EXCEPTION")
@@ -77,17 +78,30 @@ backend<-function(method,url,form,timeout,read_limit,consume,check){
 h<-pt_scan_make_http(87,2097151,182452223,1200,20,backend=backend,clock=function()clock_value)
 form<-setNames(as.list(rep("SYNTHETIC",8)),c("intervalType","report","timeseries","format","sitenum","interval","year","month"))
 h$request("GET","https://wcc.sc.egov.usda.gov/")
-for(i in 2:29)h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
-x<-run("corrected-meter",h$snapshot());stopifnot(x$exit==0L,all(backend_timeouts==20),h$snapshot()$body_bytes==29)
-for(value in list(20.01,0,-1,Inf,NA_real_,"20",c(1,20))){
- b<-account;b$receipts[[1]]$timeout_seconds<-value;stopifnot(!scan_account_complete(b))
+for(i in seq_len(28)){
+  form$sitenum<-i;form$year<-2026
+  h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
 }
-for(value in list(200L,200)){b<-account;b$receipts[[1]]$status<-value;stopifnot(scan_account_complete(b))}
+x<-run("corrected-meter",h$snapshot());stopifnot(x$exit==0L,all(backend_timeouts==20),h$snapshot()$body_bytes==29)
+# Repeating an authorized pair in a later position refuses before a backend call.
+calls_before <- length(backend_timeouts)
+h <- pt_scan_make_http(87,2097151,182452223,1200,20,backend=backend,
+                       clock=function() clock_value,request_plan=plan)
+h$request("GET","https://wcc.sc.egov.usda.gov/")
+form$sitenum <- 1L
+h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form)
+duplicate <- tryCatch(h$request("POST","https://wcc.sc.egov.usda.gov/nwcc/view",form),error=identity)
+stopifnot(inherits(duplicate,"scan_accounting_error"),length(backend_timeouts)==calls_before+2L,
+          h$snapshot()$requests==2L,!scan_account_complete(h$snapshot(),plan))
+for(value in list(20.01,0,-1,Inf,NA_real_,"20",c(1,20))){
+ b<-account;b$receipts[[1]]$timeout_seconds<-value;stopifnot(!scan_account_complete(b,plan))
+}
+for(value in list(200L,200)){b<-account;b$receipts[[1]]$status<-value;stopifnot(scan_account_complete(b,plan))}
 # Full retained JSON evaluation is diagnostic only: serialized receipt types and
 # rounded numbers do not reconstruct the original in-memory failing operand.
 if(length(args)>1L){
   retained<-jsonlite::fromJSON(args[[2]],simplifyVector=FALSE)
-  results$retained<-list(predicate_on_serialized_account=scan_account_complete(retained$account),
+  results$retained<-list(predicate_on_serialized_account=scan_account_complete(retained$account,plan),
     historical_status=retained$status,requests=retained$account$requests,body_bytes=retained$account$body_bytes,
     original_cause="UNESTABLISHED")
 }
