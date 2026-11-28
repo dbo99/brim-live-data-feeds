@@ -142,10 +142,58 @@ def qualify(out, prior_requests=0, prior_bytes=0):
     command([sys.executable,'-B','scripts/soil_moisture/snotel_saved_replay.py','--output',str(out/'tmp/legacy-replay')],out,'legacy-replay',env=env,timeout=60)
     dump(out/'SUMMARY.json',dict(status='PASS',source_commit=head,SCAN='native transport + complete builder + five outputs + last-good',SNOTEL='NEW snapshot CANDIDATE_READY + reconstruction/repeat + rollover',old_replay='separate unchanged synthetic coverage',provider_requests=0,observation_publication=False,production_qualified=False))
 
+# The job log may contain only these fields from the private provisioning scratch.
+PROVISION_STAGES = {
+    'SCRATCH', 'APT_PLAN', 'APT_ROUTE', 'APT_DOWNLOAD', 'APT_INSTALL',
+    'R_RUNTIME', 'R_INDEX', 'R_DEPENDENCIES', 'R_INSTALL', 'EXPORT_LIBRARY',
+}
+PROVISION_ERRORS = {
+    'AssertionError', 'CalledProcessError', 'TimeoutExpired', 'TimeoutError',
+    'FileNotFoundError', 'FileExistsError', 'PermissionError', 'OSError',
+    'HTTPError', 'URLError', 'RuntimeError', 'ValueError', 'KeyError',
+    'OTHER',
+}
+
+
+def provision_failure_path(output):
+    # Setup itself may fail to create output. Keep its exclusive receipt beside it.
+    return output.with_name(output.name + '-provision-failure.json')
+
+
+def report_provision_failure(report, classification):
+    record = {}
+    if report is not None:
+        try:
+            if stat.S_ISREG(report.lstat().st_mode):
+                with report.open('rb') as stream:
+                    data = stream.read(513)
+                if len(data) <= 512:
+                    value = json.loads(data)
+                    if isinstance(value, dict):
+                        record = value
+        except (OSError, ValueError, RecursionError):
+            pass
+    stage = record.get('stage')
+    error = record.get('exception_class')
+    code = record.get('status')
+    stage = stage if isinstance(stage, str) and stage in PROVISION_STAGES else 'UNAVAILABLE'
+    error = error if isinstance(error, str) and error in PROVISION_ERRORS else 'UNAVAILABLE'
+    code = code if type(code) is int and -127 <= code <= 599 else 'unavailable'
+    print(f'Provisioning {classification} stage={stage} exception_class={error} status={code}')
+
+
 # Preserve the corrected supervisor pattern: immediate sampled RSS action and
 # bounded child cleanup. No slow disk/accounting call precedes a threshold signal.
 def supervise(argv,out,seconds,trigger,ceiling):
     out.mkdir(parents=True,exist_ok=True);start=time.monotonic();peak=0;reason=None;p=None
+    # Both the direct and the nested provisioning commands end with this CLI.
+    provisioning = (len(argv) >= 4 and argv[-3:-1] == ['provision', '--output']
+                    and Path(argv[-4]).resolve() == Path(__file__).resolve())
+    report = None
+    if provisioning:
+        candidate = provision_failure_path(Path(argv[-1]))
+        if not candidate.exists() and not candidate.is_symlink():
+            report = candidate
     observations=[];last=None;gap=0;completed=False;rc=125
     try:
         p=subprocess.Popen(argv,start_new_session=True)
@@ -183,6 +231,9 @@ def supervise(argv,out,seconds,trigger,ceiling):
                 rows=subprocess.check_output(['ps','-axo','pid=,pgid=,stat='],text=True,timeout=2).splitlines()
                 alive=[r for r in rows if len(r.split())==3 and int(r.split()[1])==p.pid and not r.split()[2].startswith('Z')]
         dump(out/'SUPERVISION.json',dict(completed=completed,returncode=p.returncode if p else None,reason=reason,elapsed_seconds=time.monotonic()-start,peak_sampled_aggregate_rss_bytes=peak,RSS_trigger=trigger,RSS_ceiling=ceiling,max_sample_gap_seconds=gap,instantaneous_hard_cap_proven=False,remaining_group_processes=alive,samples=observations))
+        if provisioning and (rc or reason or alive):
+            classification = 'SUPERVISOR_FAILURE' if reason or alive else 'CHILD_FAILURE'
+            report_provision_failure(report, classification)
     return rc if not reason and not alive else 125
 
 
@@ -225,6 +276,26 @@ def apt_download_url(planned_url, mirror_text=None):
     return base+relative
 
 def provision(out):
+    progress = {'stage': 'SCRATCH'}
+    try:
+        _provision(out, progress)
+    except Exception as exc:
+        code = None
+        if isinstance(exc, subprocess.CalledProcessError):
+            code = exc.returncode
+        elif isinstance(exc, urllib.error.HTTPError):
+            code = exc.code
+        error = type(exc).__name__
+        try:
+            dump(provision_failure_path(out), dict(progress,
+                 exception_class=error if error in PROVISION_ERRORS else 'OTHER',
+                 status=code if type(code) is int and -127 <= code <= 599 else None))
+        except OSError:
+            pass  # A diagnostic write must not replace the original failure.
+        raise
+
+
+def _provision(out, progress):
     """Download exact required bodies into runner scratch before installation.
 
     Reuse the runner's existing signed APT indexes; do not perform an unmetered
@@ -264,6 +335,7 @@ def provision(out):
         with (out/'DOWNLOADS.jsonl').open('a') as f:f.write(json.dumps(record)+'\n')
         return path
     apt=['libcurl4-openssl-dev','libssl-dev','libxml2-dev']
+    progress['stage'] = 'APT_PLAN'
     plan=subprocess.check_output(['sudo','apt-get','--print-uris','--yes','--download-only','install',*apt],text=True,timeout=45)
     assert len(plan.encode())<=65536,'APT URI plan exceeded bounded diagnostic size'
     dump(out/'APT_PLAN.json',dict(plan=plan,requested_packages=apt))
@@ -271,6 +343,7 @@ def provision(out):
     routes=[]
     for line in plan.splitlines():
         if not line.startswith("'"):continue
+        progress['stage'] = 'APT_ROUTE'
         parts=shlex.split(line);assert len(parts)==4;url,name,size,digest=parts;assert Path(name).name==name
         mirror_text=None
         if urllib.parse.urlsplit(url).scheme=='mirror+file':
@@ -279,16 +352,21 @@ def provision(out):
         resolved=apt_download_url(url,mirror_text)
         routes.append(dict(planned_url=url,resolved_url=resolved,file=name,bytes=int(size),catalog_digest=digest))
         with (out/'APT_ROUTES.jsonl').open('a') as f:f.write(json.dumps(routes[-1])+'\n')
+        progress['stage'] = 'APT_DOWNLOAD'
         download(resolved,archives/name,128*1024**2,int(size),digest)
     dump(out/'APT_DOWNLOADS.json',dict(metadata='Existing platform signed APT indexes reused; no index update traffic',packages=apt,planned_uris=[r for r in records]))
+    progress['stage'] = 'APT_INSTALL'
     command(['sudo','apt-get','--yes','--no-download','-o','Dir::Cache::archives='+str(archives),'install',*apt],out,'apt-install',timeout=180)
+    progress['stage'] = 'R_RUNTIME'
     r=shutil.which('Rscript');assert r
     version=subprocess.check_output([r,'--vanilla','-e','cat(as.character(getRversion()))'],text=True).strip();assert version==LOCK['r'],'Pinned hardened R runtime unavailable'
     existing=subprocess.check_output([r,'--vanilla','-e','x<-installed.packages();write.table(x[,c("Package","Version")],stdout(),sep=intToUtf8(9),row.names=FALSE,col.names=FALSE,quote=FALSE)'],text=True)
     installed=dict(line.split('\t') for line in existing.splitlines() if '\t' in line)
+    progress['stage'] = 'R_INDEX'
     index_file=download(LOCK['official_source']+'PACKAGES.gz',downloads/'PACKAGES.gz',16*1024**2)
     with gzip.open(index_file,'rb') as f:index_bytes=f.read(LOCK['max_index_decoded_bytes']+1)
     assert len(index_bytes)<=LOCK['max_index_decoded_bytes'];index={x['Package']:x for x in dcf(index_bytes.decode())}
+    progress['stage'] = 'R_DEPENDENCIES'
     selected={};install_order=[];visiting=set();reused={}
     def version_tuple(v):return tuple(int(x) for x in re.split('[.-]',v))
     def satisfies(v,op,want):
@@ -317,8 +395,10 @@ def provision(out):
     for name in LOCK['required_packages']:resolve(name)
     dump(out/'RESOLVED_RUNTIME_LOCK.json',dict(R=version,source_index_sha256=sha(index_file),selected=selected,reused_platform_packages=reused,order=install_order,download_body_bytes=total,ceiling=LOCK['max_download_body_bytes'],platform_managed_delivery='GitHub VM/action and hardened R setup delivery are outside these explicit package-body counters; job/setup timeouts still apply.'))
     env=dict(os.environ,R_LIBS_USER=str(library),MAKEFLAGS='-j1')
+    progress['stage'] = 'R_INSTALL'
     for name in install_order:
         command([shutil.which('R'),'CMD','INSTALL','--no-multiarch','--library='+str(library),str(downloads/selected[name]['archive'])],out,'install-'+name,timeout=360,env=env)
+    progress['stage'] = 'EXPORT_LIBRARY'
     with open(os.environ['GITHUB_ENV'],'a') as f:f.write('R_LIBS_USER='+str(library)+'\n')
 
 
