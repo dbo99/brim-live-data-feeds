@@ -88,6 +88,20 @@ jobs:
             ROSTER_PIN="$ROSTER_PIN" PYTHONDONTWRITEBYTECODE=1 \
             python3 -B scripts/snotel_first_run.py check-source
 
+      - name: Check scheduled term before acquisition
+        if: ${{ github.event_name == 'schedule' && startsWith(vars.SNOTEL_SMS_NRCS_CLEARANCE, 'schedule/term/') }}
+        env:
+          SUCCESSOR_POLICY: ${{ secrets.SNOTEL_SMS_SUCCESSOR_POLICY_JSON }}
+          NRCS_CLEARANCE: ${{ vars.SNOTEL_SMS_NRCS_CLEARANCE }}
+          PROVIDER_HOLD: ${{ vars.SCAN_PROVIDER_HOLD }}
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_CATALOG_SHA256 }}
+          ROSTER_PIN: ${{ vars.SNOTEL_SMS_PUBLIC_ROSTER_SHA256 }}
+          RELEASE_APPROVED: ${{ vars.SNOTEL_SMS_PUBLIC_RELEASE_APPROVED }}
+        run: |
+          git fetch --no-tags origin refs/heads/main
+          python3 -B scripts/snotel_first_run.py admit-term
+
       - name: Prepare complete bounded current-WY candidate
         id: prepare
         if: ${{ github.event_name == 'schedule' || inputs.acquire }}
