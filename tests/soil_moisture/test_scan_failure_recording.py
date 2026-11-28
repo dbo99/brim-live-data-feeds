@@ -1,5 +1,6 @@
 """Actual supervised failures, validation and fixed public diagnostic inventory."""
-import importlib.util,json,os,pathlib,subprocess,sys,tempfile,unittest
+import contextlib, importlib.util, io, json, os, pathlib, subprocess, sys, tempfile, unittest
+from unittest import mock
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 def load(name,path):
     spec=importlib.util.spec_from_file_location(name,ROOT/path)
@@ -7,6 +8,76 @@ def load(name,path):
 runner=load('runner','scripts/run_scan_operational.py')
 fixture=load('fixture','tests/test_phase2_product_publishers.py')
 SENTINEL='SYNTHETIC_PRIVATE_FAILURE_SENTINEL'
+
+class ProvisioningFailureTests(unittest.TestCase):
+    provisioner = load('provisioner', 'tests/soil_moisture/run_sms_hosted_qualification.py')
+
+    def test_workflow_provision_failure_reaches_log_without_private_stderr(self):
+        workflow = json.loads(subprocess.check_output([
+            'ruby', '-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.load_file(ARGV[0]))',
+            str(ROOT/'.github/workflows/build-scan-soil-moisture-latest.yml')], text=True))
+        step = next(s for s in workflow['jobs']['prepare-candidate']['steps']
+                    if s['name'] == 'Provision the supported bounded SCAN runtime')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            sudo = root/'sudo'
+            sudo.write_text(f'#!/bin/sh\necho {SENTINEL} >&2\nexit 47\n')
+            sudo.chmod(0o700)
+            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ['PATH'], RUNNER_TEMP=tmp)
+            result = subprocess.run(['bash', '-c', step['run']], cwd=ROOT, env=env,
+                                    capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('Provisioning CHILD_FAILURE stage=APT_PLAN '
+                          'exception_class=CalledProcessError status=47', result.stdout)
+            self.assertNotIn(SENTINEL, result.stdout + result.stderr)
+            self.assertNotIn(tmp, result.stdout + result.stderr)
+            self.assertIn(SENTINEL, (root/'scan-provision-bounded/child.stderr').read_text())
+            self.assertFalse((root/'scan-control/runtime-lock.json').exists())
+
+    def test_distinct_stage_refuses_before_any_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)/'runtime'
+            plan = f"'https://example.invalid/{SENTINEL}' test.deb 4 MD5Sum:1234\n"
+            with mock.patch.object(subprocess, 'check_output', return_value=plan), \
+                 mock.patch.object(self.provisioner.urllib.request.OpenerDirector, 'open',
+                                   side_effect=AssertionError('unexpected download')) as opener:
+                with self.assertRaises(AssertionError):
+                    self.provisioner.provision(out)
+                opener.assert_not_called()
+            report = self.provisioner.provision_failure_path(out).read_text()
+            self.assertEqual(json.loads(report),
+                             {'stage':'APT_ROUTE', 'exception_class':'AssertionError', 'status':None})
+            self.assertNotIn(SENTINEL, report)
+
+    def test_scratch_failure_preserves_original_exception_and_existing_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)/'already-present'
+            out.mkdir()
+            report = self.provisioner.provision_failure_path(out)
+            with self.assertRaises(FileExistsError):
+                self.provisioner.provision(out)
+            self.assertEqual(json.loads(report.read_bytes()), {
+                'stage':'SCRATCH', 'exception_class':'FileExistsError', 'status':None})
+            report.write_text(SENTINEL)
+            with self.assertRaises(FileExistsError):
+                self.provisioner.provision(out)
+            self.assertEqual(report.read_text(), SENTINEL)
+
+    def test_untrusted_or_missing_diagnostic_emits_only_fixed_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp)/'report'
+            for data in (None, b'{' + SENTINEL.encode(), b'x'*513,
+                         json.dumps({'stage':SENTINEL, 'exception_class':[SENTINEL],
+                                     'status':True, 'stderr':SENTINEL}).encode()):
+                if data is not None:
+                    path.write_bytes(data)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.provisioner.report_provision_failure(path, 'SUPERVISOR_FAILURE')
+                self.assertEqual(output.getvalue().strip(),
+                                 'Provisioning SUPERVISOR_FAILURE stage=UNAVAILABLE '
+                                 'exception_class=UNAVAILABLE status=unavailable')
+
 
 class FailureTests(unittest.TestCase):
     def child(self,root,name,code,**limits):
