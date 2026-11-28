@@ -198,9 +198,6 @@ The highest-impact constraints are:
 - Product validation and manifest fields are inconsistent.
 - Several feeds can accept partial upstream coverage without a common degraded
   publication policy.
-- The streamflow workflow declares a minimum latest-value quality setting that the
-  current builder does not enforce as named, allowing a structurally populated
-  layer with effectively empty live measurements.
 - Context tables for SCAN and snow are split between generated and static
   ownership, increasing coordination risk.
 - `main` has an active no-deletion/no-non-fast-forward history ruleset with no

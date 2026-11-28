@@ -65,7 +65,7 @@ def _count(value: object, label: str) -> int:
     return value
 
 
-def validate_product(root: Path) -> Tuple[str, int]:
+def validate_product(root: Path, *, require_publication_floor: bool = True) -> Tuple[str, int]:
     root = root.resolve()
     geojson = _read_json(root / GEOJSON_PATH)
     summary = _read_json(root / SUMMARY_PATH)
@@ -161,6 +161,8 @@ def validate_product(root: Path) -> Tuple[str, int]:
     for key, expected in expected_counts.items():
         if _count(summary.get(key), f"USGS streamflow {key}") != expected:
             raise ProductError(f"USGS streamflow summary {key} disagrees with features")
+    if require_publication_floor and discharge_count < 100:
+        raise ProductError(f"only {discharge_count} sites have latest discharge observations; need 100")
     return str(build_time), len(features)
 
 
@@ -200,7 +202,8 @@ def reconcile() -> None:
     elif not all(canonical_presence):
         raise ProductError("current main contains a partial USGS streamflow product set")
     else:
-        canonical_time_text, _ = validate_product(worktree)
+        # A pre-floor generation can be the predecessor of a qualifying candidate.
+        canonical_time_text, _ = validate_product(worktree, require_publication_floor=False)
         canonical_time = _timestamp(canonical_time_text, "canonical feed_build_time_utc")
         if candidate_time < canonical_time:
             _write_result(

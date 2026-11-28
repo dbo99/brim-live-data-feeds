@@ -145,6 +145,14 @@ min_sites_to_publish <- suppressWarnings(as.integer(Sys.getenv(
 )))
 if (is.na(min_sites_to_publish) || min_sites_to_publish < 1) min_sites_to_publish <- 100L
 
+min_latest_q_to_publish <- suppressWarnings(as.numeric(Sys.getenv(
+  "USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH", unset = "100"
+)))
+if (!is.finite(min_latest_q_to_publish) || min_latest_q_to_publish < 100 ||
+    min_latest_q_to_publish != floor(min_latest_q_to_publish)) {
+  stop("USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH must be a whole number of at least 100.")
+}
+
 feed_build_time <- Sys.time()
 feed_build_time_utc <- format(lubridate::with_tz(feed_build_time, "UTC"), "%Y-%m-%dT%H:%M:%SZ")
 
@@ -971,6 +979,13 @@ latest_tbl <- station_index |>
   ) |>
   dplyr::arrange(.data$site_no)
 
+observed_q <- is.finite(latest_tbl$q_cfs) & !is.na(latest_tbl$q_datetime_utc)
+latest_q_sites <- dplyr::n_distinct(latest_tbl$site_no[observed_q])
+if (latest_q_sites < min_latest_q_to_publish) {
+  stop("Only ", latest_q_sites, " sites have latest discharge observations; need ",
+       min_latest_q_to_publish, ". Retaining the previous generation.")
+}
+
 # ---- 7. Write GeoJSON and summary ------------------------------------------
 
 features <- purrr::map(seq_len(nrow(latest_tbl)), function(i) pt_make_feature(latest_tbl[i, ]))
@@ -1014,7 +1029,7 @@ summary <- list(
   iv_query_start_date = iv_start,
   iv_query_end_date = iv_end,
   iv_lookback_days = iv_lookback_days,
-  latest_iv_discharge_count = sum(latest_tbl$has_latest_iv_q, na.rm = TRUE),
+  latest_iv_discharge_count = latest_q_sites,
   latest_iv_stage_count = sum(latest_tbl$has_latest_iv_stage, na.rm = TRUE),
   stale_discharge_6h_count = sum(latest_tbl$q_stale_6h, na.rm = TRUE),
   stale_discharge_24h_count = sum(latest_tbl$q_stale_24h, na.rm = TRUE),

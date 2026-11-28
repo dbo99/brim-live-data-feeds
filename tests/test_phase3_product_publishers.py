@@ -109,9 +109,10 @@ def write_cocorahs_product(root: Path, build_time: str, *, variant: str = "norma
         )
 
 
-def write_streamflow_product(root: Path, build_time: str, *, variant: str = "normal") -> None:
+def write_streamflow_product(
+    root: Path, build_time: str, *, variant: str = "normal", discharge_sites: int = 100
+) -> None:
     properties = {
-        "site_no": "12345678",
         "station_nm": f"Stream-{variant}",
         "latest_status": "latest_iv_discharge",
         "feed_source": "USGS Water Data API",
@@ -128,7 +129,21 @@ def write_streamflow_product(root: Path, build_time: str, *, variant: str = "nor
         "q_stale_24h": False,
         "q_stale_72h": False,
     }
-    features = [point_feature(properties, [-121.0, 38.0])]
+    features = []
+    for index in range(101):
+        station = dict(properties, site_no=str(10000000 + index))
+        if index >= discharge_sites:
+            station.update(
+                has_latest_iv_q=False,
+                q_cfs=None,
+                q_datetime_utc=None,
+                q_obs_age_hours=None,
+                latest_status="stage_only_recent_iv",
+                q_hist_n=3,
+            )
+        elif index == 0:
+            station["q_cfs"] = 0.0
+        features.append(point_feature(station, [-121.0, 38.0]))
     write_json(
         root / STREAMFLOW_PATHS[0],
         {
@@ -143,10 +158,10 @@ def write_streamflow_product(root: Path, build_time: str, *, variant: str = "nor
         {
             "feed_build_time_utc": build_time,
             "scope": "CA",
-            "station_index_rows": 1,
-            "output_feature_count": 1,
-            "latest_iv_discharge_count": 1,
-            "latest_iv_stage_count": 1,
+            "station_index_rows": len(features),
+            "output_feature_count": len(features),
+            "latest_iv_discharge_count": discharge_sites,
+            "latest_iv_stage_count": len(features),
             "stale_discharge_6h_count": 0,
             "stale_discharge_24h_count": 0,
             "stale_discharge_72h_count": 0,
@@ -457,6 +472,53 @@ class StreamflowPublisherTests(CallbackCase, unittest.TestCase):
     product_id = "usgs-streamflow-latest-ca"
     paths = STREAMFLOW_PATHS
     writer = staticmethod(write_streamflow_product)
+
+    def test_discharge_floor_retains_predecessor_and_allows_sparse_predecessor_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate, worktree = root / "candidate", root / "worktree"
+            newer, older = "2026-08-18T12:00:00Z", "2026-08-18T09:00:00Z"
+            args = dict(
+                candidate=candidate,
+                worktree=worktree,
+                metadata=self.metadata(root, newer),
+                result=root / "result.json",
+            )
+            self.writer(worktree, older)
+            original = [(worktree / path).read_bytes() for path in self.paths]
+            for count in (0, 99):
+                with self.subTest(discharge_sites=count):
+                    self.writer(candidate, newer, discharge_sites=count)
+                    for phase in ("validate-candidate", "reconcile"):
+                        result = self.run_callback(phase=phase, **args)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(f"only {count} sites", result.stderr)
+                    self.assertFalse((root / "result.json").exists())
+                    self.assertEqual(original, [(worktree / p).read_bytes() for p in self.paths])
+
+            self.writer(worktree, older, discharge_sites=99)
+            result = self.run_callback(phase="validate-staged", **args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("only 99 sites", result.stderr)
+            self.writer(candidate, newer)  # 99 nonzero observations plus a measured zero
+            result = self.run_callback(phase="reconcile", **args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_copied(candidate, worktree)
+            result = self.run_callback(phase="validate-staged", **args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_duplicate_site_cannot_supply_the_hundredth_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.writer(root, "2026-08-18T12:00:00Z")
+            geo = root / self.paths[0]
+            product = json.loads(geo.read_text())
+            stations = product["features"]
+            stations[99]["properties"]["site_no"] = stations[0]["properties"]["site_no"]
+            write_json(geo, product)
+            result = self.validate(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicates site_no", result.stderr)
 
 
 class GroundwaterPublisherTests(CallbackCase, unittest.TestCase):
