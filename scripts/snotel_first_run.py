@@ -208,11 +208,13 @@ def require_delivered(run, get):
 
 def operating_paths():
     import soil_network_workflow as w
-    # Bind the workflow, its executable dependencies and its hosted qualification.
-    # A SCAN policy-only change is independent of these entry points.
-    return [WORKFLOW, w.SNOTEL_CATALOG, *w.SNOTEL_SOURCES, 'scripts/snotel_first_run.py',
-             'scripts/dendra_candidate.py', 'scripts/scan_soil_moisture_publisher.py',
-             ':(glob)scripts/**/__init__.py', ':(glob)tests/soil_moisture/test_snotel*.py']
+    # The scheduled workflow runs the origin and successor suites. Bind their
+    # imported fixtures as well as the production entry points and inputs.
+    return (WORKFLOW, w.SNOTEL_CATALOG, *w.SNOTEL_SOURCES, 'scripts/snotel_first_run.py',
+            'scripts/soil_moisture/__init__.py',
+            'tests/soil_moisture/test_snotel_origin.py', 'tests/soil_moisture/test_snotel_successor.py',
+            'tests/soil_moisture/test_snotel_first_run.py', 'tests/soil_moisture/test_snotel_workflow.py',
+            'tests/soil_moisture/test_snotel_snapshot.py', 'tests/soil_moisture/test_snotel_transport.py')
 
 
 def check_product_lineage(reader, policy, source, index, cutoff):
@@ -285,8 +287,7 @@ def admit_successor(env, phase, raw, reader, get, clock):
     fresh = get('git/ref/heads/main')['object']['sha']
     reader.commit(fresh)
     reader.git(['merge-base','--is-ancestor',source,fresh])
-    reader.git(['diff','--quiet',source,fresh,'--','scripts', WORKFLOW, 'tests/soil_moisture',
-                'data/input/snotel_sms_catalog.json', 'docs/data/snotel-sms'])
+    reader.git(['diff','--quiet',source,fresh,'--', *operating_paths(), 'docs/data/snotel-sms'])
     now = clock()
     require((end-now).total_seconds() >= (5400 if phase == 'prepare' else 1500), 'Remaining slot headroom')
     elapsed = now.timestamp() - int(env['SNOTEL_JOB_STARTED'])

@@ -84,6 +84,46 @@ class SuccessorTests(unittest.TestCase):
             return f.admit_successor(self.env,phase,json.dumps(self.policy,sort_keys=True,separators=(',',':')) if raw is None else raw,
                                      w.SnotelGitReader(self.repo),self.get,lambda:self.clock)
 
+    def test_operating_imports_are_independent(self):
+        # Use the same two entry modules as the hosted job in a fresh interpreter.
+        code = ("import sys; import snotel_first_run, soil_network_workflow; "
+                "snotel_first_run.operating_paths(); "
+                "assert not {'dendra_candidate', 'scan_soil_moisture_publisher'}.intersection(sys.modules)")
+        subprocess.run([sys.executable, '-B', '-c', code], cwd=Path(f.__file__).parent, check=True)
+
+    def test_dependency_changes_across_reviewed_event_and_fresh_main(self):
+        unrelated = ('scripts/scan_soil_moisture_publisher.py', 'scripts/build_snow_pillow_latest.R',
+                     'tests/soil_moisture/test_scan_failure_recording.py', 'scripts/dendra_candidate.py')
+        relevant = (f.WORKFLOW, w.SNOTEL_CATALOG, 'scripts/soil_moisture/snotel_transport.py',
+                    'scripts/main_publisher.py', 'scripts/soil_moisture/__init__.py',
+                    'tests/soil_moisture/test_snotel_origin.py', 'tests/soil_moisture/test_snotel_snapshot.py')
+        reader = w.SnotelGitReader(self.repo)
+        original_get = self.get
+        cases = [unrelated] + [(path,) for path in relevant] + [('docs/data/snotel-sms/extra.json',)]
+        for paths in cases:
+            with self.subTest(paths=paths):
+                for name in paths:
+                    path = self.repo/name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('fixture change')
+                self.git('add', '--', *paths)
+                self.git('commit', '-qm', 'Fixture change')
+                child = self.git('rev-parse', 'HEAD')
+                self.git('checkout', '-q', '--detach', self.parent)
+                def get(path):
+                    return {'object': {'sha': child}} if path == 'git/ref/heads/main' else original_get(path)
+                with patch.object(self, 'get', get):
+                    if paths == unrelated:
+                        self.assertEqual(self.admit()['prior']['generation'], self.gen)
+                        prior = f.check_product_lineage(reader, self.policy, child, 0, '2026-10-02')
+                        self.assertEqual(prior['generation'], self.gen)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'Read-only Git object lookup failed'):
+                            self.admit()
+                        if paths[0] in relevant:
+                            with self.assertRaisesRegex(ValueError, 'Read-only Git object lookup failed'):
+                                f.check_product_lineage(reader, self.policy, child, 0, '2026-10-02')
+
     def test_manual_two_phase_and_refusals(self):
         grant=self.admit()
         self.assertEqual(grant,self.admit('publish'))

@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'scripts'))
 import soil_moisture_operations as o
 import soil_network_workflow as w
+import scan_soil_moisture_publisher as scan
 T='2026-09-22T12:00:00Z';OLD='2026-09-21T12:00:00Z';END='2026-09-22T12:01:00Z';C='2026-09-22'
 def event(n='dendra',rid='one',outcome='success_no_data_change',started=T,finished=END,**kw):
     return o.result(n,rid,C,started,finished,outcome,**kw)
@@ -54,9 +55,9 @@ class OperationsTests(unittest.TestCase):
     def test_late_receipt_validation_failure_is_durable(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td).resolve();prepared=root/'prepared.json';prepared.write_text(json.dumps(event('scan',candidate_generation='prepared')))
-            for p in w.scan.ALLOWLIST:
+            for p in scan.ALLOWLIST:
                 q=root/p;q.parent.mkdir(parents=True,exist_ok=True);q.write_bytes(b'saved')
-            with patch.object(w.scan,'validate_product',return_value=(T,28)),patch.object(w,'source_details',return_value=('prepared',None)),patch.object(w,'command',side_effect=['a'*40,'b'*40]),patch.object(w.subprocess,'check_output',return_value=b'saved'):
+            with patch.object(scan,'validate_product',return_value=(T,28)),patch.object(w,'source_details',return_value=('prepared',None)),patch.object(w,'command',side_effect=['a'*40,'b'*40]),patch.object(w.subprocess,'check_output',return_value=b'saved'):
                 r=w.record_publication(root/'health',prepared,root,True,clock=lambda:END)
             self.assertEqual(r['outcome'],'publication_failure');self.assertIsNone(r['acknowledgement']);self.assertEqual(o.records(root/'health'),[r])
     def test_publisher_arguments_are_source_owned(self):
