@@ -372,6 +372,80 @@ class RenewableTests(unittest.TestCase):
             with self.assertRaises(g.Refused):g.admit(**a)
 
 
+    def test_run167_manual_provisioning_recovery(self):
+        from unittest.mock import patch
+        # Project the authenticated job and artifact responses onto guard inputs.
+        # The archive digest covers the reviewed initial admission and final NOT_RUN.
+        run = dict(id=g.RUN167_ID, run_number=167, run_attempt=1, workflow_id=g.WORKFLOW_ID,
+                   repository={"id":g.REPOSITORY_ID}, head_repository={"id":g.REPOSITORY_ID},
+                   path=g.WORKFLOW, head_sha=g.RUN167_SOURCE, head_branch="main",
+                   event="workflow_dispatch", status="completed", conclusion="failure")
+        rows = (
+            (1, "Set up job", "success"),
+            (2, "Check out source event", "success"),
+            (3, "Require finite manual or scheduled admission", "success"),
+            (4, "Prefer Canonical Ubuntu APT mirror with Azure fallback", "success"),
+            (5, "Set up R", "success"),
+            (6, "Provision the supported bounded SCAN runtime", "failure"),
+            (7, "Qualify actual Linux SCAN runtime without external egress", "skipped"),
+            (8, "Prepare isolated SCAN candidate directory", "skipped"),
+            (9, "Recheck admission and reserve this campaign once", "skipped"),
+            (10, "Build SCAN soil moisture latest feed", "skipped"),
+            (11, "Validate SCAN candidate", "skipped"),
+            (12, "Describe SCAN candidate artifact", "skipped"),
+            (13, "Record fixed-label SCAN outcome", "failure"),
+            (14, "Upload validated SCAN publication candidate", "skipped"),
+            (15, "Retain bounded SCAN control and accounting receipts", "success"),
+            (30, "Post Check out source event", "success"),
+            (31, "Complete job", "success"),
+        )
+        steps = [dict(number=n, name=name, conclusion=result, status="completed") for n,name,result in rows]
+        common = dict(run_id=run["id"], run_attempt=1, head_sha=run["head_sha"], head_branch="main",
+                      status="completed")
+        jobs = [dict(common,id=140848239270,name="prepare-candidate",conclusion="failure",steps=steps),
+                dict(common,id=140848240374,name="refuse-private-acquisition",conclusion="skipped",steps=[]),
+                dict(common,id=140849134424,name="publish-to-main",conclusion="skipped",steps=[])]
+        origin = dict(id=run["id"],head_sha=run["head_sha"],head_branch="main",
+                      repository_id=g.REPOSITORY_ID,head_repository_id=g.REPOSITORY_ID)
+        artifact = dict(id=15245777656,name="scan-control-46102614945-1",expired=False,size_in_bytes=850,
+                        workflow_run=origin,digest="sha256:0b2124d1cfba6b37a673c0d03095b2dbc25bd4287992fc2caa367714e0a01a08")
+
+        def check(records=jobs, artifacts=None, event="workflow_dispatch", ancestor=True):
+            listing = [artifact] if artifacts is None else artifacts
+            routes = {f"actions/runs/{run['id']}/jobs?filter=all&per_page=100":
+                      dict(jobs=records,total_count=len(records)),
+                      g.RUN167_ARTIFACTS:dict(artifacts=listing,total_count=len(listing))}
+            with patch.object(g,"github",side_effect=routes.__getitem__), patch.object(
+                    g.subprocess,"check_output",return_value="b"*40), patch.object(
+                    g.subprocess,"run",return_value=subprocess.CompletedProcess([], 0 if ancestor else 1)):
+                g.initial_refusal(ROOT,run,recovery_event=event)
+
+        check()
+        self.assertTrue(g.valid_history_endpoint(g.RUN167_ARTIFACTS))
+        self.assertFalse(g.valid_history_endpoint(g.RUN167_ARTIFACTS.replace(str(run["id"]), "1")))
+        for key, bad in (("id",1), ("head_sha","f"*40), ("run_number",168), ("run_attempt",2),
+                         ("path","other"), ("head_repository",{"id":0})):
+            with self.subTest(key=key), patch.dict(run,{key:bad}), self.assertRaises(g.Refused):
+                check()
+        for kwargs in (dict(event=None),dict(event="schedule"),dict(ancestor=False),
+                       dict(records=jobs[:-1]),dict(records=jobs+[jobs[-1]]),
+                       dict(records=[*jobs[:2],dict(jobs[-1],conclusion="success")])):
+            with self.assertRaises(g.Refused):
+                check(**kwargs)
+        for i, step in enumerate(steps):
+            for variant in (steps[:i]+steps[i+1:], steps[:i]+[step]+steps[i:],
+                            steps[:i]+[dict(step,conclusion="cancelled")]+steps[i+1:]):
+                with self.subTest(step=step["name"]), self.assertRaises(g.Refused):
+                    check([dict(jobs[0],steps=variant),*jobs[1:]])
+        with self.assertRaises(g.Refused):
+            check([dict(jobs[0],steps=[steps[1],steps[0],*steps[2:]]),*jobs[1:]])
+        for listing in ([],[artifact,artifact],[artifact,dict(artifact,id=42)],
+                        [dict(artifact,expired=True)],[dict(artifact,digest="sha256:"+"f"*64)],
+                        [dict(artifact,workflow_run=dict(origin,repository_id=42))],
+                        [dict(artifact,name="scan-candidate")],[dict(artifact,id=1)]):
+            with self.assertRaises(g.Refused):
+                check(artifacts=listing)
+
     def test_owner_bound_manual_recovery_and_intervening_crons(self):
         from unittest.mock import patch, call
         a = self.case()
@@ -418,6 +492,7 @@ class RenewableTests(unittest.TestCase):
         secret = "private diagnostic fixture"
         routes = [("actions/runs/12", "GITHUB_RUN_DETAIL"), ("pulls/1", "GITHUB_REVIEWED_PR"),
                   ("actions/runs/12/jobs?filter=all&per_page=100", "GITHUB_PRIOR_JOBS"),
+                  (g.RUN167_ARTIFACTS, "GITHUB_PRIOR_CONTROL"),
                   (g.history_path([dt.date(2026,11,25)], recovery=True), "GITHUB_RUN_HISTORY")]
         for route, stage in routes:
             with patch.dict(os.environ, GH_TOKEN=secret), patch.object(g.urllib.request, "build_opener") as opener:
