@@ -435,16 +435,13 @@ ownership.
   history window and feed build time.
 - **Freshness:** Feature flags identify discharge older than 6, 24 and 72
   hours. BRIM draws only stations with a current discharge or stage value.
-- **QA/empty policy:** The script validates only the static station-index count.
-  The workflow declares a minimum latest-discharge count and a no-degraded
-  policy, but the producer does not read those variables. If latest retrieval
-  is empty, all static stations can still be serialized with no current value.
+- **QA/empty policy:** The builder retains the static station-index check and
+  requires at least 100 distinct indexed sites with a timestamped, finite
+  latest discharge. Measured zero counts. Stage-only stations and daily history
+  contribute no discharge observations. Below the floor, both prior files are
+  retained. The publisher independently checks the candidate features and summary.
 - **Attribution:** USGS provisional data, with official station/rating links
   and optional CNRFC/HADS/APRFC links.
-- **Known gap:** This is the highest-priority current reliability defect. It is
-  a latent integrity risk rather than a confirmed active outage at the audited
-  baseline; documentation must not imply the declared current-value threshold
-  is enforced.
 
 ## 9. USGS groundwater
 

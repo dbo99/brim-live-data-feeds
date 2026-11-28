@@ -348,10 +348,9 @@ The repository has product-specific, not universal, QA:
   and summary before rollback-capable promotion. Its API and output minimums
   remain 300 sites; candidate-index value fallback cannot satisfy or bypass the
   API gate.
-- Streamflow's R builder gates its static station index. Its publication adapter
-  additionally checks structure, geometry, live-value flags and matching summary
-  counts, but neither enforces the workflow-declared current-discharge minimum.
-  Consistent zero-live-value counts can still pass.
+- Streamflow retains its previous GeoJSON and summary when fewer than 100
+  distinct indexed sites have latest discharge. The publisher independently
+  checks the site identities, values, times, flags and summary counts.
 - Major water-supply basin forecasts validate the exact reviewed 51-record
   roster: 18 product-9 identities, 15 major-basin-only product-2 identities and
   18 product-7 April-July identities.
@@ -413,8 +412,7 @@ The repository has product-specific, not universal, QA:
   and previous complete cycles (80 paired targets). The precisely validated
   legacy ten-lead state is only a migration source for a newer complete cycle.
 
-The CoCoRaHS completeness gap and streamflow current-value gap mean "workflow
-success" is not universally equivalent to "complete current product."
+The CoCoRaHS completeness gap remains relevant when interpreting a successful workflow.
 
 ## Last-known-good matrix
 

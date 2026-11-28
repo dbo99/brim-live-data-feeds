@@ -478,8 +478,6 @@ directory and atomically promoted locally.
 
 - CoCoRaHS lacks a contractual minimum and strong page-completion gate.
 - GFS/HRRR can represent partial target coverage.
-- Streamflow's workflow-declared current-value minimum is not read by the
-  producer.
 
 **Recommended**
 

@@ -118,14 +118,13 @@ and [WORKFLOW_AND_PRODUCT_STANDARDS.md](WORKFLOW_AND_PRODUCT_STANDARDS.md).
 Priority uses `P0` for a confirmed active integrity/security emergency or current
 outage, `P1` for the highest-priority latent integrity/reliability defect or
 missing control, `P2` for material maintainability or reliability risk, and `P3`
-for improvement work. The streamflow guard defect is P1 because the failure mode
-is present but no active bad publication was confirmed at the audited baseline.
+for improvement work. The streamflow guard defect was P1 at the audited baseline. No bad publication was confirmed.
 No item is P0 under this definition at that baseline; confirmed current
 corruption or outage would require immediate P0 reclassification.
 
 | Priority | Risk and evidence | Consequence | Recommended next control |
 |---|---|---|---|
-| P1 (highest current latent defect) | Streamflow workflow defines `USGS_STREAMFLOW_MIN_LATEST_Q_TO_PUBLISH`, while the builder reads a differently scoped site-count gate and can join an empty latest-value result to the static site set. | A successful publication may contain many features but effectively no current discharge values. | Align the configuration name and implementation; gate on non-null live observations and test empty-upstream behavior before publishing. |
+| Resolved in source (formerly P1) | The streamflow builder previously gated only the static station index. | Sparse latest observations could pass a feature-count check. | The builder and publisher require 100 distinct sites with latest discharge. The 99/100 regression verifies retention of the prior product. |
 | P1 | The verified history ruleset blocks deletion and non-fast-forward updates; ordinary updates still depend on maintainer review. See [SECURITY.md](../SECURITY.md#repository-access-and-branch-controls). | An unsafe ordinary push can change the Pages source; an incompatible new restriction could stop scheduled data writers. | Preserve human review and test exact human/Actions behavior before adopting any PR, check or update requirement. |
 | P1 | Builders do not uniformly stage a complete output set and atomically replace final paths. Snow and groundwater now stage, validate, back up and promote their respective multi-file sets; Winter Storm Levels stages the bundle and promotes its manifest last. The control is not repository-wide and separate path replacements are not one filesystem transaction. | An interrupted local run in another builder can leave mixed-generation artifacts; a poorly scoped later commit could publish them. | Extend complete-set staging and failure tests product by product; retain product-specific rollback or manifest-last designs where one multi-path atomic primitive is unavailable. |
 | P1 | There is no common machine-readable schema or compatibility test for public feeds. | A syntactically valid producer change can silently break a consumer. | Add versioned schemas or contract fixtures and run producer/consumer compatibility checks for changed products. |
