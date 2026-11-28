@@ -450,21 +450,35 @@ class RenewableTests(unittest.TestCase):
         artifact = dict(id=15245777656,name="scan-control-46102614945-1",expired=False,size_in_bytes=850,
                         workflow_run=origin,digest="sha256:0b2124d1cfba6b37a673c0d03095b2dbc25bd4287992fc2caa367714e0a01a08")
 
-        def check(records=jobs, artifacts=None, event="workflow_dispatch", ancestor=True):
+        historical_supervisor = "d94b0f9d4c30c09024b7a3c3865bc777fff38bf2"
+
+        def check(records=jobs, artifacts=None, event="workflow_dispatch", ancestor=True,
+                  supervisor=historical_supervisor):
             listing = [artifact] if artifacts is None else artifacts
             routes = {f"actions/runs/{run['id']}/jobs?filter=all&per_page=100":
                       dict(jobs=records,total_count=len(records)),
                       g.RUN167_ARTIFACTS:dict(artifacts=listing,total_count=len(listing))}
+            def git_blob(args, **kwargs):
+                if args[-1] == f"{g.RUN167_SOURCE}:scripts/run_scan_operational.py":
+                    return supervisor
+                return "b"*40
+
             with patch.object(g,"github",side_effect=routes.__getitem__), patch.object(
-                    g.subprocess,"check_output",return_value="b"*40), patch.object(
+                    g.subprocess,"check_output",side_effect=git_blob), patch.object(
                     g.subprocess,"run",return_value=subprocess.CompletedProcess([], 0 if ancestor else 1)):
                 g.initial_refusal(ROOT,run,recovery_event=event)
 
         check()
+        # Even equality with HEAD cannot substitute for run167's reviewed blob.
+        for other in ("e"*40, "b"*40):
+            with self.subTest(supervisor=other), self.assertRaisesRegex(g.Refused, "UNKNOWN_PRIOR_ADMISSION_CODE"):
+                check(supervisor=other)
+        with patch.dict(run, id=42), self.assertRaisesRegex(g.Refused, "UNKNOWN_PRIOR_ADMISSION_CODE"):
+            check()
         self.assertTrue(g.valid_history_endpoint(g.RUN167_ARTIFACTS))
         self.assertFalse(g.valid_history_endpoint(g.RUN167_ARTIFACTS.replace(str(run["id"]), "1")))
         for key, bad in (("id",1), ("head_sha","f"*40), ("run_number",168), ("run_attempt",2),
-                         ("path","other"), ("head_repository",{"id":0})):
+                         ("path","other"), ("workflow_id",1), ("head_repository",{"id":0})):
             with self.subTest(key=key), patch.dict(run,{key:bad}), self.assertRaises(g.Refused):
                 check()
         for kwargs in (dict(event=None),dict(event="schedule"),dict(ancestor=False),

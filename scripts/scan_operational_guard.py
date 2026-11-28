@@ -175,6 +175,7 @@ def complete_history(response, key):
 # Its GitHub digest binds both records, including the historical policy digest.
 RUN167_ID = 46102614945
 RUN167_SOURCE = "c7d2e95ee7388fa095c1746e98f04f3e8232d256"
+RUN167_SUPERVISOR_BLOB = "d94b0f9d4c30c09024b7a3c3865bc777fff38bf2"
 RUN167_ARTIFACTS = f"actions/runs/{RUN167_ID}/artifacts?per_page=100"
 RUN167_DIGEST = "sha256:0b2124d1cfba6b37a673c0d03095b2dbc25bd4287992fc2caa367714e0a01a08"
 
@@ -217,8 +218,10 @@ def initial_refusal(root, run, *, recovery_event=None):
     trusted.add("08826f11600a6052dfbc00e2c9e685b25d898c3f")
     if recovery_event:
         trusted.add("b45021394fc3a1d00456ba0a18c8712e1b7493a3")  # reviewed PR68 guard
+    supervisor_path = "scripts/run_scan_operational.py"
+    expected_supervisor = RUN167_SUPERVISOR_BLOB if provisioning_failure else blob("HEAD", supervisor_path)
     require(blob(source, "scripts/scan_operational_guard.py") in trusted and
-            blob(source, "scripts/run_scan_operational.py") == blob("HEAD", "scripts/run_scan_operational.py"),
+            blob(source, supervisor_path) == expected_supervisor,
             "UNKNOWN_PRIOR_ADMISSION_CODE")
     jobs = complete_history(github(f"actions/runs/{run['id']}/jobs?filter=all&per_page=100"), "jobs")
     require(all(j["run_id"] == run["id"] and j["run_attempt"] == 1 and
