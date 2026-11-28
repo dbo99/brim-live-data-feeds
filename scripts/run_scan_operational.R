@@ -1,18 +1,19 @@
 # Production wrapper: no new transport or science; errors never echo raw bodies.
-scan_account_refusal <- function(account) {
+scan_account_refusal <- function(account, plan) {
   number <- function(x) is.numeric(x)&&!is.object(x)&&length(x)==1L&&is.finite(x)
   if(!is.list(account)||is.object(account))return("ACCOUNT_SHAPE")
   if(!is.null(account$fatal))return("FATAL_PRESENT")
-  if(!identical(account$requests,29L))return("REQUEST_COUNT_TYPE")
-  if(!is.list(account$receipts)||is.object(account$receipts)||length(account$receipts)!=29L)return("RECEIPT_COUNT_TYPE")
-  for(i in seq_len(29)) {
+  if(!identical(account$requests,length(plan)))return("REQUEST_COUNT_TYPE")
+  if(!is.list(account$receipts)||is.object(account$receipts)||length(account$receipts)!=length(plan))return("RECEIPT_COUNT_TYPE")
+  for(i in seq_along(plan)) {
     x<-account$receipts[[i]]
     if(!is.list(x)||is.object(x))return("RECEIPT_SHAPE")
     if(!identical(x$state,"COMPLETE"))return("RECEIPT_STATE")
     if(!number(x$status)||x$status!=200)return("RECEIPT_STATUS")
     if(!number(x$attempt)||x$attempt!=i)return("RECEIPT_ATTEMPT")
     if(!identical(x$method,if(i==1)"GET" else "POST"))return("RECEIPT_METHOD")
-    if(!number(x$body_bytes)||x$body_bytes<0||x$body_bytes>2097152)return("RECEIPT_BYTES")
+    if(!identical(x$request_key,plan[[i]]))return("RECEIPT_IDENTITY")
+    if(!number(x$body_bytes)||x$body_bytes!=floor(x$body_bytes)||x$body_bytes<0||x$body_bytes>2097152)return("RECEIPT_BYTES")
     if(!number(x$timeout_seconds))return("TIMEOUT_NONFINITE_TYPE")
     if(x$timeout_seconds<=0||x$timeout_seconds>20)return("TIMEOUT_LIMIT")
   }
@@ -20,7 +21,7 @@ scan_account_refusal <- function(account) {
   if(sum(vapply(account$receipts,function(x)x$body_bytes,numeric(1)))!=account$body_bytes)return("BYTE_SUM")
   "NONE"
 }
-scan_account_complete <- function(account) identical(scan_account_refusal(account),"NONE")
+scan_account_complete <- function(account, plan) identical(scan_account_refusal(account, plan),"NONE")
 # Only fixed labels and numeric accounting cross the public receipt boundary.
 # Neither conditionMessage() nor an arbitrary condition class is exported.
 scan_error_label <- function(e) {
@@ -37,6 +38,9 @@ scan_public_account <- function(a) {
   list(requests=number(a$requests),body_bytes=number(a$body_bytes),
        fatal=if(is.null(a$fatal))NULL else "PRESENT",
        receipts=unname(lapply(a$receipts,function(x){if(!is.list(x)||is.object(x))return(NULL);list(
+         request_key=if(is.character(x$request_key) && !is.object(x$request_key) &&
+           length(x$request_key)==1L && !is.na(x$request_key) &&
+           grepl("^(GET|[0-9]{1,8}/[0-9]{4})$",x$request_key)) unname(x$request_key) else NULL,
          attempt=number(x$attempt),method=label(x$method,c("GET","POST")),
          state=label(x$state,c("COMPLETE","UNKNOWN")),status=number(x$status),
          body_bytes=number(x$body_bytes),body_allowance_reserved=number(x$body_allowance_reserved),
@@ -54,7 +58,12 @@ scan_run <- function(builder,admit,path) {
   phase <- "RUNTIME_ADMISSION";builder_state <- "NOT_RUN";predicate <- NULL;refusal <- "NOT_EVALUATED"
   outcome <- "RUNTIME_RECEIPT_FAILURE";failure <- NULL;account <- NULL
   failure <- tryCatch({
-    admit()
+    plan <- admit()
+    stopifnot(is.character(plan), length(plan) > 1L, length(plan) <= 87L,
+              identical(plan[[1]], "GET"), !anyDuplicated(plan),
+              all(grepl("^[0-9]{1,8}/[0-9]{4}$", plan[-1])))
+    previous <- options(brim.scan.request_plan=plan)
+    on.exit(options(previous), add=TRUE)
     phase <- "BUILDER"
     builder_failure <- tryCatch({builder(scope);NULL},error=identity)
     builder_state <- if(is.null(builder_failure))"RETURNED" else "EXCEPTION"
@@ -63,7 +72,7 @@ scan_run <- function(builder,admit,path) {
       error=function(e){refusal<<-"SNAPSHOT_EXCEPTION";stop(e)})
     phase <- "ACCOUNT_PREDICATE"
     predicate_failure <- NULL
-    predicate <- tryCatch({refusal<-scan_account_refusal(account);identical(refusal,"NONE")},
+    predicate <- tryCatch({refusal<-scan_account_refusal(account, plan);identical(refusal,"NONE")},
       error=function(e){predicate_failure<<-e;refusal<<-"PREDICATE_EXCEPTION";FALSE})
     if(!is.null(builder_failure)) {
       outcome <- "BUILDER_EXCEPTION";phase <- "BUILDER";builder_failure
@@ -104,6 +113,8 @@ scan_main <- function() {
     stopifnot(reservation$state=="UNKNOWN_RESERVED_BEFORE_LAUNCH",as.character(reservation$run_id)==Sys.getenv("GITHUB_RUN_ID"),reservation$attempt==1)
     deadline <- as.POSIXct(Sys.getenv("SCAN_RUN_DEADLINE_UTC"),format="%Y-%m-%dT%H:%M:%SZ",tz="UTC")
     stopifnot(is.finite(as.numeric(deadline)),as.numeric(difftime(deadline,Sys.time(),units="secs"))>1230)
+    stopifnot(identical(reservation$source_cutoff_date, Sys.getenv("SCAN_SOURCE_CUTOFF_DATE")))
+    reservation$request_plan
   }
   scan_run(function(scope)source(file.path(Sys.getenv("GITHUB_WORKSPACE"),"scripts/build_scan_soil_moisture_latest.R"),local=scope),
            admit,file.path(control,"runtime-account.json"))

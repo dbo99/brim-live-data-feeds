@@ -42,13 +42,14 @@ stopifnot(inherits(e,"scan_budget_exhausted"),calls==87L,h$snapshot()$requests==
 # entry point or substitute synthetic provenance for a production campaign.
 expressions <- parse("scripts/run_scan_operational.R")
 for(expr in expressions)if(is.call(expr) && identical(expr[[1]],as.name("<-")) && as.character(expr[[2]]) %in% c("scan_account_refusal","scan_account_complete"))eval(expr)
-a<-list(requests=29L,body_bytes=29,fatal=NULL,receipts=lapply(seq_len(29),function(i)list(attempt=i,method=if(i==1)"GET" else "POST",state="COMPLETE",body_bytes=1,timeout_seconds=20,status=200)))
-stopifnot(scan_account_complete(a),!scan_account_complete(NULL))
+plan <- c("GET", paste(seq_len(28), 2026, sep="/"))
+a<-list(requests=29L,body_bytes=29,fatal=NULL,receipts=lapply(seq_len(29),function(i)list(attempt=i,request_key=plan[[i]],method=if(i==1)"GET" else "POST",state="COMPLETE",body_bytes=1,timeout_seconds=20,status=200)))
+stopifnot(scan_account_complete(a,plan),!scan_account_complete(NULL,plan))
 for(field in c("state","body_bytes","status","method","timeout_seconds")){
   b<-a;b$receipts[[3]][[field]]<-switch(field,state="UNKNOWN",body_bytes=2097153,status=503,method="GET",timeout_seconds=20.001)
-  stopifnot(!scan_account_complete(b))
+  stopifnot(!scan_account_complete(b,plan))
 }
-b<-a;b$body_bytes<-28;stopifnot(!scan_account_complete(b))
+b<-a;b$body_bytes<-28;stopifnot(!scan_account_complete(b,plan))
 jsonlite::write_json(list(status="PASS",native_setopts=seen,request_ceiling=87,
   configured_seconds=20,deadline_clipped=TRUE,provider_requests=0),
   Sys.getenv("SCAN_NATIVE_TIMEOUT_RECEIPT"),auto_unbox=TRUE)

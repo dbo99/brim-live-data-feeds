@@ -2,6 +2,7 @@
 """Finite SCAN manual and daily admission; no provider client."""
 from __future__ import annotations
 import argparse
+import csv
 import datetime as dt
 import hashlib
 import json
@@ -23,7 +24,7 @@ PILOT_DATES = tuple(dt.date(2026, 11, d) for d in range(13, 20))
 EXPIRY = dt.datetime(2026, 11, 20, 8, tzinfo=dt.timezone.utc)
 MANUAL_EXPIRY = dt.datetime(2026, 11, 12, 7, 59, 59, tzinfo=dt.timezone.utc)
 # Reserve the existing transport's single possible EOF-probe byte INSIDE each
-# approved decoded-body ceiling. No retries: one GET and one POST per station.
+# approved decoded-body ceiling. No retries: one GET and one POST per station/calendar-year.
 BUDGETS = dict(SCAN_HTTP_MAX_REQUESTS=87, SCAN_HTTP_RESPONSE_BYTES=2097151,
                SCAN_HTTP_TOTAL_BYTES=182452223, SCAN_HTTP_CAMPAIGN_SECONDS=1200,
                SCAN_FETCH_TIMEOUT_SEC=20)
@@ -106,10 +107,22 @@ def supported_cutoff(day):
     cutoff = day-DAY
     wy_start = dt.date(day.year if day.month >= 10 else day.year-1, 10, 1)
     require(cutoff >= wy_start, "CUTOFF_PRECEDES_CURRENT_WY")
-    # soilDB queries station/calendar-year. Both unchanged accounting checks
-    # accept exactly one endpoint GET and one POST for each of the 28 stations.
-    require(cutoff.year == wy_start.year, "UNQUALIFIED_TWO_YEAR_ACCOUNT")
     return cutoff
+
+
+def request_plan(root, cutoff):
+    """Physical request order for the pinned single-canary, no-retry builder."""
+    raw = (root / "data/input/scan_station_index.csv").read_bytes()
+    require(hashlib.sha256(raw).hexdigest() == ROSTER_SHA, "ROSTER_CHANGED")
+    sites = [row["site_code"] for row in csv.DictReader(raw.decode().splitlines())]
+    end = date_value(cutoff)
+    first_year = end.year if end.month >= 10 else end.year - 1
+    pairs = [f"{site}/{year}" for site in sites for year in range(first_year, end.year + 1)]
+    # The workflow probes station 2218 in the newest year, then the builder
+    # anti-joins that successful canary out of its ordered station/year grid.
+    canary = f"2218/{end.year}"
+    pairs.remove(canary)
+    return ["GET", canary, *pairs]
 
 
 def calendar(policy, event):
@@ -622,7 +635,9 @@ def main():
             require(policy["kind"] == "manual" or signature == policy["runtime_signature"], "RUNTIME_CHANGED")
             receipt["runtime_signature"]=signature
             stage = "RESERVATION"
+            cutoff_date = receipt["source_cutoff_date"]
             durable(control/"campaign-reservation.json", {"state":"UNKNOWN_RESERVED_BEFORE_LAUNCH", "run_id":current["id"],
+                "source_cutoff_date":cutoff_date, "request_plan":request_plan(root, cutoff_date),
                 "attempt":1, "maximum_requests":87, "maximum_decoded_bytes":182452224})
         receipt["policy_sha256"]=hashlib.sha256(raw.encode()).hexdigest()
         stage = "RUNNER_OUTPUTS"

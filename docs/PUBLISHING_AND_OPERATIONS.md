@@ -876,9 +876,11 @@ fit checks govern the effective latest launch. October 1 refuses because the
 preceding day belongs to the prior WY under the existing builder contract.
 January 1 can retain data through December 31. From January 2 through
 September 30 the current-WY query needs two calendar years per station,
-ordinarily 57 physical requests. Both the R account and the candidate audit
-require exactly 29. The guard refuses a policy containing such a slot before
-any acquisition. Extending accounting to that shape requires its own review.
+with 57 physical requests. The reservation binds one endpoint GET followed by
+28 or 56 station-year POSTs. The newest-year canary runs first and is removed
+from the remaining grid. The meter checks each request against the plan before
+dispatch. The wrapper and candidate audit require a complete matching account
+within the existing campaign limits.
 
 The first daily slot follows a successful manual run on the previous Pacific
 date. Renewal follows the successful final scheduled slot of the previous

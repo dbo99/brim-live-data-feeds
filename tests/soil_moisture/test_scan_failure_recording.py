@@ -157,7 +157,7 @@ class FailureTests(unittest.TestCase):
         directory=os.environ.get('SCAN_R_RECEIPT_TEST_DIR')
         if not directory:self.skipTest('Run after the confined R receipt suite for cross-process evidence')
         paths=list(pathlib.Path(directory).glob('clause-*.json'))
-        self.assertEqual(len(paths),14)
+        self.assertEqual(len(paths),15)
         paths += [pathlib.Path(directory)/(n+'.json') for n in ['snapshot','predicate-exception','corrected-meter']]
         for path in paths:
             with self.subTest(name=path.name),tempfile.TemporaryDirectory() as t:
@@ -188,9 +188,12 @@ class FailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             root=pathlib.Path(t);candidate=root/'scan-soil-moisture-candidate/candidate'
             fixture.write_scan_product(candidate,'2026-11-11T00:00:00Z',station_name='SYNTHETIC')
-            self.receipt(root,account={'requests':29},raw_provider_errors_disclosed=False)
+            control = root/'scan-control'
+            control.mkdir()
+            fixtures = load('scan_plan_fixture','tests/soil_moisture/test_scan_operational.py')
+            fixtures.write_account_fixture(control, '2026-11-10')
             self.child(root,'scan-acquisition-bounded','pass')
-            env=dict(os.environ,RUNNER_TEMP=str(root),GITHUB_SHA='a'*40,SCAN_BUILD_OUTCOME='success',SCAN_VALIDATION_OUTCOME='success',SCAN_METADATA_OUTCOME='success')
+            env=dict(os.environ,RUNNER_TEMP=str(root),GITHUB_SHA='a'*40,SCAN_SOURCE_CUTOFF_DATE='2026-11-10',SCAN_BUILD_OUTCOME='success',SCAN_VALIDATION_OUTCOME='success',SCAN_METADATA_OUTCOME='success')
             for body in bodies:
                 p=subprocess.run(['bash','--noprofile','--norc','-e','-c',body],cwd=ROOT,env=env,capture_output=True,timeout=15)
                 self.assertEqual(p.returncode,0,p.stdout+p.stderr)

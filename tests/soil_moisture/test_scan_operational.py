@@ -1,9 +1,27 @@
 """Finite C13R decision, actual workflow integration, and disclosure tests."""
 import copy,datetime as dt,importlib.util,json,pathlib,subprocess,tempfile,unittest,sys,hashlib,shlex,os
+from unittest.mock import patch
 ROOT=pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'scripts'))
 def module(name,path):
     spec=importlib.util.spec_from_file_location(name,ROOT/path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
 g=module('guard','scripts/scan_operational_guard.py');runner=module('runner','scripts/run_scan_operational.py')
+
+def write_account_fixture(control, cutoff):
+    plan = g.request_plan(ROOT, cutoff)
+    receipts = [
+        dict(attempt=i, method="GET" if i == 1 else "POST", request_key=key,
+             state="COMPLETE", status=200, body_bytes=1, timeout_seconds=20)
+        for i, key in enumerate(plan, 1)
+    ]
+    reservation = dict(state="UNKNOWN_RESERVED_BEFORE_LAUNCH", request_plan=plan, source_cutoff_date=cutoff)
+    (control / "campaign-reservation.json").write_text(json.dumps(reservation))
+    value = dict(status="BUILT_ACCOUNT_COMPLETE", account_refusal="NONE", account_predicate=True,
+                 account=dict(requests=len(plan), fatal=None, body_bytes=len(plan), receipts=receipts),
+                 raw_provider_errors_disclosed=False)
+    (control / "runtime-account.json").write_text(json.dumps(value))
+    return value
+
 
 class FiniteTests(unittest.TestCase):
     def test_exact_history_endpoint_including_literal_date_range(self):
@@ -82,9 +100,24 @@ class FiniteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=pathlib.Path(tmp)/'artifact';(root/'candidate/docs/data').mkdir(parents=True)
             for name in runner.PRODUCTS:(root/'candidate/docs/data'/name).write_text('{}')
-            (root/'candidate-metadata.json').write_text('{}');account=pathlib.Path(tmp)/'account.json'
-            account.write_text(json.dumps({'status':'BUILT_ACCOUNT_COMPLETE','account_refusal':'NONE','account_predicate':True,'account':{'requests':29},'raw_provider_errors_disclosed':False}))
-            runner.audit_candidate(root,account)
+            (root/'candidate-metadata.json').write_text('{}');account=pathlib.Path(tmp)/'runtime-account.json'
+            for cutoff in ("2026-12-31", "2027-01-01"):
+                value = write_account_fixture(account.parent, cutoff)
+                with patch.dict(os.environ, SCAN_SOURCE_CUTOFF_DATE=cutoff):
+                    runner.audit_candidate(root,account)
+                    for change in ("missing", "duplicate", "extra", "unknown", "failure", "bytes"):
+                        damaged = copy.deepcopy(value)
+                        receipts = damaged["account"]["receipts"]
+                        if change == "missing": receipts.pop()
+                        if change == "extra": receipts.append(receipts[-1])
+                        if change == "duplicate": receipts[-1]["request_key"] = receipts[-2]["request_key"]
+                        if change == "unknown": receipts[-1]["state"] = "UNKNOWN"
+                        if change == "failure": receipts[-1]["status"] = 503
+                        if change == "bytes": damaged["account"]["body_bytes"] += 1
+                        account.write_text(json.dumps(damaged))
+                        with self.subTest(cutoff=cutoff, change=change), self.assertRaises(AssertionError):
+                            runner.audit_candidate(root,account)
+            account.write_text(json.dumps(value))
             for name in ('raw-provider-error.txt','private-c9-receipt.json','config.json'):
                 bad=root/name;bad.write_text('SYNTHETIC_PRIVATE_SENTINEL')
                 with self.assertRaises(AssertionError):runner.audit_candidate(root,account)
@@ -199,12 +232,19 @@ class RenewableTests(unittest.TestCase):
     def test_calendar_year_and_water_year_limits_follow_actual_accounting(self):
         self.assertEqual(g.supported_cutoff(dt.date(2028,1,1)),dt.date(2027,12,31))
         self.assertEqual(g.supported_cutoff(dt.date(2027,10,2)),dt.date(2027,10,1))
-        for day,reason in ((dt.date(2027,10,1),"PRECEDES_CURRENT_WY"),(dt.date(2027,1,2),"TWO_YEAR_ACCOUNT"),
-                           (dt.date(2028,2,29),"TWO_YEAR_ACCOUNT")):
-            with self.assertRaisesRegex(g.Refused,reason):g.supported_cutoff(day)
+        with self.assertRaisesRegex(g.Refused,"PRECEDES_CURRENT_WY"):
+            g.supported_cutoff(dt.date(2027,10,1))
+        for day, n, year in ((dt.date(2026,12,31), 29, 2026), (dt.date(2027,1,1), 29, 2026),
+                             (dt.date(2027,1,2), 57, 2027), (dt.date(2028,2,29), 57, 2028)):
+            cutoff = g.supported_cutoff(day)
+            plan = g.request_plan(ROOT, cutoff.isoformat())
+            self.assertEqual((cutoff, len(plan), len(set(plan))), (day-g.DAY, n, n))
+            self.assertEqual(plan[:2], ["GET", f"2218/{year}"])
         a=self.case(True)
         a["policy"]["dates"]=["2027-01-01","2027-01-02"]
-        with self.assertRaisesRegex(g.Refused,"TWO_YEAR_ACCOUNT"):g.calendar(a["policy"],"schedule")
+        end = dt.date(2027,1,2)
+        a["policy"]["expires_utc"] = g.scheduled_window(end,840)[2].strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(g.calendar(a["policy"],"schedule")[0][-1], end)
 
     def test_renewable_refusals(self):
         for field,updates in (
