@@ -11,8 +11,6 @@ import base64,hashlib,re,time
 from pathlib import Path
 from datetime import datetime,timezone
 import soil_moisture_operations as ops
-import dendra_candidate as dc
-import scan_soil_moisture_publisher as scan
 from soil_moisture import snotel_snapshot as ss, snotel_transport as st
 import snotel_sms_publisher as sp
 import main_publisher as mp
@@ -34,10 +32,15 @@ def publisher_args(network,repo,transfer):
     ops.require(network in ('scan','dendra'),'SNOTEL has no approved publisher product')
     root=Path(repo).resolve();transfer=Path(transfer).resolve();sub=transfer/'publication' if network=='dendra' else transfer
     callback=root/'scripts'/('dendra_publisher.py' if network=='dendra' else 'scan_soil_moisture_publisher.py')
-    args=['python3',root/'scripts/main_publisher.py','publish','--repo',root,'--candidate-root',sub/'candidate','--metadata',sub/'candidate-metadata.json','--product-id',dc.PRODUCT if network=='dendra' else scan.PRODUCT_ID,'--target-ref','refs/heads/main','--commit-subject',f'Update {network} prepared soil feed']
-    for path in dc.FIXED if network=='dendra' else scan.ALLOWLIST:args+=['--allowlist',str(path)]
-    if network=='dendra':
-        for path in dc.OWNED:args+=['--owned-root',path]
+    if network == 'dendra':
+        import dendra_candidate as dc
+        product, allowlist, owned = dc.PRODUCT, dc.FIXED, dc.OWNED
+    else:
+        import scan_soil_moisture_publisher as scan
+        product, allowlist, owned = scan.PRODUCT_ID, scan.ALLOWLIST, ()
+    args=['python3',root/'scripts/main_publisher.py','publish','--repo',root,'--candidate-root',sub/'candidate','--metadata',sub/'candidate-metadata.json','--product-id',product,'--target-ref','refs/heads/main','--commit-subject',f'Update {network} prepared soil feed']
+    for path in allowlist:args+=['--allowlist',str(path)]
+    for path in owned:args+=['--owned-root',path]
     for flag in ('candidate-validator','reconcile-callback','staged-validator'):args+=['--'+flag,callback]
     return list(map(str,args))
 
@@ -47,6 +50,7 @@ def source_details(network,candidate):
         idx=da.open_index(candidate);dates=[s['latest_accepted']['date'] for s in idx['streams'] if s.get('latest_accepted')]
         # Exact accepted calendar labels, not manufactured UTC observation instants.
         return idx['generation'],max(dates,default=None)
+    import scan_soil_moisture_publisher as scan
     summary=json.loads((candidate/scan.SUMMARY_PATH).read_text());geo=json.loads((candidate/scan.GEOJSON_PATH).read_text())
     dates=[f['properties']['display_obs_datetime_utc'] for f in geo['features'] if f['properties'].get('display_obs_datetime_utc') and f['properties'].get('display_sms_pct') is not None]
     return summary['feed_build_time_utc'],max(dates,default=None)
@@ -68,6 +72,7 @@ def prepare(network,root,health,run_id,cycle,source_sha,*,state=None,catalog=Non
         ops.require(network!='snotel' and enabled,'Source not enabled; SNOTEL source contract remains gated')
         if network=='dendra':
             ops.require(state is not None and catalog is not None and 0<budget<=80,'Explicit Dendra state/catalog/positive budget required')
+            import dendra_candidate as dc
             import dendra_state as ds
             pp=Path(state)/('published.json' if (Path(state)/'published.json').exists() else 'seed.json')
             previous_science=scientific_fingerprint(ds.candidate_at(Path(state),dc.load(pp)))
@@ -75,6 +80,7 @@ def prepare(network,root,health,run_id,cycle,source_sha,*,state=None,catalog=Non
             runner(['python3',HERE/'dendra_state.py','transfer','--state',state,'--destination',root/'transfer','--source-sha',source_sha])
             candidate=root/'transfer/publication/candidate'
         elif network=='scan':
+            import scan_soil_moisture_publisher as scan
             requests=dict(attempts=None,budget=None,basis='Existing SCAN bounded per-call retry/backoff; cumulative attempts unknown even if builder fails.')
             candidate.mkdir(parents=True);env=dict(os.environ,**SCAN_BOUNDS,**{k:str(HERE.parent/'data/input'/v) for k,v in SCAN_ENV.items()})
             runner(['Rscript','--vanilla','-e','source('+json.dumps(str(HERE/'build_scan_soil_moisture_latest.R'))+')'],cwd=candidate,env=env)
@@ -117,16 +123,18 @@ def record_publication(health,prepared,repo,success,clock=now):
         ops.require(success and x['outcome'] in ('success_changes','success_no_data_change'),'Publication did not succeed')
         repo=Path(repo).resolve();commit=command(['git','rev-parse','HEAD'],cwd=repo).strip()
         if n=='dendra':
+            import dendra_candidate as dc
             import dendra_state as ds
             with tempfile.TemporaryDirectory() as t:
                 dest=Path(t)/'state';ds.restore_public(repo,dest);ptr=dc.load(dest/'published.json')
                 receipt=dict(generation=ptr['generation'],commit=ptr['publication_commit'],index_sha256=ptr['index_sha256'])
         else:
+            import scan_soil_moisture_publisher as scan
             scan.validate_product(repo)
             for path in scan.ALLOWLIST:
                 raw=subprocess.check_output(['git','show',commit+':'+str(path)],cwd=repo)
                 ops.require(raw==(repo/path).read_bytes(),'SCAN working bytes differ from committed receipt')
-            receipt=dict(generation=source_details(n,repo)[0],commit=commit,index_sha256=dc.sha(repo/scan.SUMMARY_PATH))
+            receipt=dict(generation=source_details(n,repo)[0],commit=commit,index_sha256=hashlib.sha256((repo/scan.SUMMARY_PATH).read_bytes()).hexdigest())
         ops.require(receipt['commit']==commit and commit==command(['git','rev-parse','HEAD'],cwd=repo).strip(),'Receipt HEAD moved')
         receipt.update(observed_at_utc=clock(),evidence='verified_committed_product',commit_ancestry=command(['git','rev-list','--max-count=256',commit],cwd=repo).splitlines())
     except (Exception,KeyboardInterrupt) as exc:error=str(exc);receipt=None
