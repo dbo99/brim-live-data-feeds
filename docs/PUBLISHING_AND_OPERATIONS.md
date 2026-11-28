@@ -905,8 +905,14 @@ A separately approved manual restoration may name a failed manual predecessor
 in the existing finite policy. The existing `predecessor_run_id` identifies
 the run. The optional `manual_recovery` object binds its `run_number` and
 `source_sha`, the ordered `out_of_campaign_run_ids` and the installed
-`daily_policy_sha256`. The manual predecessor must have succeeded at checkout
-and failed initial admission on its first main attempt. Verify the trusted
+`daily_policy_sha256`. The usual manual predecessor succeeded at checkout
+and failed initial admission on its first main attempt. Manual run 167/1 also
+qualifies when its reviewed source, complete job graph and sole retained control
+artifact match the verified record. Admission and R setup succeeded, bounded
+provisioning failed, and every reservation, acquisition and candidate step was
+skipped. The authenticated artifact digest binds the successful admission and
+final NOT_RUN receipts. Missing, expired, additional or different artifacts
+refuse recovery. Verify the trusted
 workflow, admission guard and always-run finalizer, and the complete skipped
 spending and publication steps. Every intervening run number must be present.
 Only individually reviewed, out-of-campaign cron failures with complete

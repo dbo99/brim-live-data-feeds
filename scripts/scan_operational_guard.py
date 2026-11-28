@@ -158,6 +158,27 @@ def complete_history(response, key):
     return rows
 
 
+# The reviewed run167 archive contains the ADMITTED and NOT_RUN receipts only.
+# Its GitHub digest binds both records, including the historical policy digest.
+RUN167_ID = 46102614945
+RUN167_SOURCE = "c7d2e95ee7388fa095c1746e98f04f3e8232d256"
+RUN167_ARTIFACTS = f"actions/runs/{RUN167_ID}/artifacts?per_page=100"
+RUN167_DIGEST = "sha256:0b2124d1cfba6b37a673c0d03095b2dbc25bd4287992fc2caa367714e0a01a08"
+
+
+def require_run167_control():
+    rows = complete_history(github(RUN167_ARTIFACTS), "artifacts")
+    require(len(rows) == 1, "PRIOR_CONTROL_UNPROVED")
+    record = rows[0]
+    require(record["id"] == 15245777656 and record["name"] == f"scan-control-{RUN167_ID}-1"
+            and record["expired"] is False and record["size_in_bytes"] == 850
+            and record["digest"] == RUN167_DIGEST, "PRIOR_CONTROL_UNPROVED")
+    origin = record["workflow_run"]
+    require(origin["id"] == RUN167_ID and origin["head_sha"] == RUN167_SOURCE
+            and origin["head_branch"] == "main" and origin["repository_id"] == REPOSITORY_ID
+            and origin["head_repository_id"] == REPOSITORY_ID, "WRONG_PRIOR_CONTROL")
+
+
 def initial_refusal(root, run, *, recovery_event=None):
     """Prove that the named terminal job never entered the spending path."""
     expected_event = recovery_event or "schedule"
@@ -167,10 +188,20 @@ def initial_refusal(root, run, *, recovery_event=None):
             "PRIOR_SPEND_OR_UNKNOWN")
     source = run["head_sha"]
     require(isinstance(source,str) and re.fullmatch(r"[0-9a-f]{40}",source), "WRONG_HISTORY_SOURCE")
+    provisioning_failure = run["id"] == RUN167_ID
+    if provisioning_failure:
+        require(recovery_event == "workflow_dispatch" and run["run_number"] == 167
+                and source == RUN167_SOURCE and run["path"] == WORKFLOW
+                and run["head_repository"]["id"] == REPOSITORY_ID, "WRONG_RECOVERY_PREDECESSOR")
+        require(subprocess.run(["git", "merge-base", "--is-ancestor", source, "HEAD"],
+                               cwd=root, timeout=5).returncode == 0, "UNKNOWN_PRIOR_ADMISSION_CODE")
+
     def blob(rev, path):
         return subprocess.check_output(["git","rev-parse","--verify",f"{rev}:{path}"],cwd=root,text=True,timeout=5).strip()
     require(blob(source, WORKFLOW) == blob("HEAD", WORKFLOW), "UNKNOWN_PRIOR_ADMISSION_CODE")
     trusted = {blob("HEAD", "scripts/scan_operational_guard.py"), "6be892b42888ee191d19c57c05097c927765df1d"}
+    # The former PR74 guard was the current guard for the accepted cron proofs.
+    trusted.add("08826f11600a6052dfbc00e2c9e685b25d898c3f")
     if recovery_event:
         trusted.add("b45021394fc3a1d00456ba0a18c8712e1b7493a3")  # reviewed PR68 guard
     require(blob(source, "scripts/scan_operational_guard.py") in trusted and
@@ -196,20 +227,29 @@ def initial_refusal(root, run, *, recovery_event=None):
     numbers = [s["number"] for s in steps]
     require(numbers == sorted(set(numbers)), "PRIOR_SPEND_OR_UNKNOWN")
     results = [(s["name"], s["conclusion"]) for s in steps]
-    # Only these two early exits are proved unused. Check the whole ordered
-    # job, including the always-run finalizer and receipt retention.
-    require(results[:1] == [("Set up job", "success")] and results[1:3] in (
-        [("Check out source event", "success"), ("Require finite manual or scheduled admission", "failure")],
-        [("Check out source event", "failure"), ("Require finite manual or scheduled admission", "skipped")],
-    ), "PRIOR_SPEND_OR_UNKNOWN")
-    if recovery_event == "workflow_dispatch":
-        require(results[1:3] == [("Check out source event", "success"),
-                                 ("Require finite manual or scheduled admission", "failure")],
-                "PRIOR_SPEND_OR_UNKNOWN")
+    setup = ("Prefer Canonical Ubuntu APT mirror with Azure fallback", "Set up R",
+             "Provision the supported bounded SCAN runtime")
+    if provisioning_failure:
+        require({j["name"]: j["id"] for j in jobs} == {
+            "prepare-candidate": 140848239270, "refuse-private-acquisition": 140848240374,
+            "publish-to-main": 140849134424,
+        }, "WRONG_PRIOR_JOB")
+        require(numbers == [*range(1, 16), 30, 31] and results[:6] == [
+            ("Set up job", "success"), ("Check out source event", "success"),
+            ("Require finite manual or scheduled admission", "success"),
+            (setup[0], "success"), (setup[1], "success"), (setup[2], "failure"),
+        ], "PRIOR_SPEND_OR_UNKNOWN")
+    else:
+        require(results[:1] == [("Set up job", "success")] and results[1:3] in (
+            [("Check out source event", "success"), ("Require finite manual or scheduled admission", "failure")],
+            [("Check out source event", "failure"), ("Require finite manual or scheduled admission", "skipped")],
+        ), "PRIOR_SPEND_OR_UNKNOWN")
+        if recovery_event == "workflow_dispatch":
+            require(results[1:3] == [("Check out source event", "success"),
+                                     ("Require finite manual or scheduled admission", "failure")],
+                    "PRIOR_SPEND_OR_UNKNOWN")
+        require(results[3:6] == [(name, "skipped") for name in setup], "PRIOR_SPEND_OR_UNKNOWN")
     skipped = (
-        "Prefer Canonical Ubuntu APT mirror with Azure fallback",
-        "Set up R",
-        "Provision the supported bounded SCAN runtime",
         "Qualify actual Linux SCAN runtime without external egress",
         "Prepare isolated SCAN candidate directory",
         "Recheck admission and reserve this campaign once",
@@ -217,13 +257,15 @@ def initial_refusal(root, run, *, recovery_event=None):
         "Validate SCAN candidate",
         "Describe SCAN candidate artifact",
     )
-    require(results[3:] == [(name, "skipped") for name in skipped] + [
+    require(results[6:] == [(name, "skipped") for name in skipped] + [
         ("Record fixed-label SCAN outcome", "failure"),
         ("Upload validated SCAN publication candidate", "skipped"),
         ("Retain bounded SCAN control and accounting receipts", "success"),
         ("Post Check out source event", "success"),
         ("Complete job", "success"),
     ], "PRIOR_SPEND_OR_UNKNOWN")
+    if provisioning_failure:
+        require_run167_control()
 
 
 def manual_recovery(root, recovery, env, anchor, outside, start):
@@ -473,6 +515,8 @@ def github(path):
     request = urllib.request.Request("https://api.github.com/repos/"+REPOSITORY+"/"+path, headers=headers)
     if path.startswith("pulls/"):
         stage = "GITHUB_REVIEWED_PR"
+    elif path == RUN167_ARTIFACTS:
+        stage = "GITHUB_PRIOR_CONTROL"
     elif "/jobs?" in path:
         stage = "GITHUB_PRIOR_JOBS"
     elif path.startswith("actions/workflows/"):
@@ -492,7 +536,7 @@ def github(path):
 def valid_history_endpoint(path):
     if re.fullmatch(r"pulls/[1-9][0-9]*", path):
         return True
-    if re.fullmatch(r"actions/runs/[1-9][0-9]*(?:/jobs\?filter=all&per_page=100)?", path) or path == LEGACY_HISTORY:
+    if re.fullmatch(r"actions/runs/[1-9][0-9]*(?:/jobs\?filter=all&per_page=100)?", path) or path in (LEGACY_HISTORY, RUN167_ARTIFACTS):
         return True
     match = re.fullmatch(rf"actions/workflows/{WORKFLOW_ID}/runs\?created=([0-9-]+)\.\.([0-9-]+)&per_page=100", path)
     if not match:
